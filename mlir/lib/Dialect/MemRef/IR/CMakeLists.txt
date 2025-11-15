@@ -23,6 +23,7 @@ add_mlir_dialect_library(MLIRMemRefDialect
   MLIRMemorySlotInterfaces
   MLIRShapedOpInterfaces
   MLIRSideEffectInterfaces
+  MLIRUBDialect
   MLIRValueBoundsOpInterface
   MLIRViewLikeInterface
 )
