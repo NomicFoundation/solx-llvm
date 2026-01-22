@@ -349,6 +349,63 @@ LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef T,
   return Result;
 }
 
+// EVM local begin
+static LLVMBool
+LLVMTargetMachineEmitWithDbg(LLVMTargetMachineRef T, LLVMModuleRef M,
+                             raw_pwrite_stream &OS, raw_pwrite_stream &DOS,
+                             LLVMCodeGenFileType codegen, char **ErrorMessage) {
+  TargetMachine *TM = unwrap(T);
+  Module *Mod = unwrap(M);
+
+  legacy::PassManager pass;
+
+  std::string error;
+
+  Mod->setDataLayout(TM->createDataLayout());
+
+  CodeGenFileType ft = CodeGenFileType::Null;
+  switch (codegen) {
+  case LLVMAssemblyFile:
+    ft = CodeGenFileType::AssemblyFile;
+    break;
+  default:
+    ft = CodeGenFileType::ObjectFile;
+    break;
+  }
+  if (TM->addPassesToEmitFile(pass, OS, &DOS, ft)) {
+    error = "TargetMachine can't emit a file of this type";
+    *ErrorMessage = strdup(error.c_str());
+    return true;
+  }
+
+  pass.run(*Mod);
+
+  OS.flush();
+  DOS.flush();
+  return false;
+}
+
+LLVMBool LLVMTargetMachineEmitToMemoryBufferWithDbg(
+    LLVMTargetMachineRef T, LLVMModuleRef M, LLVMCodeGenFileType codegen,
+    char **ErrorMessage, LLVMMemoryBufferRef *OutMemBuf,
+    LLVMMemoryBufferRef *DbgMemBuf) {
+  SmallString<0> CodeString;
+  raw_svector_ostream OStream(CodeString);
+  SmallString<0> DbgString;
+  raw_svector_ostream DOS(DbgString);
+  bool Result =
+      LLVMTargetMachineEmitWithDbg(T, M, OStream, DOS, codegen, ErrorMessage);
+
+  StringRef Data = OStream.str();
+  *OutMemBuf =
+      LLVMCreateMemoryBufferWithMemoryRangeCopy(Data.data(), Data.size(), "");
+  StringRef DbgData = DOS.str();
+  *DbgMemBuf = LLVMCreateMemoryBufferWithMemoryRangeCopy(DbgData.data(),
+                                                         DbgData.size(), "");
+  return Result;
+}
+// EVM local end
+
 char *LLVMGetDefaultTargetTriple(void) {
   return strdup(sys::getDefaultTargetTriple().c_str());
 }
