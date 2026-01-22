@@ -228,6 +228,15 @@ LLVM_C_ABI LLVMBool LLVMTargetMachineEmitToMemoryBuffer(
     LLVMTargetMachineRef T, LLVMModuleRef M, LLVMCodeGenFileType codegen,
     char **ErrorMessage, LLVMMemoryBufferRef *OutMemBuf);
 
+// EVM local begin
+/** Compile the LLVM IR stored in \p M and store the result in \p OutMemBuf.
+  Additionally, if debug information is emitted, store it in \p DbgMemBuf. */
+LLVM_C_ABI LLVMBool LLVMTargetMachineEmitToMemoryBufferWithDbg(
+    LLVMTargetMachineRef T, LLVMModuleRef M, LLVMCodeGenFileType codegen,
+    char **ErrorMessage, LLVMMemoryBufferRef *OutMemBuf,
+    LLVMMemoryBufferRef *DbgMemBuf);
+// EVM local end
+
 /*===-- Triple ------------------------------------------------------------===*/
 /** Get a triple for the host machine as a string. The result needs to be
   disposed with LLVMDisposeMessage. */
