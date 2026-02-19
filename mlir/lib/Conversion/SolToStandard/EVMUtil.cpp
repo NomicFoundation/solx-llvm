@@ -84,6 +84,40 @@ unsigned evm::getStorageSlotCount(Type ty) {
   llvm_unreachable("NYI: Other types");
 }
 
+bool evm::canBePacked(Type ty) {
+  // Scalars can be packed within a slot.
+  if (isa<IntegerType>(ty) || isa<sol::EnumType>(ty) ||
+      isa<sol::BytesType>(ty) || isa<sol::FuncRefType>(ty))
+    return true;
+
+  // Aggregates are slot-aligned and cannot be packed.
+  if (isa<sol::ArrayType>(ty) || isa<sol::StructType>(ty) ||
+      isa<sol::MappingType>(ty) || isa<sol::StringType>(ty))
+    return false;
+
+  llvm_unreachable("NYI");
+}
+
+unsigned evm::getStorageByteSize(Type ty) {
+  assert(canBePacked(ty) && "Only packable types have byte size");
+
+  if (auto intTy = dyn_cast<IntegerType>(ty))
+    return intTy.getWidth() / 8;
+
+  if (auto bytesTy = dyn_cast<sol::BytesType>(ty))
+    return bytesTy.getSize();
+
+  // Enums can have at most 256 members, so always 1 byte.
+  if (isa<sol::EnumType>(ty))
+    return 1;
+
+  // Internal function reference.
+  if (isa<sol::FuncRefType>(ty))
+    return 8;
+
+  llvm_unreachable("NYI");
+}
+
 Value evm::Builder::genHeapPtr(Value addr, std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
 
@@ -395,6 +429,38 @@ Value evm::Builder::genAddrAtIdx(Value baseAddr, Value idx, Type ty,
   }
 
   llvm_unreachable("NYI");
+}
+
+Value evm::Builder::genPackedStorageAddr(Value baseSlot, Value idx, Type eltTy,
+                                         std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  mlir::solgen::BuilderExt bExt(b, loc);
+
+  assert(canBePacked(eltTy) && "Only packable types");
+  Value eltByteSize = bExt.genI256Const(getStorageByteSize(eltTy));
+  Value bytePos = b.create<arith::MulIOp>(loc, idx, eltByteSize);
+  Value thirtyTwo = bExt.genI256Const(32);
+  Value slotOffset = b.create<arith::DivUIOp>(loc, bytePos, thirtyTwo);
+  Value byteOffset = b.create<arith::RemUIOp>(loc, bytePos, thirtyTwo);
+  Value slot = b.create<arith::AddIOp>(loc, baseSlot, slotOffset);
+  return bExt.genLLVMStruct({slot, byteOffset});
+}
+
+Value evm::Builder::genPunchHole(Value slot, Value shiftBits, unsigned numBits,
+                                 std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  mlir::solgen::BuilderExt bExt(b, loc);
+
+  // holeMask = not(ones(numBits) << shiftBits)
+  APInt ones = APInt::getLowBitsSet(256, numBits);
+  Value shiftedOnes =
+      b.create<arith::ShLIOp>(loc, bExt.genI256Const(ones), shiftBits);
+  Value holeMask = b.create<arith::XOrIOp>(
+      loc, shiftedOnes, bExt.genI256Const(APInt::getAllOnes(256)));
+
+  // and(sload(slot), holeMask)
+  Value slotVal = b.create<yul::SLoadOp>(loc, slot);
+  return b.create<arith::AndIOp>(loc, slotVal, holeMask);
 }
 
 Value evm::Builder::genLoad(Value addr, sol::DataLocation dataLoc,

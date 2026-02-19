@@ -61,6 +61,15 @@ int64_t getMallocSize(Type ty);
 /// MLIR version of solidity ast's Type::storageSize().
 unsigned getStorageSlotCount(Type ty);
 
+/// Returns true if the type can be packed within a storage slot.
+/// Packable types (scalars) need {slot, offset} representation.
+/// Non-packable types (arrays, structs, mappings) are slot-aligned and only
+/// need slot.
+bool canBePacked(mlir::Type ty);
+
+/// Returns the byte size of a packable type in storage.
+unsigned getStorageByteSize(mlir::Type ty);
+
 /// IR Builder for EVM specific lowering.
 class Builder {
   // It's possible to provide a mlirgen::BuilderHelper member with same default
@@ -151,6 +160,15 @@ public:
   // "clone" reference types with different data-locations.
   Value genAddrAtIdx(Value baseAddr, Value idx, Type ty,
                      sol::DataLocation dataLoc,
+                     std::optional<Location> locArg = std::nullopt);
+
+  /// Generates {slot, offset} for packed storage array indexing.
+  Value genPackedStorageAddr(Value baseSlot, Value idx, Type eltTy,
+                             std::optional<Location> locArg = std::nullopt);
+
+  /// Loads slot and punches hole: and(sload(slot), holeMask)
+  /// where holeMask = not(ones(numBits) << shiftBits)
+  Value genPunchHole(Value slot, Value shiftBits, unsigned numBits,
                      std::optional<Location> locArg = std::nullopt);
 
   /// Generates a load from the low level integral type address.

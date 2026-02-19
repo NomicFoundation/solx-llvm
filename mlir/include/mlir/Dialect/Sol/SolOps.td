@@ -220,9 +220,12 @@ def Sol_ArrayLitOp : Sol_Op<"array_lit"> {
 }
 
 def Sol_StateVarOp : Sol_Op<"state_var", [Symbol]> {
-  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type);
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type,
+                       I256Attr:$slot, I32Attr:$byte_offset);
 
-  let assemblyFormat = "$sym_name attr-dict `:` $type";
+  let assemblyFormat = [{
+    $sym_name `slot` $slot `offset` $byte_offset attr-dict `:` $type
+  }];
 }
 
 def Sol_ImmutableOp : Sol_Op<"immutable", [Symbol]> {

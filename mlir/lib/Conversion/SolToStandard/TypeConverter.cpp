@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Conversion/SolToStandard/EVMUtil.h"
 #include "mlir/Conversion/SolToStandard/SolToYul.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Sol/Sol.h"
@@ -71,19 +72,20 @@ evm::SolTypeConverter::SolTypeConverter() {
       return LLVM::LLVMArrayType::get(eltTy, ty.getSize());
     }
 
-    // Map to the 256 bit address in calldata/memory.
-    // FIXME: Generate fat pointer for calldata!
+    // Map to fat pointer {addr, size}.
     case sol::DataLocation::CallData:
       if (ty.isDynSized())
         return LLVM::LLVMStructType::getLiteral(ty.getContext(),
                                                 {i256Ty, i256Ty});
       return i256Ty;
 
+    // Map to memory address.
     case sol::DataLocation::Memory:
-    // Map to the 256 bit slot offset.
+      return i256Ty;
+
+    // Map to storage slot.
     case sol::DataLocation::Storage:
-      return IntegerType::get(ty.getContext(), 256,
-                              IntegerType::SignednessSemantics::Signless);
+      return i256Ty;
 
     default:
       break;
@@ -97,15 +99,18 @@ evm::SolTypeConverter::SolTypeConverter() {
     auto i256Ty = IntegerType::get(ty.getContext(), 256,
                                    IntegerType::SignednessSemantics::Signless);
     switch (ty.getDataLocation()) {
-    // Map to the 256 bit address in calldata/memory.
+    // Map to fat pointer {addr, size}.
     case sol::DataLocation::CallData:
       return LLVM::LLVMStructType::getLiteral(ty.getContext(),
                                               {i256Ty, i256Ty});
+
+    // Map to memory address.
     case sol::DataLocation::Memory:
-    // Map to the 256 bit slot offset.
+      return i256Ty;
+
+    // Map to storage slot.
     case sol::DataLocation::Storage:
-      return IntegerType::get(ty.getContext(), 256,
-                              IntegerType::SignednessSemantics::Signless);
+      return i256Ty;
 
     default:
       break;
@@ -116,19 +121,25 @@ evm::SolTypeConverter::SolTypeConverter() {
 
   // Mapping type
   addConversion([&](sol::MappingType ty) -> Type {
-    // Map to the 256 bit slot offset.
+    // Map to storage slot.
     return IntegerType::get(ty.getContext(), 256,
                             IntegerType::SignednessSemantics::Signless);
   });
 
   // Struct type
   addConversion([&](sol::StructType ty) -> Type {
+    auto i256Ty = IntegerType::get(ty.getContext(), 256,
+                                   IntegerType::SignednessSemantics::Signless);
     switch (ty.getDataLocation()) {
+    // Map to calldata/memory address.
     case sol::DataLocation::CallData:
     case sol::DataLocation::Memory:
+      return i256Ty;
+
+    // Map to storage slot.
     case sol::DataLocation::Storage:
-      return IntegerType::get(ty.getContext(), 256,
-                              IntegerType::SignednessSemantics::Signless);
+      return i256Ty;
+
     default:
       break;
     }
@@ -138,23 +149,25 @@ evm::SolTypeConverter::SolTypeConverter() {
 
   // Pointer type
   addConversion([&](sol::PointerType ty) -> Type {
+    auto i256Ty = IntegerType::get(ty.getContext(), 256,
+                                   IntegerType::SignednessSemantics::Signless);
     switch (ty.getDataLocation()) {
-    case sol::DataLocation::Stack: {
+    case sol::DataLocation::Stack:
       return LLVM::LLVMPointerType::get(ty.getContext());
-    }
 
-    // Map to the 256 bit address in calldata/memory/immutable.
+    // Map to calldata/memory address.
     case sol::DataLocation::CallData:
     case sol::DataLocation::Memory:
     case sol::DataLocation::Immutable:
-    // Map to the 256 bit slot offset.
-    //
-    // TODO: Can we get all storage types to be 32 byte aligned? If so, we can
-    // avoid the byte offset. Otherwise we should consider the
-    // OneToNTypeConversion to map the pointer to the slot + byte offset pair.
+      return i256Ty;
+
+    // Map to fat pointer {slot, offset} for packable types, just slot
+    // otherwise.
     case sol::DataLocation::Storage:
-      return IntegerType::get(ty.getContext(), 256,
-                              IntegerType::SignednessSemantics::Signless);
+      if (evm::canBePacked(ty.getPointeeType()))
+        return LLVM::LLVMStructType::getLiteral(ty.getContext(),
+                                                {i256Ty, i256Ty});
+      return i256Ty;
     }
 
     llvm_unreachable("Unimplemented type conversion");

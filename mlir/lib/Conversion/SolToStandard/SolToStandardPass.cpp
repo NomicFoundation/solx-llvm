@@ -175,16 +175,10 @@ struct ConvertSolToStandardPass
 
     evm::populateStage1Pats(pats, tyConv);
 
-    // Assign slots to state variables.
+    // Assign addresses to immutables.
+    // TODO: Move this to the frontend like we did for state variable slots.
     mod.walk([&](sol::ContractOp contr) {
-      // Slots start from 0 and immutables from address 128
-      APInt slot(256, 0), immAddr(256, 128);
-      contr.walk([&](sol::StateVarOp stateVar) {
-        stateVar->setAttr(
-            "slot",
-            IntegerAttr::get(IntegerType::get(&getContext(), 256), slot));
-        slot += evm::getStorageSlotCount(stateVar.getType());
-      });
+      APInt immAddr(256, 128);
       contr.walk([&](sol::ImmutableOp immOp) {
         immOp->setAttr(
             "addr",
