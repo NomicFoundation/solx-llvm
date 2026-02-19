@@ -896,17 +896,21 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
   if (auto stringTy = dyn_cast<sol::StringType>(ty)) {
     Value tailAddr = addr;
 
-    // Copy the decoded string to a new memory allocation.
     Value sizeInBytes = genLoad(tailAddr);
-    Value dstAddr = genMemAllocForDynArray(
-        sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc);
     Value thirtyTwo = bExt.genI256Const(32);
-    Value dstDataAddr = b.create<arith::AddIOp>(loc, dstAddr, thirtyTwo);
     Value srcDataAddr = b.create<arith::AddIOp>(loc, tailAddr, thirtyTwo);
     Value endAddr = b.create<arith::AddIOp>(loc, srcDataAddr, sizeInBytes);
     genRevertWithMsg(b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt,
                                              endAddr, tupleEnd),
                      "ABI decoding: invalid byte array length", loc);
+
+    if (stringTy.getDataLocation() == sol::DataLocation::CallData)
+      return bExt.genLLVMStruct({srcDataAddr, sizeInBytes});
+
+    // Copy the decoded string to a new memory allocation.
+    Value dstAddr = genMemAllocForDynArray(
+        sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc);
+    Value dstDataAddr = b.create<arith::AddIOp>(loc, dstAddr, thirtyTwo);
 
     // FIXME: ABIFunctions::abiDecodingFunctionByteArrayAvailableLength only
     // allocates length + 32 (where length is rounded up to a multiple of 32)
