@@ -858,10 +858,18 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
                 genABITupleDecoding(arrTy.getEltType(), offsetFromSrcArr,
                                     fromMem, tupleStart, tupleEnd, loc));
           } else {
-            b.create<yul::MStoreOp>(
-                loc, iDstAddr,
+            auto elemVal =
                 genABITupleDecoding(arrTy.getEltType(), iSrcAddr, fromMem,
-                                    tupleStart, tupleEnd, loc));
+                                    tupleStart, tupleEnd, loc);
+            auto intTy = dyn_cast<IntegerType>(elemVal.getType());
+
+            // If the element type is an integer smaller than 256 bits, we need
+            // to extend it. In case we don't do that, store will place the
+            // value in the higher bits, which is incorrect.
+            if (intTy && intTy.getWidth() < 256)
+              elemVal =
+                  bExt.genIntCast(/*width=*/256, intTy.isSigned(), elemVal);
+            b.create<yul::MStoreOp>(loc, iDstAddr, elemVal);
           }
 
           Value srcStride =
