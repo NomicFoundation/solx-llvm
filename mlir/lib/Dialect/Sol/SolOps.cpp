@@ -91,12 +91,26 @@ bool EnumCastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
 
 bool BytesCastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
   assert(inputs.size() == 1 && outputs.size() == 1);
-  if (auto inpIntTy = dyn_cast<IntegerType>(inputs.front())) {
-    auto outBytesTy = cast<BytesType>(outputs.front());
+  Type inpTy = inputs.front();
+  Type outTy = outputs.front();
+
+  // int -> int is not a bytes cast.
+  if (isa<IntegerType>(inpTy) && isa<IntegerType>(outTy))
+    return false;
+
+  // bytes -> bytes.
+  if (isa<BytesType>(inpTy) && isa<BytesType>(outTy))
+    return true;
+
+  // int -> bytes.
+  if (auto inpIntTy = dyn_cast<IntegerType>(inpTy)) {
+    auto outBytesTy = cast<BytesType>(outTy);
     return inpIntTy.getWidth() == outBytesTy.getSize() * 8;
   }
-  return cast<BytesType>(inputs.front()).getSize() * 8 ==
-         cast<IntegerType>(outputs.front()).getWidth();
+
+  // bytes -> int.
+  return cast<BytesType>(inpTy).getSize() * 8 ==
+         cast<IntegerType>(outTy).getWidth();
 }
 
 //===----------------------------------------------------------------------===//

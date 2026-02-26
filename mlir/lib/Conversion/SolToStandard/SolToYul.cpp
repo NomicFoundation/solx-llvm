@@ -134,10 +134,23 @@ struct BytesCastOpLowering : public OpConversionPattern<sol::BytesCastOp> {
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
     mlir::solgen::BuilderExt bExt(r, loc);
+    Type inpTy = op.getInp().getType();
+    Type outTy = op.getType();
 
-    // Bytes to int
-    if (auto inpBytesTy = dyn_cast<sol::BytesType>(op.getInp().getType())) {
-      auto outIntTy = cast<IntegerType>(op.getType());
+    // Bytes to bytes
+    if (auto inpBytesTy = dyn_cast<sol::BytesType>(inpTy)) {
+      if (auto outBytesTy = dyn_cast<sol::BytesType>(outTy)) {
+        unsigned keepBytes = inpBytesTy.getSize() < outBytesTy.getSize()
+                                 ? inpBytesTy.getSize()
+                                 : outBytesTy.getSize();
+        auto shiftAmt = bExt.genI256Const(256 - (8 * keepBytes));
+        auto shr = r.create<arith::ShRUIOp>(loc, adaptor.getInp(), shiftAmt);
+        r.replaceOpWithNewOp<arith::ShLIOp>(op, shr, shiftAmt);
+        return success();
+      }
+
+      // Bytes to int
+      auto outIntTy = cast<IntegerType>(outTy);
       auto shiftAmt = bExt.genI256Const(256 - (8 * inpBytesTy.getSize()));
       auto shr = r.create<arith::ShRUIOp>(loc, adaptor.getInp(), shiftAmt);
       auto repl = bExt.genIntCast(outIntTy.getWidth(), /*isSigned=*/false, shr);
@@ -146,8 +159,8 @@ struct BytesCastOpLowering : public OpConversionPattern<sol::BytesCastOp> {
     }
 
     // Int to bytes
-    assert(isa<IntegerType>(adaptor.getInp().getType()));
-    auto outBytesTy = cast<sol::BytesType>(op.getType());
+    assert(isa<IntegerType>(inpTy));
+    auto outBytesTy = cast<sol::BytesType>(outTy);
     Value inpAsI256 =
         bExt.genIntCast(/*width=*/256, /*isSigned=*/false, adaptor.getInp());
     auto shiftAmt = bExt.genI256Const(256 - (8 * outBytesTy.getSize()));
