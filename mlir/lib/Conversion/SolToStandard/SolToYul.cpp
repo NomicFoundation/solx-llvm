@@ -2064,6 +2064,16 @@ struct ThisOpLowering : public OpRewritePattern<sol::ThisOp> {
   }
 };
 
+struct CallerOpLowering : public OpRewritePattern<sol::CallerOp> {
+  using OpRewritePattern<sol::CallerOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(sol::CallerOp op,
+                                PatternRewriter &r) const override {
+    r.replaceOpWithNewOp<yul::CallerOp>(op);
+    return success();
+  }
+};
+
 struct OriginOpLowering : public OpRewritePattern<sol::OriginOp> {
   using OpRewritePattern<sol::OriginOp>::OpRewritePattern;
 
@@ -3546,7 +3556,7 @@ void evm::populateAddrPat(RewritePatternSet &pats, TypeConverter &tyConv) {
            ChainIdOpLowering, CoinbaseOpLowering, DifficultyOpLowering,
            GasLimitOpLowering, BlockNumberOpLowering, PrevRandaoOpLowering,
            TimestampOpLowering, GasLeftOpLowering, LibAddrOpLowering,
-           CodeHashOpLowering>(pats.getContext());
+           CodeHashOpLowering, CallerOpLowering>(pats.getContext());
   pats.add<SigOpLowering>(tyConv, pats.getContext());
 }
 

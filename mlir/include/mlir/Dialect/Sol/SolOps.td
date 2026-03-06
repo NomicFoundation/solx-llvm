@@ -762,6 +762,13 @@ def Sol_ThisOp : Sol_Op<"this"> {
   let assemblyFormat = "attr-dict `:` type($addr)";
 }
 
+def Sol_CallerOp : Sol_Op<"caller"> {
+  let summary = "Returns the caller address";
+  let results = (outs Sol_AddressType:$addr);
+
+  let assemblyFormat = "attr-dict `:` type($addr)";
+}
+
 def Sol_OriginOp : Sol_Op<"origin"> {
   let summary =
       "Returns the address of the original transaction sender (tx.origin)";
