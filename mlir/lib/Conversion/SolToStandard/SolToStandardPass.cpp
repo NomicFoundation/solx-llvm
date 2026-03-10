@@ -17,6 +17,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -181,18 +182,22 @@ struct ConvertSolToStandardPass
     convTgt.addDynamicallyLegalOp<sol::FuncOp>([&](sol::FuncOp op) {
       return tyConv.isSignatureLegal(op.getFunctionType());
     });
+    // arith.select: scf.if -> arith.select folding.
     convTgt.addDynamicallyLegalOp<sol::CallOp, sol::ICallOp, sol::ReturnOp,
-                                  sol::LoadImmutableOp>(
+                                  sol::LoadImmutableOp, arith::SelectOp>(
         [&](Operation *op) { return tyConv.isLegal(op); });
+    scf::populateSCFStructuralTypeConversionTarget(tyConv, convTgt);
 
     RewritePatternSet pats(&getContext());
     pats.add<ConvCastOpLowering>(tyConv, &getContext());
     populateAnyFunctionOpInterfaceTypeConversionPattern(pats, tyConv);
     pats.add<GenericTypeConversion<sol::CallOp>,
              GenericTypeConversion<sol::ICallOp>,
-             GenericTypeConversion<sol::ReturnOp>>(tyConv, &getContext());
+             GenericTypeConversion<sol::ReturnOp>,
+             GenericTypeConversion<arith::SelectOp>>(tyConv, &getContext());
 
     evm::populateStage1Pats(pats, tyConv);
+    scf::populateSCFStructuralTypeConversions(tyConv, pats);
 
     // Assign addresses to immutables.
     // TODO: Move this to the frontend like we did for state variable slots.
