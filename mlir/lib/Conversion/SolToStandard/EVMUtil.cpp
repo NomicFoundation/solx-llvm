@@ -1325,7 +1325,9 @@ Value evm::Builder::genABITupleEncoding(
       srcArrAddr = genDataAddrPtr(src, arrTy, loc);
 
       // Generate the tail address update.
-      Value sizeInBytes = b.create<arith::MulIOp>(loc, i256Size, thirtyTwo);
+      Value sizeInBytes = b.create<arith::MulIOp>(
+          loc, i256Size,
+          bExt.genI256Const(getCallDataHeadSize(arrTy.getEltType())));
       tailAddr = b.create<arith::AddIOp>(loc, dstArrAddr, sizeInBytes);
     } else {
       size = bExt.genIdxConst(arrTy.getSize());
@@ -1335,7 +1337,9 @@ Value evm::Builder::genABITupleEncoding(
       if (dstAddrInTail) {
         // Generate the tail address update.
         Value i256Size = bExt.genI256Const(arrTy.getSize());
-        Value sizeInBytes = b.create<arith::MulIOp>(loc, i256Size, thirtyTwo);
+        Value sizeInBytes = b.create<arith::MulIOp>(
+            loc, i256Size,
+            bExt.genI256Const(getCallDataHeadSize(arrTy.getEltType())));
         tailAddr = b.create<arith::AddIOp>(loc, dstArrAddr, sizeInBytes);
       }
     }
