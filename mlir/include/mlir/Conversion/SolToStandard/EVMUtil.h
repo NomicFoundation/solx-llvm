@@ -131,7 +131,8 @@ public:
 
   /// Generates the memory allocation code for dynamic array.
   Value genMemAllocForDynArray(Value sizeVar, Value sizeInBytes,
-                               std::optional<Location> locArg = std::nullopt);
+                               std::optional<Location> locArg = std::nullopt,
+                               bool genLengthPanicGuard = false);
 
   /// Generates the memory allocation code.
   Value genMemAlloc(Type ty, bool zeroInit, ValueRange initVals, Value sizeVar,
