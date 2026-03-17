@@ -297,10 +297,18 @@ Value evm::Builder::genMemAlloc(AllocSize size,
 }
 
 Value evm::Builder::genMemAllocForDynArray(Value sizeVar, Value sizeInBytes,
-                                           std::optional<Location> locArg) {
+                                           std::optional<Location> locArg,
+                                           bool genLengthPanicGuard) {
   Location loc = locArg ? *locArg : defLoc;
 
   mlir::solgen::BuilderExt bExt(b, loc);
+
+  if (genLengthPanicGuard) {
+    auto panicCond = b.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ugt, sizeVar,
+        bExt.genI256Const(APInt::getLowBitsSet(256, 64)));
+    genPanic(mlir::evm::PanicCode::ResourceError, panicCond, loc);
+  }
 
   // dynSize is size + length-slot where length-slot's size is 32 bytes.
   auto dynSizeInBytes =
@@ -1670,7 +1678,8 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
         return bExt.genLLVMStruct({srcAddr, i256Size});
 
       dstAddr = genMemAllocForDynArray(
-          i256Size, b.create<arith::MulIOp>(loc, i256Size, thirtyTwo));
+          i256Size, b.create<arith::MulIOp>(loc, i256Size, thirtyTwo), loc,
+          true);
       ret = dstAddr;
       // Skip the size fields in both the addresses.
       dstAddr = b.create<arith::AddIOp>(loc, dstAddr, thirtyTwo);
@@ -1775,7 +1784,7 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
 
     // Copy the decoded string to a new memory allocation.
     Value dstAddr = genMemAllocForDynArray(
-        sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc);
+        sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc, true);
     Value dstDataAddr = b.create<arith::AddIOp>(loc, dstAddr, thirtyTwo);
 
     if (fromMem)
