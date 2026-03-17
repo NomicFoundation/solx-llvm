@@ -1778,20 +1778,19 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
         sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc);
     Value dstDataAddr = b.create<arith::AddIOp>(loc, dstAddr, thirtyTwo);
 
-    // FIXME: ABIFunctions::abiDecodingFunctionByteArrayAvailableLength only
-    // allocates length + 32 (where length is rounded up to a multiple of 32)
-    // bytes. The "+ 32" is for the size field. But it calls
-    // YulUtilFunctions::copyToMemoryFunction with the _cleanup param enabled
-    // which makes the writing of the zero at the end an out-of-bounds write.
-    // Even if the allocation was done correctly, do we need to write zero at
-    // the end?
-
     if (fromMem)
       // TODO? Check m_evmVersion.hasMcopy() and legalize here or in sol.mcopy
       // lowering?
       b.create<yul::MCopyOp>(loc, dstDataAddr, srcDataAddr, sizeInBytes);
     else
       b.create<yul::CallDataCopyOp>(loc, dstDataAddr, srcDataAddr, sizeInBytes);
+
+    // Canonicalize the trailing bytes after a variable-length copy.
+    // This clears the 32-byte word starting at dst + length. As in the
+    // existing decode helper flow, this write may extend past the
+    // rounded payload boundary.
+    Value cleanupAddr = b.create<arith::AddIOp>(loc, dstDataAddr, sizeInBytes);
+    b.create<yul::MStoreOp>(loc, cleanupAddr, bExt.genI256Const(0));
 
     return dstAddr;
   }
