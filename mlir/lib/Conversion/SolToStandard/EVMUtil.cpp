@@ -66,70 +66,6 @@ int64_t evm::getMallocSize(Type ty) {
   return 32;
 }
 
-unsigned evm::getStorageSlotCount(Type ty) {
-  if (isa<IntegerType>(ty) || isa<sol::EnumType>(ty) ||
-      isa<sol::BytesType>(ty) || isa<sol::MappingType>(ty) ||
-      isa<sol::FuncRefType>(ty) || isa<sol::StringType>(ty) ||
-      sol::isAddressLikeType(ty))
-    return 1;
-
-  if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
-    // Dynamic arrays store only the head slot in-place.
-    if (arrTy.isDynSized())
-      return 1;
-    return arrTy.getSize() * getStorageSlotCount(arrTy.getEltType());
-  }
-
-  if (auto structTy = dyn_cast<sol::StructType>(ty)) {
-    int64_t sum = 0;
-    for (Type memTy : structTy.getMemberTypes())
-      sum += getStorageSlotCount(memTy);
-    return sum;
-  }
-
-  llvm_unreachable("NYI: Other types");
-}
-
-bool evm::canBePacked(Type ty) {
-  // Scalars can be packed within a slot.
-  if (isa<IntegerType>(ty) || isa<sol::EnumType>(ty) ||
-      isa<sol::BytesType>(ty) || isa<sol::FuncRefType>(ty) ||
-      sol::isAddressLikeType(ty))
-    return true;
-
-  // Aggregates are slot-aligned and cannot be packed.
-  if (isa<sol::ArrayType>(ty) || isa<sol::StructType>(ty) ||
-      isa<sol::MappingType>(ty) || isa<sol::StringType>(ty))
-    return false;
-
-  llvm_unreachable("NYI");
-}
-
-unsigned evm::getStorageByteSize(Type ty) {
-  assert(canBePacked(ty) && "Only packable types have byte size");
-
-  if (auto intTy = dyn_cast<IntegerType>(ty))
-    // Bool occupies 1 byte in storage.
-    return intTy.getWidth() == 1 ? 1 : intTy.getWidth() / 8;
-
-  if (auto bytesTy = dyn_cast<sol::BytesType>(ty))
-    return bytesTy.getSize();
-
-  // Enums can have at most 256 members, so always 1 byte.
-  if (isa<sol::EnumType>(ty))
-    return 1;
-
-  // Address-like types are 20 bytes.
-  if (sol::isAddressLikeType(ty))
-    return 20;
-
-  // Internal function reference.
-  if (isa<sol::FuncRefType>(ty))
-    return 8;
-
-  llvm_unreachable("NYI");
-}
-
 Value evm::Builder::normalizeABIScalarForEncoding(
     Type ty, Value val, Location loc,
     std::optional<sol::DataLocation> srcDataLoc) {
@@ -510,7 +446,7 @@ Value evm::Builder::genAddrAtIdx(Value baseAddr, Value idx, Type ty,
   if (dataLoc == sol::DataLocation::Storage) {
     Value stride;
     if (auto arrTy = dyn_cast<sol::ArrayType>(ty))
-      stride = bExt.genI256Const(evm::getStorageSlotCount(arrTy.getEltType()));
+      stride = bExt.genI256Const(sol::getStorageSlotCount(arrTy.getEltType()));
     else if (isa<sol::StringType>(ty))
       stride = bExt.genI256Const(1);
     Value scaledIdx = b.create<arith::MulIOp>(loc, idx, stride);
@@ -546,7 +482,7 @@ Value evm::Builder::genPackedStorageAddr(Value baseSlot, Value idx, Type eltTy,
   mlir::solgen::BuilderExt bExt(b, loc);
 
   auto [slot, byteOffset] = genPackedStorageAddrPair(
-      b, baseSlot, idx, getStorageByteSize(eltTy), isDataLeftAligned, loc);
+      b, baseSlot, idx, sol::getStorageByteSize(eltTy), isDataLeftAligned, loc);
   return bExt.genLLVMStruct({slot, byteOffset});
 }
 
