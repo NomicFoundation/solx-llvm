@@ -69,12 +69,16 @@ int64_t evm::getMallocSize(Type ty) {
 unsigned evm::getStorageSlotCount(Type ty) {
   if (isa<IntegerType>(ty) || isa<sol::EnumType>(ty) ||
       isa<sol::BytesType>(ty) || isa<sol::MappingType>(ty) ||
-      isa<sol::FuncRefType>(ty) || sol::hasDynamicallySizedElt(ty) ||
+      isa<sol::FuncRefType>(ty) || isa<sol::StringType>(ty) ||
       sol::isAddressLikeType(ty))
     return 1;
 
-  if (auto arrTy = dyn_cast<sol::ArrayType>(ty))
+  if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
+    // Dynamic arrays store only the head slot in-place.
+    if (arrTy.isDynSized())
+      return 1;
     return arrTy.getSize() * getStorageSlotCount(arrTy.getEltType());
+  }
 
   if (auto structTy = dyn_cast<sol::StructType>(ty)) {
     int64_t sum = 0;
