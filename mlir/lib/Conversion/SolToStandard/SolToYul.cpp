@@ -1447,11 +1447,11 @@ struct PushOpLowering : public OpConversionPattern<sol::PushOp> {
       llvm_unreachable("");
     }
 
-    if (evm::canBePacked(eltTy)) {
+    if (sol::canBePacked(eltTy)) {
       r.replaceOp(op, evmB.genPackedStorageAddr(dataSlot, oldSize, eltTy));
     } else {
       // Slot-aligned layout.
-      Value stride = bExt.genI256Const(evm::getStorageSlotCount(eltTy));
+      Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
       Value scaledIdx = r.create<arith::MulIOp>(loc, oldSize, stride);
       r.replaceOp(op, r.create<arith::AddIOp>(loc, dataSlot, scaledIdx));
     }
@@ -1526,10 +1526,10 @@ struct PopOpLowering : public OpConversionPattern<sol::PopOp> {
     }
 
     // Zero the deleted element.
-    if (evm::canBePacked(eltTy)) {
+    if (sol::canBePacked(eltTy)) {
       // Packed: load-modify-store to clear just those bytes.
-      unsigned numBits = evm::getStorageByteSize(eltTy) * 8;
-      Value eltByteSize = bExt.genI256Const(evm::getStorageByteSize(eltTy));
+      unsigned numBits = sol::getStorageByteSize(eltTy) * 8;
+      Value eltByteSize = bExt.genI256Const(sol::getStorageByteSize(eltTy));
       Value bytePos = r.create<arith::MulIOp>(loc, newSize, eltByteSize);
       Value thirtyTwo = bExt.genI256Const(32);
       Value slotOffset = r.create<arith::DivUIOp>(loc, bytePos, thirtyTwo);
@@ -1542,7 +1542,7 @@ struct PopOpLowering : public OpConversionPattern<sol::PopOp> {
       r.create<yul::SStoreOp>(loc, tailSlot, cleared);
     } else {
       // Slot-aligned: zero the whole slot.
-      Value stride = bExt.genI256Const(evm::getStorageSlotCount(eltTy));
+      Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
       Value scaledIdx = r.create<arith::MulIOp>(loc, newSize, stride);
       Value tailAddr = r.create<arith::AddIOp>(loc, dataSlot, scaledIdx);
       r.create<yul::SStoreOp>(loc, tailAddr, bExt.genI256Const(0));
@@ -1565,7 +1565,7 @@ struct AddrOfOpLowering : public OpRewritePattern<sol::AddrOfOp> {
     assert(sym);
     if (auto stateVarOp = dyn_cast<sol::StateVarOp>(sym)) {
       Value slot = bExt.genI256Const(stateVarOp.getSlot());
-      if (evm::canBePacked(stateVarOp.getType())) {
+      if (sol::canBePacked(stateVarOp.getType())) {
         Value offset = bExt.genI256Const(stateVarOp.getByteOffset());
         r.replaceOp(op, bExt.genLLVMStruct({slot, offset}));
       } else {
@@ -1632,11 +1632,11 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
                              ? evmB.genDataAddrPtr(remappedBaseAddr, baseAddrTy)
                              : remappedBaseAddr;
 
-        if (evm::canBePacked(eltTy)) {
+        if (sol::canBePacked(eltTy)) {
           res = evmB.genPackedStorageAddr(baseSlot, castedIdx, eltTy);
         } else {
           // Slot-aligned layout.
-          Value stride = bExt.genI256Const(evm::getStorageSlotCount(eltTy));
+          Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
           Value scaledIdx = r.create<arith::MulIOp>(loc, castedIdx, stride);
           res = r.create<arith::AddIOp>(loc, baseSlot, scaledIdx);
         }
@@ -1656,8 +1656,8 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         for (int64_t i = 0; i < fieldIdx; ++i) {
           Type prevTy = memberTypes[i];
 
-          if (evm::canBePacked(prevTy)) {
-            unsigned prevSize = evm::getStorageByteSize(prevTy);
+          if (sol::canBePacked(prevTy)) {
+            unsigned prevSize = sol::getStorageByteSize(prevTy);
             if (byteOffset + prevSize > 32) {
               slotOffset++;
               byteOffset = 0;
@@ -1669,13 +1669,13 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
               slotOffset++;
               byteOffset = 0;
             }
-            slotOffset += evm::getStorageSlotCount(prevTy);
+            slotOffset += sol::getStorageSlotCount(prevTy);
           }
         }
 
         // Position for target field.
-        if (evm::canBePacked(fieldTy)) {
-          unsigned fieldSize = evm::getStorageByteSize(fieldTy);
+        if (sol::canBePacked(fieldTy)) {
+          unsigned fieldSize = sol::getStorageByteSize(fieldTy);
           if (byteOffset + fieldSize > 32) {
             slotOffset++;
             byteOffset = 0;
@@ -1831,7 +1831,7 @@ struct MapOpLowering : public OpConversionPattern<sol::MapOp> {
     Type resTy = op.getResult().getType();
     if (auto ptrTy = dyn_cast<sol::PointerType>(resTy);
         ptrTy && ptrTy.getDataLocation() == sol::DataLocation::Storage &&
-        evm::canBePacked(ptrTy.getPointeeType())) {
+        sol::canBePacked(ptrTy.getPointeeType())) {
       r.replaceOp(op, bExt.genLLVMStruct({slot, zero}));
     } else {
       r.replaceOp(op, slot);
@@ -1906,7 +1906,7 @@ struct LoadOpLowering : public OpConversionPattern<sol::LoadOp> {
         return r.create<yul::SLoadOp>(loc, slot);
       };
 
-      if (evm::canBePacked(eltTy)) {
+      if (sol::canBePacked(eltTy)) {
         // addr is {slot, offset} struct
         Value slot = r.create<LLVM::ExtractValueOp>(
             loc, i256Ty, addr, r.getDenseI64ArrayAttr({0}));
@@ -2055,7 +2055,7 @@ struct StoreOpLowering : public OpConversionPattern<sol::StoreOp> {
           r.create<yul::SStoreOp>(loc, slot, val);
       };
 
-      if (evm::canBePacked(eltTy)) {
+      if (sol::canBePacked(eltTy)) {
         // addr is {slot, offset} struct
         Value slot = r.create<LLVM::ExtractValueOp>(
             loc, i256Ty, remappedAddr, r.getDenseI64ArrayAttr({0}));

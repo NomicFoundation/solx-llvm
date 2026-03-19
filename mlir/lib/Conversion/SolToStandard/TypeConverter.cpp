@@ -178,7 +178,7 @@ evm::SolTypeConverter::SolTypeConverter() {
     // otherwise.
     case sol::DataLocation::Storage:
     case sol::DataLocation::Transient:
-      if (evm::canBePacked(ty.getPointeeType()))
+      if (sol::canBePacked(ty.getPointeeType()))
         return LLVM::LLVMStructType::getLiteral(ty.getContext(),
                                                 {i256Ty, i256Ty});
       return i256Ty;

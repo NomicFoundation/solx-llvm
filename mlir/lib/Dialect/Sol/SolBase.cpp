@@ -190,6 +190,68 @@ bool mlir::sol::isAddressLikeType(Type ty) {
   return isa<AddressType, ContractType>(ty);
 }
 
+unsigned mlir::sol::getStorageSlotCount(Type ty) {
+  if (isa<IntegerType>(ty) || isa<EnumType>(ty) || isa<BytesType>(ty) ||
+      isa<MappingType>(ty) || isa<FuncRefType>(ty) || isa<StringType>(ty) ||
+      isAddressLikeType(ty))
+    return 1;
+
+  if (auto arrTy = dyn_cast<ArrayType>(ty)) {
+    // Dynamic arrays store only the head slot in-place.
+    if (arrTy.isDynSized())
+      return 1;
+    return arrTy.getSize() * getStorageSlotCount(arrTy.getEltType());
+  }
+
+  if (auto structTy = dyn_cast<StructType>(ty)) {
+    int64_t sum = 0;
+    for (Type memTy : structTy.getMemberTypes())
+      sum += getStorageSlotCount(memTy);
+    return sum;
+  }
+
+  llvm_unreachable("NYI: Other types");
+}
+
+bool mlir::sol::canBePacked(Type ty) {
+  // Scalars can be packed within a slot.
+  if (isa<IntegerType>(ty) || isa<EnumType>(ty) || isa<BytesType>(ty) ||
+      isa<FuncRefType>(ty) || isAddressLikeType(ty))
+    return true;
+
+  // Aggregates are slot-aligned and cannot be packed.
+  if (isa<ArrayType>(ty) || isa<StructType>(ty) || isa<MappingType>(ty) ||
+      isa<StringType>(ty))
+    return false;
+
+  llvm_unreachable("NYI");
+}
+
+unsigned mlir::sol::getStorageByteSize(Type ty) {
+  assert(canBePacked(ty) && "Only packable types have byte size");
+
+  if (auto intTy = dyn_cast<IntegerType>(ty))
+    // Bool occupies 1 byte in storage.
+    return intTy.getWidth() == 1 ? 1 : intTy.getWidth() / 8;
+
+  if (auto bytesTy = dyn_cast<BytesType>(ty))
+    return bytesTy.getSize();
+
+  // Enums can have at most 256 members, so always 1 byte.
+  if (isa<EnumType>(ty))
+    return 1;
+
+  // Address-like types are 20 bytes.
+  if (isAddressLikeType(ty))
+    return 20;
+
+  // Internal function reference.
+  if (isa<FuncRefType>(ty))
+    return 8;
+
+  llvm_unreachable("NYI");
+}
+
 static ParseResult parseDataLocation(AsmParser &parser,
                                      DataLocation &dataLocation) {
   StringRef dataLocationTok;

@@ -62,6 +62,18 @@ bool isRevertStringsEnabled(ModuleOp mod);
 /// Return true if the type is address-like (i.e. address or contract type).
 bool isAddressLikeType(Type ty);
 
+/// MLIR version of solidity ast's Type::storageSize().
+unsigned getStorageSlotCount(Type ty);
+
+/// Returns true if the type can be packed within a storage slot.
+/// Packable types (scalars) need {slot, offset} representation.
+/// Non-packable types (arrays, structs, mappings) are slot-aligned and only
+/// need slot.
+bool canBePacked(mlir::Type ty);
+
+/// Returns the byte size of a packable type in storage.
+unsigned getStorageByteSize(mlir::Type ty);
+
 ///
 /// The following functions are used to query the capabilities of the specified
 /// evm in the module.

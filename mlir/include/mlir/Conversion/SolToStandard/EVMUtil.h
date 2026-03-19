@@ -58,18 +58,6 @@ unsigned getCallDataHeadSize(Type ty);
 /// the element type size.
 int64_t getMallocSize(Type ty);
 
-/// MLIR version of solidity ast's Type::storageSize().
-unsigned getStorageSlotCount(Type ty);
-
-/// Returns true if the type can be packed within a storage slot.
-/// Packable types (scalars) need {slot, offset} representation.
-/// Non-packable types (arrays, structs, mappings) are slot-aligned and only
-/// need slot.
-bool canBePacked(mlir::Type ty);
-
-/// Returns the byte size of a packable type in storage.
-unsigned getStorageByteSize(mlir::Type ty);
-
 /// IR Builder for EVM specific lowering.
 class Builder {
   // It's possible to provide a mlirgen::BuilderHelper member with same default
