@@ -395,6 +395,50 @@ void StructType::print(AsmPrinter &printer) const {
   printer << "), " << stringifyDataLocation(getDataLocation()) << ">";
 }
 
+static void
+computeStructStorageMemberOffsets(ArrayRef<Type> memberTypes,
+                                  SmallVectorImpl<uint64_t> &slotOffsets,
+                                  SmallVectorImpl<uint64_t> &byteOffsets) {
+  uint64_t slotOffset = 0;
+  uint64_t byteOffset = 0;
+
+  slotOffsets.reserve(memberTypes.size());
+  byteOffsets.reserve(memberTypes.size());
+
+  for (Type memberTy : memberTypes) {
+    if (canBePacked(memberTy)) {
+      uint64_t memberByteSize = getStorageByteSize(memberTy);
+      if (byteOffset + memberByteSize > 32) {
+        ++slotOffset;
+        byteOffset = 0;
+      }
+
+      slotOffsets.push_back(slotOffset);
+      byteOffsets.push_back(byteOffset);
+      byteOffset += memberByteSize;
+      continue;
+    }
+
+    if (byteOffset != 0) {
+      ++slotOffset;
+      byteOffset = 0;
+    }
+    slotOffsets.push_back(slotOffset);
+    byteOffsets.push_back(0);
+    slotOffset += getStorageSlotCount(memberTy);
+  }
+}
+
+StructType::StorageMemberOffset
+StructType::getStorageMemberOffset(uint64_t memberIdx) const {
+  assert(getDataLocation() == DataLocation::Storage &&
+         "Storage offsets are only defined for storage structs");
+  assert(memberIdx < getMemberTypes().size() && "Member index out of bounds");
+
+  return {/*slotOffset=*/getMemberSlotOffsets()[memberIdx],
+          /*byteOffset=*/getMemberByteOffsets()[memberIdx]};
+}
+
 //===----------------------------------------------------------------------===//
 // PointerType
 //===----------------------------------------------------------------------===//
