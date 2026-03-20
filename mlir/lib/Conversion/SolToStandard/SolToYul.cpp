@@ -1644,50 +1644,20 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
       } else if (auto structTy = dyn_cast<sol::StructType>(baseAddrTy)) {
         // Field index is always constant for struct access.
         auto constIdx = cast<arith::ConstantIntOp>(idx.getDefiningOp());
-        int64_t fieldIdx = constIdx.value();
+        uint64_t fieldIdx = constIdx.value();
 
         ArrayRef<Type> memberTypes = structTy.getMemberTypes();
         Type fieldTy = memberTypes[fieldIdx];
-
-        // Compute slot/byte offset by walking preceding fields.
-        unsigned slotOffset = 0;
-        unsigned byteOffset = 0;
-
-        for (int64_t i = 0; i < fieldIdx; ++i) {
-          Type prevTy = memberTypes[i];
-
-          if (sol::canBePacked(prevTy)) {
-            unsigned prevSize = sol::getStorageByteSize(prevTy);
-            if (byteOffset + prevSize > 32) {
-              slotOffset++;
-              byteOffset = 0;
-            }
-            byteOffset += prevSize;
-          } else {
-            // Non-packable: flush partial slot, add its slot count.
-            if (byteOffset > 0) {
-              slotOffset++;
-              byteOffset = 0;
-            }
-            slotOffset += sol::getStorageSlotCount(prevTy);
-          }
-        }
+        auto [slotOffset, byteOffset] =
+            structTy.getStorageMemberOffset(fieldIdx);
 
         // Position for target field.
         if (sol::canBePacked(fieldTy)) {
-          unsigned fieldSize = sol::getStorageByteSize(fieldTy);
-          if (byteOffset + fieldSize > 32) {
-            slotOffset++;
-            byteOffset = 0;
-          }
           // Result: {baseSlot + slotOffset, byteOffset}
           Value slot = r.create<arith::AddIOp>(loc, remappedBaseAddr,
                                                bExt.genI256Const(slotOffset));
           res = bExt.genLLVMStruct({slot, bExt.genI256Const(byteOffset)});
         } else {
-          // Non-packable: flush partial slot.
-          if (byteOffset > 0)
-            slotOffset++;
           res = r.create<arith::AddIOp>(loc, remappedBaseAddr,
                                         bExt.genI256Const(slotOffset));
         }
