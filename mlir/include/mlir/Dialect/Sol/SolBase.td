@@ -106,19 +106,22 @@ def Sol_StructType : Sol_Type<"Struct", "struct"> {
   let parameters = (ins ArrayRefParameter<"Type">:$memberTypes,
                         Sol_DataLocation:$dataLocation,
                         ArrayRefParameter<"uint64_t">:$memberSlotOffsets,
-                        ArrayRefParameter<"uint64_t">:$memberByteOffsets);
+                        ArrayRefParameter<"uint64_t">:$memberByteOffsets,
+                        "uint64_t":$storageSlotCount);
   let skipDefaultBuilders = 1;
   let builders = [
     TypeBuilder<(ins "ArrayRef<Type>":$memberTypes,
                      "DataLocation":$dataLocation), [{
       ::llvm::SmallVector<uint64_t, 8> memberSlotOffsets;
       ::llvm::SmallVector<uint64_t, 8> memberByteOffsets;
+      uint64_t storageSlotCount = 0;
       if (dataLocation == DataLocation::Storage)
         computeStructStorageMemberOffsets(memberTypes, memberSlotOffsets,
-                                          memberByteOffsets);
+                                          memberByteOffsets,
+                                          storageSlotCount);
 
       return $_get($_ctxt, memberTypes, dataLocation, memberSlotOffsets,
-                   memberByteOffsets);
+                   memberByteOffsets, storageSlotCount);
     }]>
   ];
   let extraClassDeclaration = [{

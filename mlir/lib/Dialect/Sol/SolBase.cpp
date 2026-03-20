@@ -200,14 +200,20 @@ unsigned mlir::sol::getStorageSlotCount(Type ty) {
     // Dynamic arrays store only the head slot in-place.
     if (arrTy.isDynSized())
       return 1;
-    return arrTy.getSize() * getStorageSlotCount(arrTy.getEltType());
+
+    Type eltTy = arrTy.getEltType();
+    unsigned size = arrTy.getSize();
+    if (!canBePacked(eltTy))
+      return size * getStorageSlotCount(eltTy);
+
+    // Packed arrays of small elements can fit in fewer slots.
+    return llvm::divideCeil(size, 32u / getStorageByteSize(eltTy));
   }
 
   if (auto structTy = dyn_cast<StructType>(ty)) {
-    int64_t sum = 0;
-    for (Type memTy : structTy.getMemberTypes())
-      sum += getStorageSlotCount(memTy);
-    return sum;
+    assert(structTy.getDataLocation() == DataLocation::Storage &&
+           "Storage slot count is only defined for storage structs");
+    return structTy.getStorageSlotCount();
   }
 
   llvm_unreachable("NYI: Other types");
@@ -395,10 +401,9 @@ void StructType::print(AsmPrinter &printer) const {
   printer << "), " << stringifyDataLocation(getDataLocation()) << ">";
 }
 
-static void
-computeStructStorageMemberOffsets(ArrayRef<Type> memberTypes,
-                                  SmallVectorImpl<uint64_t> &slotOffsets,
-                                  SmallVectorImpl<uint64_t> &byteOffsets) {
+static void computeStructStorageMemberOffsets(
+    ArrayRef<Type> memberTypes, SmallVectorImpl<uint64_t> &slotOffsets,
+    SmallVectorImpl<uint64_t> &byteOffsets, uint64_t &storageSlotCount) {
   uint64_t slotOffset = 0;
   uint64_t byteOffset = 0;
 
@@ -427,6 +432,11 @@ computeStructStorageMemberOffsets(ArrayRef<Type> memberTypes,
     byteOffsets.push_back(0);
     slotOffset += getStorageSlotCount(memberTy);
   }
+
+  if (byteOffset > 0)
+    ++slotOffset;
+
+  storageSlotCount = slotOffset;
 }
 
 StructType::StorageMemberOffset
