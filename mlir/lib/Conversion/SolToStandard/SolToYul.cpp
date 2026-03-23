@@ -1414,7 +1414,7 @@ struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
     Value dataSize = r.create<arith::SubIOp>(loc, currDst, dstStart);
     r.create<yul::MStoreOp>(loc, freePtr, dataSize);
     Value allocationSize = r.create<arith::SubIOp>(loc, currDst, freePtr);
-    evmB.genFreePtrUpd(freePtr, bExt.genRoundUpToMultiple<32>(allocationSize));
+    evmB.genFreePtrUpd(freePtr, allocationSize);
     r.replaceOp(op, freePtr);
 
     return success();
