@@ -420,15 +420,17 @@ void evm::Builder::genFreePtrUpd(Value freePtr, Value size,
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
-  // FIXME: Shouldn't we check for overflow in the freePtr + size operation
-  // and generate PanicCode::ResourceError?
-  //
-  // FIXME: Do we need round up the size to a multiple of 32 here?
-  Value newFreePtr = b.create<arith::AddIOp>(loc, freePtr, size);
+  Value newFreePtr = b.create<arith::AddIOp>(
+      loc, freePtr, bExt.genRoundUpToMultiple<32>(size));
 
-  // Generate the PanicCode::ResourceError check.
-  //
-  // TODO: Do we need to imposes a hard limit of ``type(uint64).max`` here?
+  Value isTooLarge =
+      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, newFreePtr,
+                              bExt.genI256Const(APInt::getLowBitsSet(256, 64)));
+  Value overflowed = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult,
+                                             newFreePtr, freePtr);
+  Value panicCond = b.create<arith::OrIOp>(loc, isTooLarge, overflowed);
+  genPanic(mlir::evm::PanicCode::ResourceError, panicCond, loc);
+
   b.create<yul::MStoreOp>(loc, bExt.genI256Const(64), newFreePtr);
 }
 
