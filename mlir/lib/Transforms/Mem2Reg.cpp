@@ -396,6 +396,7 @@ LogicalResult MemorySlotPromotionAnalyzer::computeBlockingUses(
       if (!promotable.canUsesBeRemoved(blockingUses, newBlockingUses,
                                        dataLayout))
         return failure();
+      regionsWithDirectUse.insert(user->getParentRegion());
     } else if (auto promotable = dyn_cast<PromotableMemOpInterface>(user)) {
       if (!promotable.canUsesBeRemoved(slot, blockingUses, newBlockingUses,
                                        dataLayout))
