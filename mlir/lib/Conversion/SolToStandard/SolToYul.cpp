@@ -2541,17 +2541,22 @@ struct DecodeOpLowering : public OpConversionPattern<sol::DecodeOp> {
   LogicalResult matchAndRewrite(sol::DecodeOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
-    mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(r, loc);
 
     std::vector<Value> results;
-    Value tupleSize = r.create<yul::MLoadOp>(loc, adaptor.getAddr());
-    Value tupleStart =
-        r.create<arith::AddIOp>(loc, adaptor.getAddr(), bExt.genI256Const(32));
+    Type srcTy = op.getAddr().getType();
+    auto srcStringTy = dyn_cast<sol::StringType>(srcTy);
+    assert(srcStringTy &&
+           "abi.decode source must be bytes memory/calldata in sol dialect");
+    sol::DataLocation dataLoc = srcStringTy.getDataLocation();
+    assert((dataLoc == sol::DataLocation::Memory ||
+            dataLoc == sol::DataLocation::CallData) &&
+           "abi.decode expects memory/calldata byte buffer");
+
+    Value tupleStart = evmB.genDataAddrPtr(adaptor.getAddr(), srcTy);
+    Value tupleSize = evmB.genDynSize(adaptor.getAddr(), srcTy);
     Value tupleEnd = r.create<arith::AddIOp>(loc, tupleStart, tupleSize);
-    bool fromMem = sol::getDataLocation(op.getAddr().getType()) ==
-                   sol::DataLocation::Memory;
-    assert(fromMem && "NYI");
+    bool fromMem = dataLoc == sol::DataLocation::Memory;
     evmB.genABITupleDecoding(op.getResultTypes(), tupleStart, tupleEnd, results,
                              fromMem);
     r.replaceOp(op, results);
