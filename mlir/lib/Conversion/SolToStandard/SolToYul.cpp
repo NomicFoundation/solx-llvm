@@ -1878,8 +1878,8 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
               arrTy.isDynSized()
                   ? evmB.genDataAddrPtr(remappedBaseAddr, baseAddrTy)
                   : remappedBaseAddr;
-          addrAtIdx =
-              evmB.genCalldataEltAddr(addrAtIdx, outerDataBase, eltTy, loc);
+          addrAtIdx = evmB.genCalldataAccessRef(eltTy, outerDataBase, addrAtIdx,
+                                                /*isNonABI=*/true, loc);
         }
 
         res = addrAtIdx;
@@ -1899,7 +1899,8 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         if (dataLoc == sol::DataLocation::CallData) {
           Type memberTy = structTy.getMemberTypes()[fieldIdx];
           if (sol::hasDynamicallySizedElt(memberTy))
-            res = evmB.genCalldataEltAddr(res, remappedBaseAddr, memberTy, loc);
+            res = evmB.genCalldataAccessRef(memberTy, remappedBaseAddr, res,
+                                            /*isNonABI=*/true, loc);
         }
 
         // Bytes (!sol.string)
@@ -2257,8 +2258,8 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
             // relative-offset word in the head area.
             if (srcDataLoc == sol::DataLocation::CallData &&
                 sol::hasDynamicallySizedElt(eltTy))
-              srcAddrI =
-                  evmB.genCalldataEltAddr(srcAddrI, srcDataAddr, eltTy, loc);
+              srcAddrI = evmB.genCalldataAccessRef(eltTy, srcDataAddr, srcAddrI,
+                                                   /*isNonABI=*/true, loc);
             Value subElm = genCopy(mod, srcAddrI, eltTy, eltSrcDataLoc, r, loc);
             evmB.genStore(subElm, dstAddrI, dstDataLoc);
             r.create<scf::YieldOp>(loc);

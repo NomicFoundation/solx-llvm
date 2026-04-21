@@ -202,16 +202,22 @@ public:
   Value genCalldataDynEltFatPtr(Value headSlotAddr, Value outerDataBase,
                                 std::optional<Location> locArg = std::nullopt);
 
-  /// Resolves a calldata head-slot address to the effective address of an
-  /// element whose type has dynamic ABI content
-  /// (i.e., \c hasDynamicallySizedElt(\p eltTy) is true).
+  /// Resolves a calldata reference pointer to the effective value for \p ty,
+  /// validating bounds along the way.
   ///
-  /// - Truly dynamic types (string / T[]): reads the head slot as a fat
-  ///   pointer {dataPtr, len} via genCalldataDynEltFatPtr.
-  /// - Static types with dynamic content (e.g. string[N]): reads the head
-  ///   slot as a relative offset and returns \p dataBase + offset.
-  Value genCalldataEltAddr(Value headSlotAddr, Value dataBase, mlir::Type eltTy,
-                           std::optional<Location> locArg = std::nullopt);
+  /// - Dynamic arrays / strings / bytes: returns {dataPtr, length} fat pointer.
+  /// - Fixed-size arrays with dynamic children: returns the resolved absolute
+  ///   address (baseAddr + relOffset).
+  /// - Nested calldata structs: forwarded by their head address.
+  ///
+  /// When \p isNonABI is false (default, ABI-function context) the revert
+  /// messages read "Invalid calldata access {offset,length,stride}".
+  /// When \p isNonABI is true (non-ABI / internal calldata parameter) they
+  /// read "Invalid calldata tail {offset,length}" and "Calldata tail too
+  /// short".
+  Value genCalldataAccessRef(mlir::Type ty, Value baseAddr, Value ptr,
+                             bool isNonABI = false,
+                             std::optional<Location> locArg = std::nullopt);
 
   /// Generates {slot, offset} for packed storage array indexing.
   Value genPackedStorageAddr(Value baseSlot, Value idx, Type eltTy,
