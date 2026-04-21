@@ -66,88 +66,6 @@ unsigned getCalldataEncodedTailSize(Type ty) {
   llvm_unreachable("Expected dynamically encoded calldata reference type");
 }
 
-// Resolves a calldata reference reached through an offset-bearing head entry.
-// Fixed-size refs with dynamic children still lower to a single base address,
-// while dynamically sized refs materialize {data, length}.
-Value genCalldataAccessRef(evm::Builder &evmB, OpBuilder &b, Location loc,
-                           Type ty, Value baseAddr, Value ptr) {
-  mlir::solgen::BuilderExt bExt(b, loc);
-  assert(sol::getDataLocation(ty) == sol::DataLocation::CallData &&
-         "Expected calldata reference type");
-  assert(sol::hasDynamicallySizedElt(ty) &&
-         "Expected dynamically encoded calldata reference");
-
-  // Dynamically encoded calldata references are stored as offsets relative to
-  // the start of the enclosing calldata head.
-  Value relOffset = evmB.genLoad(ptr, sol::DataLocation::CallData, loc);
-  unsigned neededLength = getCalldataEncodedTailSize(ty);
-  assert(neededLength > 0 && "Expected non-zero calldata access size");
-
-  Value callDataSize = b.create<yul::CallDataSizeOp>(loc);
-
-  // The referenced head must fit entirely within the original calldata blob.
-  // 'maxRelOffset' is the last relative offset whose required inline head is
-  // still readable from 'baseAddr'.
-  Value maxRelOffset = b.create<arith::SubIOp>(
-      loc, b.create<arith::SubIOp>(loc, callDataSize, baseAddr),
-      bExt.genI256Const(neededLength - 1));
-  Value invalidOffset = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge,
-                                                relOffset, maxRelOffset);
-  evmB.genDebugRevertWithMsg(invalidOffset, "Invalid calldata access offset",
-                             loc);
-
-  Value refAddr = b.create<arith::AddIOp>(loc, baseAddr, relOffset);
-  auto genLengthAndStrideGuards = [&](Value dataAddr, Value length,
-                                      Value stride) {
-    // Dynamic calldata payloads are materialized as {dataPtr, length}, so both
-    // the decoded length and the implied payload range must stay in bounds.
-    Value invalidLength = b.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::ugt, length,
-        bExt.genI256Const(APInt::getLowBitsSet(256, 64)));
-    evmB.genDebugRevertWithMsg(invalidLength, "Invalid calldata access length",
-                               loc);
-
-    Value callDataSize = b.create<yul::CallDataSizeOp>(loc);
-    Value maxDataAddr = b.create<arith::SubIOp>(
-        loc, callDataSize, b.create<arith::MulIOp>(loc, length, stride));
-    Value invalidStride = b.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::sgt, dataAddr, maxDataAddr);
-    evmB.genDebugRevertWithMsg(invalidStride, "Invalid calldata access stride",
-                               loc);
-  };
-
-  if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
-    if (!arrTy.isDynSized())
-      // Fixed-size calldata arrays with dynamic children are still forwarded as
-      // a single base address, as recursive element handling resolves child
-      // heads.
-      return refAddr;
-
-    // Dynamic calldata arrays are passed as {dataPtr, size}.
-    Value length = b.create<yul::CallDataLoadOp>(loc, refAddr);
-    Value dataAddr =
-        b.create<arith::AddIOp>(loc, refAddr, bExt.genI256Const(32));
-    genLengthAndStrideGuards(
-        dataAddr, length,
-        bExt.genI256Const(evm::getCallDataHeadSize(arrTy.getEltType())));
-    return bExt.genLLVMStruct({dataAddr, length});
-  }
-
-  if (isa<sol::StringType>(ty)) {
-    // Strings use the same {dataPtr, size} representation as bytes arrays.
-    Value length = b.create<yul::CallDataLoadOp>(loc, refAddr);
-    Value dataAddr =
-        b.create<arith::AddIOp>(loc, refAddr, bExt.genI256Const(32));
-    genLengthAndStrideGuards(dataAddr, length, bExt.genI256Const(1));
-    return bExt.genLLVMStruct({dataAddr, length});
-  }
-
-  if (isa<sol::StructType>(ty))
-    // Nested calldata structs are forwarded by their head address.
-    return refAddr;
-
-  llvm_unreachable("Unexpected dynamically encoded calldata reference");
-}
 
 // Reads struct members for ABI encoding from a concrete source location
 // (calldata, memory, or storage).
@@ -190,7 +108,8 @@ struct StructEncodeMemberReaderCallData final : StructEncodeMemberReader {
   Value read(uint64_t memberIdx) override {
     Type memTy = getMemberType(memberIdx);
     if (sol::hasDynamicallySizedElt(memTy))
-      return genCalldataAccessRef(evmB, b, loc, memTy, baseAddr, curAddr);
+      return evmB.genCalldataAccessRef(memTy, baseAddr, curAddr,
+                                       /*isNonABI=*/false, loc);
 
     if (sol::isNonPtrRefType(memTy))
       // Static non-pointer refs are laid out inline in calldata head and
@@ -1133,15 +1052,89 @@ Value evm::Builder::genCalldataDynEltFatPtr(Value headSlotAddr,
   return bExt.genLLVMStruct({innerData, innerLen});
 }
 
-Value evm::Builder::genCalldataEltAddr(Value headSlotAddr, Value dataBase,
-                                       mlir::Type eltTy,
-                                       std::optional<Location> locArg) {
-  assert(sol::hasDynamicallySizedElt(eltTy));
+Value evm::Builder::genCalldataAccessRef(Type ty, Value baseAddr, Value ptr,
+                                         bool isNonABI,
+                                         std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  if (sol::isDynamicallySized(eltTy))
-    return genCalldataDynEltFatPtr(headSlotAddr, dataBase, loc);
-  Value relOffset = genLoad(headSlotAddr, sol::DataLocation::CallData, loc);
-  return b.create<arith::AddIOp>(loc, dataBase, relOffset);
+  mlir::solgen::BuilderExt bExt(b, loc);
+  assert(sol::getDataLocation(ty) == sol::DataLocation::CallData &&
+         "Expected calldata reference type");
+  assert(sol::hasDynamicallySizedElt(ty) &&
+         "Expected dynamically encoded calldata reference");
+
+  const char *msgOffset = isNonABI ? "Invalid calldata tail offset"
+                                   : "Invalid calldata access offset";
+  const char *msgLength = isNonABI ? "Invalid calldata tail length"
+                                   : "Invalid calldata access length";
+  const char *msgStride =
+      isNonABI ? "Calldata tail too short" : "Invalid calldata access stride";
+
+  // Dynamically encoded calldata references are stored as offsets relative to
+  // the start of the enclosing calldata head.
+  Value relOffset = genLoad(ptr, sol::DataLocation::CallData, loc);
+  unsigned neededLength = getCalldataEncodedTailSize(ty);
+  assert(neededLength > 0 && "Expected non-zero calldata access size");
+
+  Value callDataSize = b.create<yul::CallDataSizeOp>(loc);
+
+  // The referenced head must fit entirely within the original calldata blob.
+  // 'maxRelOffset' is the last relative offset whose required inline head is
+  // still readable from 'baseAddr'.
+  Value maxRelOffset = b.create<arith::SubIOp>(
+      loc, b.create<arith::SubIOp>(loc, callDataSize, baseAddr),
+      bExt.genI256Const(neededLength - 1));
+  Value invalidOffset = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge,
+                                                relOffset, maxRelOffset);
+  genDebugRevertWithMsg(invalidOffset, msgOffset, loc);
+
+  Value refAddr = b.create<arith::AddIOp>(loc, baseAddr, relOffset);
+  auto genLengthAndStrideGuards = [&](Value dataAddr, Value length,
+                                      Value stride) {
+    // Dynamic calldata payloads are materialized as {dataPtr, length}, so both
+    // the decoded length and the implied payload range must stay in bounds.
+    Value invalidLength = b.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::ugt, length,
+        bExt.genI256Const(APInt::getLowBitsSet(256, 64)));
+    genDebugRevertWithMsg(invalidLength, msgLength, loc);
+
+    Value maxDataAddr = b.create<arith::SubIOp>(
+        loc, callDataSize, b.create<arith::MulIOp>(loc, length, stride));
+    Value invalidStride = b.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sgt, dataAddr, maxDataAddr);
+    genDebugRevertWithMsg(invalidStride, msgStride, loc);
+  };
+
+  if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
+    if (!arrTy.isDynSized())
+      // Fixed-size calldata arrays with dynamic children are still forwarded as
+      // a single base address, as recursive element handling resolves child
+      // heads.
+      return refAddr;
+
+    // Dynamic calldata arrays are passed as {dataPtr, size}.
+    Value length = b.create<yul::CallDataLoadOp>(loc, refAddr);
+    Value dataAddr =
+        b.create<arith::AddIOp>(loc, refAddr, bExt.genI256Const(32));
+    genLengthAndStrideGuards(
+        dataAddr, length,
+        bExt.genI256Const(evm::getCallDataHeadSize(arrTy.getEltType())));
+    return bExt.genLLVMStruct({dataAddr, length});
+  }
+
+  if (isa<sol::StringType>(ty)) {
+    // Strings use the same {dataPtr, size} representation as bytes arrays.
+    Value length = b.create<yul::CallDataLoadOp>(loc, refAddr);
+    Value dataAddr =
+        b.create<arith::AddIOp>(loc, refAddr, bExt.genI256Const(32));
+    genLengthAndStrideGuards(dataAddr, length, bExt.genI256Const(1));
+    return bExt.genLLVMStruct({dataAddr, length});
+  }
+
+  if (isa<sol::StructType>(ty))
+    // Nested calldata structs are forwarded by their head address.
+    return refAddr;
+
+  llvm_unreachable("Unexpected dynamically encoded calldata reference");
 }
 
 static std::pair<Value, Value>
@@ -2032,7 +2025,8 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
                                  bExt.genI256Const(dstArrTy.getSize()), loc);
       }
     }
-    Type eltTy = dstArrTy.getEltType();
+    Type srcEltTy = srcArrTy.getEltType();
+    Type dstEltTy = dstArrTy.getEltType();
 
     b.create<scf::ForOp>(
         loc, /*lowerBound=*/bExt.genIdxConst(0),
@@ -2049,17 +2043,18 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
 
           // Reference type elements store pointers / offsets that need
           // resolving before recursing.
-          if (sol::isNonPtrRefType(eltTy)) {
+          if (sol::isNonPtrRefType(srcEltTy)) {
             if (srcDataLoc == sol::DataLocation::CallData &&
-                sol::hasDynamicallySizedElt(eltTy))
-              srcAddrI = genCalldataEltAddr(srcAddrI, srcDataAddr, eltTy, loc);
+                sol::hasDynamicallySizedElt(srcEltTy))
+              srcAddrI = genCalldataAccessRef(srcEltTy, srcDataAddr, srcAddrI,
+                                              /*isNonABI=*/true, loc);
             if (srcDataLoc == sol::DataLocation::Memory)
               srcAddrI = genLoad(srcAddrI, srcDataLoc, loc);
             if (dstDataLoc == sol::DataLocation::Memory)
               dstAddrI = genLoad(dstAddrI, dstDataLoc, loc);
           }
-          genCopy(srcArrTy.getEltType(), dstArrTy.getEltType(), srcAddrI,
-                  dstAddrI, srcDataLoc, dstDataLoc, loc);
+          genCopy(srcEltTy, dstEltTy, srcAddrI, dstAddrI, srcDataLoc,
+                  dstDataLoc, loc);
           b.create<scf::YieldOp>(loc);
         });
   } else if (isa<IntegerType>(dstTy)) {
@@ -2247,8 +2242,8 @@ Value evm::Builder::genABITupleEncoding(
             thirtyTwo, [&](Location loc, Value iSrcAddr) {
               // Each fixed-array head slot stores a relative calldata offset,
               // so resolve it against the array head before recursing.
-              return genCalldataAccessRef(*this, b, loc, eltTy, srcArrAddr,
-                                          iSrcAddr);
+              return genCalldataAccessRef(eltTy, srcArrAddr, iSrcAddr,
+                                          /*isNonABI=*/false, loc);
             });
 
       // Static aggregate/non-pointer-ref elements in calldata are forwarded by
