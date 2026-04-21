@@ -194,16 +194,9 @@ public:
                      sol::DataLocation dataLoc,
                      std::optional<Location> locArg = std::nullopt);
 
-  /// Given the address of an ABI relative-offset word in the head area of a
-  /// calldata value (\p headSlotAddr) and the absolute start of that value's
-  /// data section (\p outerDataBase), reconstructs the fat pointer
-  /// {innerDataPtr, innerLength} for the pointed-to dynamically-sized ABI
-  /// element (e.g., dynamic array, string, or bytes).
-  Value genCalldataDynEltFatPtr(Value headSlotAddr, Value outerDataBase,
-                                std::optional<Location> locArg = std::nullopt);
-
-  /// Resolves a calldata reference pointer to the effective value for \p ty,
-  /// validating bounds along the way.
+  /// Resolves a calldata relative-offset pointer (\p ptr) to the effective
+  /// address of a dynamically-encoded ABI element, with bounds validation.
+  /// \p baseAddr is the absolute start of the enclosing calldata head section.
   ///
   /// - Dynamic arrays / strings / bytes: returns {dataPtr, length} fat pointer.
   /// - Fixed-size arrays with dynamic children: returns the resolved absolute

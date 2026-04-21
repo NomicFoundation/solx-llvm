@@ -1755,7 +1755,11 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
       // Storage array
       if (auto arrTy = dyn_cast<sol::ArrayType>(baseAddrTy)) {
         Type eltTy = arrTy.getEltType();
-        assert((isa<IntegerType>(eltTy) || sol::isNonPtrRefType(eltTy)) &&
+        assert((isa<IntegerType>(eltTy) || isa<sol::FixedBytesType>(eltTy) ||
+                sol::isAddressLikeType(eltTy) || isa<sol::EnumType>(eltTy) ||
+                isa<sol::FuncRefType>(eltTy) ||
+                isa<sol::ExtFuncRefType>(eltTy) ||
+                sol::isNonPtrRefType(eltTy)) &&
                "NYI");
 
         // Bounds check (always for dynamic, non-const index for static).
@@ -1831,9 +1835,13 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
           if (!arrTy.isDynSized()) {
             // FIXME: Should this be done by the verifier?
             assert(constIdx.value() < arrTy.getSize());
+            unsigned stride =
+                (dataLoc == sol::DataLocation::Memory)
+                    ? 32u
+                    : evm::getCallDataHeadSize(arrTy.getEltType());
             addrAtIdx = r.create<arith::AddIOp>(
                 loc, remappedBaseAddr,
-                bExt.genI256Const(constIdx.value() * 32));
+                bExt.genI256Const(constIdx.value() * stride));
           }
         }
 
@@ -1857,7 +1865,15 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
           //
           // Generate the address.
           //
-          Value stride = bExt.genI256Const(32);
+          // In memory every element occupies one 32-byte slot: value types are
+          // stored directly, reference types (arrays, structs) are stored as
+          // pointers.  In calldata the stride is the ABI head size of the
+          // element type.
+          unsigned strideVal =
+              (dataLoc == sol::DataLocation::Memory)
+                  ? 32u
+                  : evm::getCallDataHeadSize(arrTy.getEltType());
+          Value stride = bExt.genI256Const(strideVal);
           Value scaledIdx = r.create<arith::MulIOp>(loc, castedIdx, stride);
           if (arrTy.isDynSized()) {
             Value dataAddr = evmB.genDataAddrPtr(remappedBaseAddr, baseAddrTy);
@@ -2242,6 +2258,16 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       if (eltSrcDataLoc == sol::DataLocation::Stack)
         eltSrcDataLoc = srcDataLoc;
 
+      // Packed element types in storage require a specialized extraction loop
+      // that reads multiple elements per slot. The generic element-by-element
+      // loop below cannot handle packed {slot, byteOffset} addressing.
+      if (sol::canBePacked(eltTy) && sol::getStorageByteSize(eltTy) <= 16 &&
+          srcDataLoc == sol::DataLocation::Storage) {
+        evmB.genCopy(arrTy, arrTy, srcAddr, dstAddr, srcDataLoc, dstDataLoc,
+                     loc);
+        return dstAddr;
+      }
+
       r.create<scf::ForOp>(
           loc, /*lowerBound=*/bExt.genIdxConst(0),
           /*upperBound=*/bExt.genCastToIdx(size),
@@ -2293,8 +2319,25 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       llvm_unreachable("NYI: StringType source data location");
     }
 
-    assert(isa<IntegerType>(ty) && "NYI");
-    return evmB.genLoad(srcAddr, srcDataLoc);
+    // All packable scalar types can be copied with a plain load. Integers,
+    // address-like, enum, and FuncRef are right-aligned in all data locations.
+    // BytesN (N < 32) is left-aligned in memory/calldata but right-aligned in
+    // storage.
+    assert((isa<IntegerType>(ty) || sol::isBytesLikeType(ty) ||
+            sol::isAddressLikeType(ty) || isa<sol::EnumType>(ty) ||
+            isa<sol::FuncRefType>(ty) || isa<sol::ExtFuncRefType>(ty)) &&
+           "NYI");
+    Value val = evmB.genLoad(srcAddr, srcDataLoc);
+    if (isa<sol::ExtFuncRefType>(ty) &&
+        srcDataLoc == sol::DataLocation::Storage)
+      val = r.create<arith::ShLIOp>(loc, val, bExt.genI256Const(64));
+    else if (sol::isBytesLikeType(ty) &&
+             srcDataLoc == sol::DataLocation::Storage) {
+      unsigned shift = (32 - sol::getBytesSize(ty)) * 8;
+      if (shift > 0)
+        val = r.create<arith::ShLIOp>(loc, val, bExt.genI256Const(shift));
+    }
+    return val;
   }
 
   LogicalResult matchAndRewrite(sol::DataLocCastOp op, OpAdaptor adaptor,
