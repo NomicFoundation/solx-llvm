@@ -17,7 +17,6 @@ add_mlir_conversion_library(MLIRSolToStandard
   MLIRYulDialect
   MLIRArithDialect
   MLIRControlFlowDialect
-  MLIRSCFDialect
   MLIRLLVMDialect
   MLIRFuncDialect
   MLIRPass

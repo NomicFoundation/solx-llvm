@@ -11,10 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/Conversion/SolToStandard/Util.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
@@ -36,10 +36,10 @@ Value BuilderExt::genIntCast(unsigned width, bool isSigned, Value val,
   if (srcType == dstSignlessType)
     return val;
   if (srcType.getWidth() > width)
-    return b.create<arith::TruncIOp>(loc, dstSignlessType, val);
+    return b.create<yul::ArithTruncIOp>(loc, dstSignlessType, val);
   if (isSigned)
-    return b.create<arith::ExtSIOp>(loc, dstSignlessType, val);
-  return b.create<arith::ExtUIOp>(loc, dstSignlessType, val);
+    return b.create<yul::ArithExtSIOp>(loc, dstSignlessType, val);
+  return b.create<yul::ArithExtUIOp>(loc, dstSignlessType, val);
 }
 
 Value BuilderExt::genIntCastWithBoolCleanup(unsigned width, bool isSigned,
@@ -50,13 +50,13 @@ Value BuilderExt::genIntCastWithBoolCleanup(unsigned width, bool isSigned,
   if (width == 1 && srcType.getWidth() > 1) {
     Location loc = locArg ? *locArg : defLoc;
     if (maskBoolAsStorageByte) {
-      Value lowBitsMask = b.create<arith::ConstantOp>(
+      Value lowBitsMask = b.create<yul::ConstantOp>(
           loc, b.getIntegerAttr(srcType,
                                 APInt::getLowBitsSet(srcType.getWidth(), 8)));
-      val = b.create<arith::AndIOp>(loc, val, lowBitsMask);
+      val = b.create<yul::AndOp>(loc, val, lowBitsMask);
     }
-    Value zero = b.create<arith::ConstantOp>(loc, b.getIntegerAttr(srcType, 0));
-    return b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, val, zero);
+    Value zero = b.create<yul::ConstantOp>(loc, b.getIntegerAttr(srcType, 0));
+    return genCmp(yul::CmpPredicate::ne, val, zero, loc);
   }
   return genIntCast(width, isSigned, val, locArg);
 }

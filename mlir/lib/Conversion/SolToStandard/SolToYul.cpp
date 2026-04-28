@@ -14,10 +14,7 @@
 #include "mlir/Conversion/SolToStandard/EVMConstants.h"
 #include "mlir/Conversion/SolToStandard/EVMUtil.h"
 #include "mlir/Conversion/SolToStandard/Util.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/Builders.h"
@@ -76,8 +73,8 @@ struct ConstantOpLowering : public OpRewritePattern<sol::ConstantOp> {
     auto signlessTy =
         r.getIntegerType(cast<IntegerType>(op.getType()).getWidth());
     auto attr = cast<IntegerAttr>(op.getValue());
-    r.replaceOpWithNewOp<arith::ConstantOp>(
-        op, signlessTy, r.getIntegerAttr(signlessTy, attr.getValue()));
+    r.replaceOpWithNewOp<yul::ConstantOp>(
+        op, r.getIntegerAttr(signlessTy, attr.getValue()));
     return success();
   }
 };
@@ -121,11 +118,11 @@ struct ExtFuncConstantOpLowering
     // ((addr << 32) | selector) << 64
     Value addr = adaptor.getAddr();
     Value addrShifted =
-        r.create<arith::ShLIOp>(loc, addr, bExt.genI256Const(32));
+        r.create<yul::ArithShlOp>(loc, addr, bExt.genI256Const(32));
     Value selector = bExt.genI256Const(op.getSelector());
-    Value combined = r.create<arith::OrIOp>(loc, addrShifted, selector);
+    Value combined = r.create<yul::OrOp>(loc, addrShifted, selector);
     Value result =
-        r.create<arith::ShLIOp>(loc, combined, bExt.genI256Const(64));
+        r.create<yul::ArithShlOp>(loc, combined, bExt.genI256Const(64));
     r.replaceOp(op, result);
     return success();
   }
@@ -144,8 +141,8 @@ struct ExtFuncSelectorOpLowering
     //   | addr (160) | selector (32) | zeros (64) |
     // and bytes4 is represented as the selector in the top 32 bits.
     // Shift left to move the selector into the MSB-aligned bytes4 position.
-    r.replaceOpWithNewOp<arith::ShLIOp>(op, adaptor.getFunc(),
-                                        bExt.genI256Const(160));
+    r.replaceOpWithNewOp<yul::ArithShlOp>(op, adaptor.getFunc(),
+                                          bExt.genI256Const(160));
     return success();
   }
 };
@@ -171,14 +168,16 @@ struct CastOpLowering : public OpConversionPattern<sol::CastOp> {
     IntegerType signlessOutTy = r.getIntegerType(outTyWidth);
 
     if (inpTyWidth > outTyWidth) {
-      r.replaceOpWithNewOp<arith::TruncIOp>(op, signlessOutTy,
-                                            adaptor.getInp());
+      r.replaceOpWithNewOp<yul::ArithTruncIOp>(op, signlessOutTy,
+                                               adaptor.getInp());
       return success();
     }
     if (inpTy.isSigned())
-      r.replaceOpWithNewOp<arith::ExtSIOp>(op, signlessOutTy, adaptor.getInp());
+      r.replaceOpWithNewOp<yul::ArithExtSIOp>(op, signlessOutTy,
+                                              adaptor.getInp());
     else
-      r.replaceOpWithNewOp<arith::ExtUIOp>(op, signlessOutTy, adaptor.getInp());
+      r.replaceOpWithNewOp<yul::ArithExtUIOp>(op, signlessOutTy,
+                                              adaptor.getInp());
     return success();
   }
 };
@@ -200,8 +199,8 @@ struct AddressCastOpLowering : public OpConversionPattern<sol::AddressCastOp> {
         assert(inpBytesTy.getSize() == 20 &&
                "AddressCastOp only supports bytes20");
         assert(isa<sol::AddressType>(outTy));
-        r.replaceOpWithNewOp<arith::ShRUIOp>(op, adaptor.getInp(),
-                                             bExt.genI256Const(96));
+        r.replaceOpWithNewOp<yul::ArithShrOp>(op, adaptor.getInp(),
+                                              bExt.genI256Const(96));
         return success();
       }
 
@@ -210,8 +209,8 @@ struct AddressCastOpLowering : public OpConversionPattern<sol::AddressCastOp> {
       assert(outBytesTy.getSize() == 20 &&
              "AddressCastOp only supports bytes20");
       assert(isa<sol::AddressType>(inpTy));
-      r.replaceOpWithNewOp<arith::ShLIOp>(op, adaptor.getInp(),
-                                          bExt.genI256Const(96));
+      r.replaceOpWithNewOp<yul::ArithShlOp>(op, adaptor.getInp(),
+                                            bExt.genI256Const(96));
       return success();
     }
 
@@ -254,7 +253,7 @@ struct AddressCastOpLowering : public OpConversionPattern<sol::AddressCastOp> {
 
     // TODO: This is probably not needed, but it is here for Yul parity.
     Value mask = bExt.genI256Const(APInt::getLowBitsSet(256, 160));
-    r.replaceOpWithNewOp<arith::AndIOp>(op, adaptor.getInp(), mask);
+    r.replaceOpWithNewOp<yul::AndOp>(op, adaptor.getInp(), mask);
     return success();
   }
 };
@@ -270,7 +269,7 @@ struct ContractCastOpLowering
 
     // TODO: This is probably not needed, but it is here for Yul parity.
     Value mask = bExt.genI256Const(APInt::getLowBitsSet(256, 160));
-    r.replaceOpWithNewOp<arith::AndIOp>(op, adaptor.getInp(), mask);
+    r.replaceOpWithNewOp<yul::AndOp>(op, adaptor.getInp(), mask);
     return success();
   }
 };
@@ -285,9 +284,8 @@ struct EnumCastOpLowering : public OpConversionPattern<sol::EnumCastOp> {
     evm::Builder evmB(getModule(op), r, loc);
 
     auto enumTy = dyn_cast<sol::EnumType>(op.getType());
-    auto panicCond = r.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::ugt, adaptor.getInp(),
-        bExt.genI256Const(enumTy.getMax()));
+    auto panicCond = bExt.genCmp(yul::CmpPredicate::ugt, adaptor.getInp(),
+                                 bExt.genI256Const(enumTy.getMax()));
     evmB.genPanic(mlir::evm::PanicCode::EnumConversionError, panicCond, loc);
     r.replaceOp(op, bExt.genIntCast(256, /*isSigned=*/false, adaptor.getInp()));
     return success();
@@ -322,15 +320,15 @@ struct BytesCastOpLowering : public OpConversionPattern<sol::BytesCastOp> {
       if (sol::isBytesLikeType(outTy)) {
         unsigned keepBytes = std::min(inpBytesSize, sol::getBytesSize(outTy));
         auto shiftAmt = bExt.genI256Const(256 - (8 * keepBytes));
-        auto shr = r.create<arith::ShRUIOp>(loc, adaptor.getInp(), shiftAmt);
-        r.replaceOpWithNewOp<arith::ShLIOp>(op, shr, shiftAmt);
+        auto shr = r.create<yul::ArithShrOp>(loc, adaptor.getInp(), shiftAmt);
+        r.replaceOpWithNewOp<yul::ArithShlOp>(op, shr, shiftAmt);
         return success();
       }
 
       // Bytes to int
       auto outIntTy = cast<IntegerType>(outTy);
       auto shiftAmt = bExt.genI256Const(256 - (8 * inpBytesSize));
-      auto shr = r.create<arith::ShRUIOp>(loc, adaptor.getInp(), shiftAmt);
+      auto shr = r.create<yul::ArithShrOp>(loc, adaptor.getInp(), shiftAmt);
       auto repl = bExt.genIntCast(outIntTy.getWidth(), /*isSigned=*/false, shr);
       r.replaceOp(op, repl);
       return success();
@@ -342,7 +340,7 @@ struct BytesCastOpLowering : public OpConversionPattern<sol::BytesCastOp> {
     Value inpAsI256 =
         bExt.genIntCast(/*width=*/256, /*isSigned=*/false, adaptor.getInp());
     auto shiftAmt = bExt.genI256Const(256 - (8 * outBytesSize));
-    r.replaceOpWithNewOp<arith::ShLIOp>(op, inpAsI256, shiftAmt);
+    r.replaceOpWithNewOp<yul::ArithShlOp>(op, inpAsI256, shiftAmt);
 
     return success();
   }
@@ -393,8 +391,7 @@ struct DivOrModOpLowering : public OpConversionPattern<SolOp> {
     Value rhs = adaptor.getRhs();
 
     auto zero = bExt.genConst(0, ty.getWidth());
-    auto rhsEqZero =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rhs, zero);
+    auto rhsEqZero = bExt.genCmp(yul::CmpPredicate::eq, rhs, zero);
     evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, rhsEqZero);
 
     if (ty.isSigned())
@@ -458,46 +455,43 @@ struct CExpOpLowering : public OpConversionPattern<sol::CExpOp> {
     SmallVector<Location> whileBbArgLocs(whileInitVals.size(), loc);
 
     // Produces power, base
-    auto whileOp = r.create<scf::WhileOp>(loc, whileArgTypes, whileInitVals);
+    auto whileOp = r.create<yul::WhileOp>(loc, whileArgTypes, whileInitVals);
     // Condition region
     {
-      Block *beforeBlock = &whileOp.getBefore().emplaceBlock();
-      whileOp.getBefore().addArguments(whileArgTypes, whileBbArgLocs);
-      r.setInsertionPointToStart(beforeBlock);
-      Value curPow = beforeBlock->getArgument(0);
-      Value curBase = beforeBlock->getArgument(1);
-      Value curExp = beforeBlock->getArgument(2);
-      Value cmp =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, curExp, one);
-      r.create<scf::ConditionOp>(loc, cmp, ValueRange{curPow, curBase, curExp});
+      Block *condBlock = &whileOp.getCond().emplaceBlock();
+      whileOp.getCond().addArguments(whileArgTypes, whileBbArgLocs);
+      r.setInsertionPointToStart(condBlock);
+      Value curPow = condBlock->getArgument(0);
+      Value curBase = condBlock->getArgument(1);
+      Value curExp = condBlock->getArgument(2);
+      Value cmp = bExt.genCmp(yul::CmpPredicate::ugt, curExp, one);
+      r.create<yul::ConditionOp>(loc, cmp, ValueRange{curPow, curBase, curExp});
     }
 
     // Body region
     {
-      Block *afterBlock = &whileOp.getAfter().emplaceBlock();
-      whileOp.getAfter().addArguments(whileArgTypes, whileBbArgLocs);
-      r.setInsertionPointToStart(afterBlock);
-      Value curPow = afterBlock->getArgument(0);
-      Value curBase = afterBlock->getArgument(1);
-      Value curExp = afterBlock->getArgument(2);
+      Block *bodyBlock = &whileOp.getBody().emplaceBlock();
+      whileOp.getBody().addArguments(whileArgTypes, whileBbArgLocs);
+      r.setInsertionPointToStart(bodyBlock);
+      Value curPow = bodyBlock->getArgument(0);
+      Value curBase = bodyBlock->getArgument(1);
+      Value curExp = bodyBlock->getArgument(2);
       {
         auto base256 = bExt.genIntCast(256, /*isSigned=*/false, curBase);
         Value tmpDiv = r.create<yul::DivOp>(loc, maxPow, base256);
-        Value panicCond = r.create<arith::CmpIOp>(
-            loc, arith::CmpIPredicate::ugt, base256, tmpDiv);
+        Value panicCond = bExt.genCmp(yul::CmpPredicate::ugt, base256, tmpDiv);
         evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
       }
-      Value lsb = r.create<arith::AndIOp>(loc, curExp, one);
+      Value lsb = r.create<yul::AndOp>(loc, curExp, one);
       Value zero = bExt.genConst(0, ty.getWidth(), loc);
-      Value expIsOdd =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, lsb, zero);
-      Value newPow = r.create<arith::SelectOp>(
+      Value expIsOdd = bExt.genCmp(yul::CmpPredicate::ne, lsb, zero);
+      Value newPow = r.create<yul::ArithSelectOp>(
                           loc, expIsOdd,
-                          r.create<arith::MulIOp>(loc, curPow, curBase), curPow)
+                          r.create<yul::MulOp>(loc, curPow, curBase), curPow)
                          .getResult();
-      Value newBase = r.create<arith::MulIOp>(loc, curBase, curBase);
-      Value newExp = r.create<arith::ShRUIOp>(loc, curExp, one);
-      r.create<scf::YieldOp>(loc, ValueRange{newPow, newBase, newExp});
+      Value newBase = r.create<yul::MulOp>(loc, curBase, curBase);
+      Value newExp = r.create<yul::ArithShrOp>(loc, curExp, one);
+      r.create<yul::YieldOp>(loc, ValueRange{newPow, newBase, newExp});
     }
 
     return {whileOp.getResult(0), whileOp.getResult(1)};
@@ -546,83 +540,73 @@ struct CExpOpLowering : public OpConversionPattern<sol::CExpOp> {
     Value zero = bExt.genConst(0, ty.getWidth(), loc);
     Value one = bExt.genConst(1, ty.getWidth(), loc);
 
-    auto expEqZero =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, exp, zero);
-    auto baseEqOne =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, base, one);
-    auto powOneCond = r.create<arith::OrIOp>(loc, expEqZero, baseEqOne);
+    auto expEqZero = bExt.genCmp(yul::CmpPredicate::eq, exp, zero);
+    auto baseEqOne = bExt.genCmp(yul::CmpPredicate::eq, base, one);
+    auto powOneCond = r.create<yul::OrOp>(loc, expEqZero, baseEqOne);
 
     // If 1 begin
-    auto ifExpEqZero = r.create<scf::IfOp>(loc, ty, powOneCond, true);
+    auto ifExpEqZero = bExt.createIf(ty, powOneCond);
     // If 1 then
     r.setInsertionPointToStart(&ifExpEqZero.getThenRegion().front());
-    r.create<scf::YieldOp>(loc, one);
+    r.create<yul::YieldOp>(loc, one);
 
     // If 1 else
     r.setInsertionPointToStart(&ifExpEqZero.getElseRegion().front());
-    auto baseEqZero =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, base, zero);
+    auto baseEqZero = bExt.genCmp(yul::CmpPredicate::eq, base, zero);
 
     // If 2 begin
-    auto ifBaseEqZero = r.create<scf::IfOp>(loc, ty, baseEqZero, true);
+    auto ifBaseEqZero = bExt.createIf(ty, baseEqZero);
     // If 2 then
     r.setInsertionPointToStart(&ifBaseEqZero.getThenRegion().front());
-    r.create<scf::YieldOp>(loc, zero);
+    r.create<yul::YieldOp>(loc, zero);
 
     // If 2 else
     r.setInsertionPointToStart(&ifBaseEqZero.getElseRegion().front());
     Value two = bExt.genConst(2, ty.getWidth(), loc);
-    auto baseEqTwo =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, base, two);
+    auto baseEqTwo = bExt.genCmp(yul::CmpPredicate::eq, base, two);
 
     // If 3 begin
-    auto ifBaseEqTwo = r.create<scf::IfOp>(loc, ty, baseEqTwo, true);
+    auto ifBaseEqTwo = bExt.createIf(ty, baseEqTwo);
     // If 3 then
     r.setInsertionPointToStart(&ifBaseEqTwo.getThenRegion().front());
     {
-      auto expGt255 = r.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::ugt, exp,
+      auto expGt255 = bExt.genCmp(
+          yul::CmpPredicate::ugt, exp,
           bExt.genConst(APInt(ty.getWidth(), 255, /*isSigned=*/false), loc));
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, expGt255);
 
       auto two256 = bExt.genI256Const(2, loc);
       auto expZExt = bExt.genIntCast(256, /*isSigned=*/false, exp, loc);
       auto tmpPow = r.create<yul::ExpOp>(loc, two256, expZExt);
-      auto panicCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt,
-                                               tmpPow, max256);
+      auto panicCond = bExt.genCmp(yul::CmpPredicate::ugt, tmpPow, max256);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
 
       // Cast the result back to the original bitwidth.
       auto powCasted =
           bExt.genIntCast(ty.getWidth(), /*isSigned=*/false, tmpPow, loc);
-      r.create<scf::YieldOp>(loc, powCasted);
+      r.create<yul::YieldOp>(loc, powCasted);
     }
     // If 3 else
     r.setInsertionPointToStart(&ifBaseEqTwo.getElseRegion().front());
-    auto baseLT11 =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, base,
+    auto baseLT11 = bExt.genCmp(yul::CmpPredicate::ult, base,
                                 bExt.genConst(11, ty.getWidth(), loc));
-    Value baseLT307 =
-        (ty.getWidth() > 8)
-            ? r.create<arith::CmpIOp>(
-                  loc, arith::CmpIPredicate::ult, base,
-                  bExt.genConst(APInt(ty.getWidth(), 307, /*isSigned*/ false),
-                                loc))
-            : bExt.genBool(true, loc);
+    Value baseLT307 = (ty.getWidth() > 8)
+                          ? bExt.genCmp(yul::CmpPredicate::ult, base,
+                                        bExt.genConst(APInt(ty.getWidth(), 307,
+                                                            /*isSigned*/ false),
+                                                      loc))
+                          : bExt.genBool(true, loc);
 
-    auto expLT78 =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, exp,
-                                bExt.genConst(78, ty.getWidth(), loc));
-    auto expLT32 =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, exp,
-                                bExt.genConst(32, ty.getWidth(), loc));
+    auto expLT78 = bExt.genCmp(yul::CmpPredicate::ult, exp,
+                               bExt.genConst(78, ty.getWidth(), loc));
+    auto expLT32 = bExt.genCmp(yul::CmpPredicate::ult, exp,
+                               bExt.genConst(32, ty.getWidth(), loc));
 
-    auto viaExpBuitinCond = r.create<arith::OrIOp>(
-        loc, r.create<arith::AndIOp>(loc, baseLT11, expLT78),
-        r.create<arith::AndIOp>(loc, baseLT307, expLT32));
+    auto viaExpBuitinCond =
+        r.create<yul::OrOp>(loc, r.create<yul::AndOp>(loc, baseLT11, expLT78),
+                            r.create<yul::AndOp>(loc, baseLT307, expLT32));
     // If 4 begin
-    auto ifViaExpBuitinCond =
-        r.create<scf::IfOp>(loc, ty, viaExpBuitinCond, true);
+    auto ifViaExpBuitinCond = bExt.createIf(ty, viaExpBuitinCond);
     // If 4 then
     r.setInsertionPointToStart(&ifViaExpBuitinCond.getThenRegion().front());
 
@@ -630,14 +614,13 @@ struct CExpOpLowering : public OpConversionPattern<sol::CExpOp> {
       auto expZExt = bExt.genIntCast(256, /*isSigned=*/false, exp, loc);
       auto baseZExt = bExt.genIntCast(256, /*isSigned=*/false, base, loc);
       Value tmpPow = r.create<yul::ExpOp>(loc, baseZExt, expZExt);
-      Value panicCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt,
-                                                tmpPow, max256);
+      Value panicCond = bExt.genCmp(yul::CmpPredicate::ugt, tmpPow, max256);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
 
       // Cast the result back to the original bitwidth.
       auto powCasted =
           bExt.genIntCast(ty.getWidth(), /*isSigned=*/false, tmpPow, loc);
-      r.create<scf::YieldOp>(loc, powCasted);
+      r.create<yul::YieldOp>(loc, powCasted);
     }
     // If 4 else
     r.setInsertionPointToStart(&ifViaExpBuitinCond.getElseRegion().front());
@@ -649,23 +632,22 @@ struct CExpOpLowering : public OpConversionPattern<sol::CExpOp> {
       auto baseZExt = bExt.genIntCast(256, /*isSigned=*/false, base2, loc);
       Value tmpDiv = r.create<yul::DivOp>(loc, max256, baseZExt);
       auto pow256 = bExt.genIntCast(256, /*isSigned=*/false, pow2, loc);
-      Value panicCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt,
-                                                pow256, tmpDiv);
+      Value panicCond = bExt.genCmp(yul::CmpPredicate::ugt, pow256, tmpDiv);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
-      Value res = r.create<arith::MulIOp>(loc, base2, pow2);
-      r.create<scf::YieldOp>(loc, res);
+      Value res = r.create<yul::MulOp>(loc, base2, pow2);
+      r.create<yul::YieldOp>(loc, res);
     }
     // If 4 (ifViaExpBuitinCond) end
     r.setInsertionPointToEnd(&ifBaseEqTwo.getElseRegion().front());
-    r.create<scf::YieldOp>(loc, ifViaExpBuitinCond.getResult(0));
+    r.create<yul::YieldOp>(loc, ifViaExpBuitinCond.getResult(0));
     // If 3 (ifBaseEqTwo) end
 
     r.setInsertionPointToEnd(&ifBaseEqZero.getElseRegion().front());
-    r.create<scf::YieldOp>(loc, ifBaseEqTwo.getResult(0));
+    r.create<yul::YieldOp>(loc, ifBaseEqTwo.getResult(0));
     // If 2 (ifBaseEqZero) end
 
     r.setInsertionPointToEnd(&ifExpEqZero.getElseRegion().front());
-    r.create<scf::YieldOp>(loc, ifBaseEqZero.getResult(0));
+    r.create<yul::YieldOp>(loc, ifBaseEqZero.getResult(0));
     // If 1 (ifExpEqZero) end
 
     r.setInsertionPointAfter(ifExpEqZero);
@@ -718,51 +700,47 @@ struct CExpOpLowering : public OpConversionPattern<sol::CExpOp> {
     Value min256 = bExt.genI256Const(
         llvm::APInt::getSignedMinValue(ty.getWidth()).sext(256), loc);
 
-    auto expEqZero =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, exp, zero);
+    auto expEqZero = bExt.genCmp(yul::CmpPredicate::eq, exp, zero);
 
     // If 1 begin
-    auto ifExpEqZero = r.create<scf::IfOp>(loc, ty, expEqZero, true);
+    auto ifExpEqZero = bExt.createIf(ty, expEqZero);
     // If 1 then
     r.setInsertionPointToStart(&ifExpEqZero.getThenRegion().front());
-    r.create<scf::YieldOp>(loc, one);
+    r.create<yul::YieldOp>(loc, one);
 
     // If 1 else
     r.setInsertionPointToStart(&ifExpEqZero.getElseRegion().front());
-    auto baseEqZero =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, base, zero);
+    auto baseEqZero = bExt.genCmp(yul::CmpPredicate::eq, base, zero);
 
     // If 2 begin
-    auto ifBaseEqZero = r.create<scf::IfOp>(loc, ty, baseEqZero, true);
+    auto ifBaseEqZero = bExt.createIf(ty, baseEqZero);
     // If 2 then
     r.setInsertionPointToStart(&ifBaseEqZero.getThenRegion().front());
-    r.create<scf::YieldOp>(loc, zero);
+    r.create<yul::YieldOp>(loc, zero);
 
     // If 2 else
     r.setInsertionPointToStart(&ifBaseEqZero.getElseRegion().front());
-    auto expEqOne =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, exp, one);
+    auto expEqOne = bExt.genCmp(yul::CmpPredicate::eq, exp, one);
 
     // If 3 begin
-    auto ifExpEqOne = r.create<scf::IfOp>(loc, ty, expEqOne, true);
+    auto ifExpEqOne = bExt.createIf(ty, expEqOne);
     // If 3 then
     r.setInsertionPointToStart(&ifExpEqOne.getThenRegion().front());
-    r.create<scf::YieldOp>(loc, base);
+    r.create<yul::YieldOp>(loc, base);
 
     // If 3 else
     r.setInsertionPointToStart(&ifExpEqOne.getElseRegion().front());
-    auto baseSgtZero =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt, base, zero);
+    auto baseSgtZero = bExt.genCmp(yul::CmpPredicate::sgt, base, zero);
 
     // If 4 begin
-    auto ifBaseSgtZero = r.create<scf::IfOp>(loc, baseSgtZero, true);
+    auto ifBaseSgtZero = bExt.createIf(TypeRange{}, baseSgtZero,
+                                       /*withElseRegion=*/true);
     // If 4 then
     r.setInsertionPointToStart(&ifBaseSgtZero.getThenRegion().front());
     {
       auto baseZExt = bExt.genIntCast(256, /*isSigned=*/false, base, loc);
       Value tmpDiv = r.create<yul::DivOp>(loc, max256, baseZExt);
-      Value panicCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt,
-                                                baseZExt, tmpDiv);
+      Value panicCond = bExt.genCmp(yul::CmpPredicate::ugt, baseZExt, tmpDiv);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
     }
     // If 4 else
@@ -770,20 +748,18 @@ struct CExpOpLowering : public OpConversionPattern<sol::CExpOp> {
     {
       auto baseSExt = bExt.genIntCast(256, /*isSigned=*/true, base, loc);
       Value tmpDiv = r.create<yul::SDivOp>(loc, max256, baseSExt);
-      Value panicCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
-                                                baseSExt, tmpDiv);
+      Value panicCond = bExt.genCmp(yul::CmpPredicate::slt, baseSExt, tmpDiv);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
     }
     // If 4 end
     r.setInsertionPointAfter(ifBaseSgtZero);
 
-    Value lsb = r.create<arith::AndIOp>(loc, exp, one);
-    Value expIsOdd =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, lsb, zero);
+    Value lsb = r.create<yul::AndOp>(loc, exp, one);
+    Value expIsOdd = bExt.genCmp(yul::CmpPredicate::ne, lsb, zero);
     Value pow2 =
-        r.create<arith::SelectOp>(loc, expIsOdd, base, one).getResult();
-    Value base2 = r.create<arith::MulIOp>(loc, base, base);
-    Value exp2 = r.create<arith::ShRUIOp>(loc, exp, one);
+        r.create<yul::ArithSelectOp>(loc, expIsOdd, base, one).getResult();
+    Value base2 = r.create<yul::MulOp>(loc, base, base);
+    Value exp2 = r.create<yul::ArithShrOp>(loc, exp, one);
     auto [pow3, base3] =
         genExpHelper(getModule(op), r, loc, pow2, base2, exp2, max256);
 
@@ -794,11 +770,9 @@ struct CExpOpLowering : public OpConversionPattern<sol::CExpOp> {
       auto powSExt = bExt.genIntCast(256, /*isSigned=*/true, pow3, loc);
       auto zero256 = bExt.genI256Const(0, loc);
       Value div = r.create<yul::DivOp>(loc, max256, baseZExt);
-      Value cmp =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, powZExt, div);
-      Value cmp2 = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt,
-                                           powSExt, zero256);
-      Value panicCond = r.create<arith::AndIOp>(loc, cmp, cmp2);
+      Value cmp = bExt.genCmp(yul::CmpPredicate::ugt, powZExt, div);
+      Value cmp2 = bExt.genCmp(yul::CmpPredicate::sgt, powSExt, zero256);
+      Value panicCond = r.create<yul::AndOp>(loc, cmp, cmp2);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
     }
     {
@@ -806,24 +780,22 @@ struct CExpOpLowering : public OpConversionPattern<sol::CExpOp> {
       auto powSExt = bExt.genIntCast(256, /*isSigned=*/true, pow3, loc);
       auto zero256 = bExt.genI256Const(0, loc);
       Value div = r.create<yul::SDivOp>(loc, min256, baseSExt);
-      Value cmp =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, powSExt, div);
-      Value cmp2 = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
-                                           powSExt, zero256);
-      Value panicCond = r.create<arith::AndIOp>(loc, cmp, cmp2);
+      Value cmp = bExt.genCmp(yul::CmpPredicate::slt, powSExt, div);
+      Value cmp2 = bExt.genCmp(yul::CmpPredicate::slt, powSExt, zero256);
+      Value panicCond = r.create<yul::AndOp>(loc, cmp, cmp2);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
     }
 
-    Value pow4 = r.create<arith::MulIOp>(loc, pow3, base3);
-    r.create<scf::YieldOp>(loc, pow4);
+    Value pow4 = r.create<yul::MulOp>(loc, pow3, base3);
+    r.create<yul::YieldOp>(loc, pow4);
     // If 3 (ifExpEqOne) end
 
     r.setInsertionPointToEnd(&ifBaseEqZero.getElseRegion().front());
-    r.create<scf::YieldOp>(loc, ifExpEqOne.getResult(0));
+    r.create<yul::YieldOp>(loc, ifExpEqOne.getResult(0));
     // If 2 (ifBaseEqZero) end
 
     r.setInsertionPointToEnd(&ifExpEqZero.getElseRegion().front());
-    r.create<scf::YieldOp>(loc, ifBaseEqZero.getResult(0));
+    r.create<yul::YieldOp>(loc, ifBaseEqZero.getResult(0));
     // If 1 (ifExpEqZero) end
 
     r.setInsertionPointAfter(ifExpEqZero);
@@ -898,8 +870,7 @@ static Value getCryptoHashLowering(OpT op, uint32_t preCompieAddr,
                                   /*inpOffset=*/dataSlot, dataLen,
                                   /*outOffset=*/zero, /*outSize=*/retSize);
 
-  auto statusIsZero = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                              status, bExt.genI256Const(0));
+  auto statusIsZero = bExt.genCmp(yul::CmpPredicate::eq, status, zero);
   evmB.genForwardingRevert(statusIsZero);
 
   auto res = evmB.genLoad(zero, dataLoc);
@@ -921,9 +892,8 @@ static Value genYulModOp(ModuleOp module, ConversionPatternRewriter &r,
   Value y256 = bExt.genIntCast(256, /*isSigned=*/false, y);
   Value mod256 = bExt.genIntCast(256, /*isSigned=*/false, mod);
 
-  auto zero = bExt.genI256Const(0, loc);
-  auto modEqZero =
-      r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, mod, zero);
+  auto zero = bExt.genI256Const(0);
+  auto modEqZero = bExt.genCmp(yul::CmpPredicate::eq, mod256, zero);
   evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, modEqZero);
 
   return r.create<ModOpT>(loc, x256, y256, mod256);
@@ -981,7 +951,7 @@ struct CAddOpLowering : public OpConversionPattern<sol::CAddOp> {
     // check since the legalized arithmetic works as if the small int is native
     // to evm.
 
-    Value sum = r.create<arith::AddIOp>(loc, lhs, rhs);
+    Value sum = r.create<yul::AddOp>(loc, lhs, rhs);
 
     if (ty.isSigned()) {
       // (Copied from the yul codegen)
@@ -995,27 +965,22 @@ struct CAddOpLowering : public OpConversionPattern<sol::CAddOp> {
       auto zero = bExt.genConst(0, ty.getWidth());
 
       // Generate the overflow condition.
-      auto rhsGtEqZero =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, rhs, zero);
-      auto sumLtLhs =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, sum, lhs);
-      auto overflowCond = r.create<arith::AndIOp>(loc, rhsGtEqZero, sumLtLhs);
+      auto rhsGtEqZero = bExt.genCmp(yul::CmpPredicate::sge, rhs, zero);
+      auto sumLtLhs = bExt.genCmp(yul::CmpPredicate::slt, sum, lhs);
+      auto overflowCond = r.create<yul::AndOp>(loc, rhsGtEqZero, sumLtLhs);
 
       // Generate the underflow condition.
-      auto rhsLtZero =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, rhs, zero);
-      auto sumGtEqLhs =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, sum, lhs);
-      auto underflowCond = r.create<arith::AndIOp>(loc, rhsLtZero, sumGtEqLhs);
+      auto rhsLtZero = bExt.genCmp(yul::CmpPredicate::slt, rhs, zero);
+      auto sumGtEqLhs = bExt.genCmp(yul::CmpPredicate::sge, sum, lhs);
+      auto underflowCond = r.create<yul::AndOp>(loc, rhsLtZero, sumGtEqLhs);
 
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                    r.create<arith::OrIOp>(loc, overflowCond, underflowCond));
+                    r.create<yul::OrOp>(loc, overflowCond, underflowCond));
 
       // Unsigned case
     } else {
-      evmB.genPanic(
-          mlir::evm::PanicCode::UnderOverflow,
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, lhs, sum));
+      evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
+                    bExt.genCmp(yul::CmpPredicate::ugt, lhs, sum));
     }
 
     r.replaceOp(op, sum);
@@ -1038,7 +1003,7 @@ struct CSubOpLowering : public OpConversionPattern<sol::CSubOp> {
     auto ty = cast<IntegerType>(op.getType());
     Value lhs = adaptor.getLhs();
     Value rhs = adaptor.getRhs();
-    Value diff = r.create<arith::SubIOp>(loc, lhs, rhs);
+    Value diff = r.create<yul::SubOp>(loc, lhs, rhs);
 
     if (ty.isSigned()) {
       // (Copied from the yul codegen)
@@ -1048,27 +1013,22 @@ struct CSubOpLowering : public OpConversionPattern<sol::CSubOp> {
       auto zero = bExt.genConst(0, ty.getWidth());
 
       // Generate the overflow condition.
-      auto rhsGtEqZero =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, rhs, zero);
-      auto diffGtLhs =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt, diff, lhs);
-      auto overflowCond = r.create<arith::AndIOp>(loc, rhsGtEqZero, diffGtLhs);
+      auto rhsGtEqZero = bExt.genCmp(yul::CmpPredicate::sge, rhs, zero);
+      auto diffGtLhs = bExt.genCmp(yul::CmpPredicate::sgt, diff, lhs);
+      auto overflowCond = r.create<yul::AndOp>(loc, rhsGtEqZero, diffGtLhs);
 
       // Generate the underflow condition.
-      auto rhsLtZero =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, rhs, zero);
-      auto diffLtRhs =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, diff, lhs);
-      auto underflowCond = r.create<arith::AndIOp>(loc, rhsLtZero, diffLtRhs);
+      auto rhsLtZero = bExt.genCmp(yul::CmpPredicate::slt, rhs, zero);
+      auto diffLtRhs = bExt.genCmp(yul::CmpPredicate::slt, diff, lhs);
+      auto underflowCond = r.create<yul::AndOp>(loc, rhsLtZero, diffLtRhs);
 
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                    r.create<arith::OrIOp>(loc, overflowCond, underflowCond));
+                    r.create<yul::OrOp>(loc, overflowCond, underflowCond));
 
       // Unsigned case
     } else {
-      evmB.genPanic(
-          mlir::evm::PanicCode::UnderOverflow,
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, diff, lhs));
+      evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
+                    bExt.genCmp(yul::CmpPredicate::ugt, diff, lhs));
     }
 
     r.replaceOp(op, diff);
@@ -1092,48 +1052,42 @@ struct CMulOpLowering : public OpConversionPattern<sol::CMulOp> {
     // See comments in sol.cadd lowering on why we don't have a different
     // codegen for small ints.
 
-    Value product = r.create<arith::MulIOp>(loc, lhs, rhs);
+    Value product = r.create<yul::MulOp>(loc, lhs, rhs);
     auto zero = bExt.genConst(0, ty.getWidth());
     auto one = bExt.genConst(1, ty.getWidth());
     if (ty.isSigned()) {
       // (Copied from the yul codegen)
       // underflow, if x < 0 and y == int.min
-      auto lhsLtZero =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, lhs, zero);
+      auto lhsLtZero = bExt.genCmp(yul::CmpPredicate::slt, lhs, zero);
       auto minVal = bExt.genConst(APInt::getSignedMinValue(ty.getWidth()));
-      auto rhsEqMin =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rhs, minVal);
+      auto rhsEqMin = bExt.genCmp(yul::CmpPredicate::eq, rhs, minVal);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                    r.create<arith::AndIOp>(loc, lhsLtZero, rhsEqMin));
+                    r.create<yul::AndOp>(loc, lhsLtZero, rhsEqMin));
 
       // over/underflow, if x != 0 and product/x != y
       // Use a safe divisor of 1 when lhs == 0 to avoid arith.divsi UB;
       // the quotient is discarded via the lhsNeqZero guard in that case.
-      // FIXME: It may be reasonable to replace DivSIOp with yul::div.
-      // In this case we could simplify the check, as we can get rid of the
-      // select in this case.
-      auto lhsNeqZero =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, lhs, zero);
-      auto safeLhs = r.create<arith::SelectOp>(loc, lhsNeqZero, lhs, one);
-      auto quotient = r.create<arith::DivSIOp>(loc, product, safeLhs);
-      auto quotientNeqRhs =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, quotient, rhs);
+      // FIXME: It may be reasonable to replace arithmetic wrapper div with
+      // yul::div. In this case we could simplify the check, as we can get
+      // rid of the select in this case.
+      auto lhsNeqZero = bExt.genCmp(yul::CmpPredicate::ne, lhs, zero);
+      auto safeLhs = r.create<yul::ArithSelectOp>(loc, lhsNeqZero, lhs, one);
+      auto quotient = r.create<yul::ArithSDivOp>(loc, product, safeLhs);
+      auto quotientNeqRhs = bExt.genCmp(yul::CmpPredicate::ne, quotient, rhs);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                    r.create<arith::AndIOp>(loc, lhsNeqZero, quotientNeqRhs));
+                    r.create<yul::AndOp>(loc, lhsNeqZero, quotientNeqRhs));
 
       // Unsigned case
     } else {
       // over/underflow, if x != 0 and product/x != y
       // Use a safe divisor of 1 when lhs == 0 to avoid arith.divui UB;
       // the quotient is discarded via the lhsNeqZero guard in that case.
-      auto lhsNeqZero =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, lhs, zero);
-      auto safeLhs = r.create<arith::SelectOp>(loc, lhsNeqZero, lhs, one);
-      auto quotient = r.create<arith::DivUIOp>(loc, product, safeLhs);
-      auto quotientNeqRhs =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, quotient, rhs);
+      auto lhsNeqZero = bExt.genCmp(yul::CmpPredicate::ne, lhs, zero);
+      auto safeLhs = r.create<yul::ArithSelectOp>(loc, lhsNeqZero, lhs, one);
+      auto quotient = r.create<yul::ArithDivOp>(loc, product, safeLhs);
+      auto quotientNeqRhs = bExt.genCmp(yul::CmpPredicate::ne, quotient, rhs);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                    r.create<arith::AndIOp>(loc, lhsNeqZero, quotientNeqRhs));
+                    r.create<yul::AndOp>(loc, lhsNeqZero, quotientNeqRhs));
     }
 
     r.replaceOp(op, product);
@@ -1189,25 +1143,22 @@ struct CDivOpLowering : public OpConversionPattern<sol::CDivOp> {
     // codegen for small ints.
 
     auto zero = bExt.genConst(0, ty.getWidth());
-    auto rhsEqZero =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rhs, zero);
+    auto rhsEqZero = bExt.genCmp(yul::CmpPredicate::eq, rhs, zero);
     evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, rhsEqZero);
 
     if (ty.isSigned()) {
       // (Copied from the yul codegen)
       // underflow, if x == int.min and y == -1
       auto minVal = bExt.genConst(APInt::getSignedMinValue(ty.getWidth()));
-      auto lhsEqMin =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, lhs, minVal);
+      auto lhsEqMin = bExt.genCmp(yul::CmpPredicate::eq, lhs, minVal);
       auto minusOne = bExt.genConst(-1, ty.getWidth());
-      auto rhsEqMinusOne =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, rhs, minusOne);
+      auto rhsEqMinusOne = bExt.genCmp(yul::CmpPredicate::eq, rhs, minusOne);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                    r.create<arith::AndIOp>(loc, lhsEqMin, rhsEqMinusOne));
-      r.replaceOpWithNewOp<arith::DivSIOp>(op, lhs, rhs);
+                    r.create<yul::AndOp>(loc, lhsEqMin, rhsEqMinusOne));
+      r.replaceOpWithNewOp<yul::ArithSDivOp>(op, lhs, rhs);
 
     } else {
-      r.replaceOpWithNewOp<arith::DivUIOp>(op, lhs, rhs);
+      r.replaceOpWithNewOp<yul::ArithDivOp>(op, lhs, rhs);
     }
 
     return success();
@@ -1280,12 +1231,12 @@ struct EcrecoverOpLowering : public OpConversionPattern<sol::EcrecoverOp> {
     // TODO: It's not clear why do we need this.
     r.create<yul::MStoreOp>(loc, zero, zero);
     mlir::Value status =
-        r.create<yul::StaticCallOp>(loc, gas, /*address=*/bExt.genI256Const(1),
+        r.create<yul::StaticCallOp>(loc, gas,
+                                    /*address=*/bExt.genI256Const(1),
                                     /*inpOffset=*/freePtr, paramsSize,
                                     /*outOffset=*/zero, /*outSize=*/retSize);
 
-    auto statusIsZero = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                                status, bExt.genI256Const(0));
+    auto statusIsZero = bExt.genCmp(yul::CmpPredicate::eq, status, zero);
     evmB.genForwardingRevert(statusIsZero);
     auto res = evmB.genLoad(zero, sol::DataLocation::Memory);
     r.replaceOp(op, res);
@@ -1297,14 +1248,14 @@ struct EcrecoverOpLowering : public OpConversionPattern<sol::EcrecoverOp> {
 struct CmpOpLowering : public OpConversionPattern<sol::CmpOp> {
   using OpConversionPattern<sol::CmpOp>::OpConversionPattern;
 
-  arith::CmpIPredicate getSignlessPred(sol::CmpPredicate pred,
-                                       bool isSigned) const {
+  yul::CmpPredicate getSignlessPred(sol::CmpPredicate pred,
+                                    bool isSigned) const {
     // Sign insensitive predicates.
     switch (pred) {
     case sol::CmpPredicate::eq:
-      return arith::CmpIPredicate::eq;
+      return yul::CmpPredicate::eq;
     case sol::CmpPredicate::ne:
-      return arith::CmpIPredicate::ne;
+      return yul::CmpPredicate::ne;
     default:
       break;
     }
@@ -1313,26 +1264,26 @@ struct CmpOpLowering : public OpConversionPattern<sol::CmpOp> {
     if (isSigned) {
       switch (pred) {
       case sol::CmpPredicate::lt:
-        return arith::CmpIPredicate::slt;
+        return yul::CmpPredicate::slt;
       case sol::CmpPredicate::le:
-        return arith::CmpIPredicate::sle;
+        return yul::CmpPredicate::sle;
       case sol::CmpPredicate::gt:
-        return arith::CmpIPredicate::sgt;
+        return yul::CmpPredicate::sgt;
       case sol::CmpPredicate::ge:
-        return arith::CmpIPredicate::sge;
+        return yul::CmpPredicate::sge;
       default:
         break;
       }
     } else {
       switch (pred) {
       case sol::CmpPredicate::lt:
-        return arith::CmpIPredicate::ult;
+        return yul::CmpPredicate::ult;
       case sol::CmpPredicate::le:
-        return arith::CmpIPredicate::ule;
+        return yul::CmpPredicate::ule;
       case sol::CmpPredicate::gt:
-        return arith::CmpIPredicate::ugt;
+        return yul::CmpPredicate::ugt;
       case sol::CmpPredicate::ge:
-        return arith::CmpIPredicate::uge;
+        return yul::CmpPredicate::uge;
       default:
         break;
       }
@@ -1356,34 +1307,34 @@ struct CmpOpLowering : public OpConversionPattern<sol::CmpOp> {
       unsigned cmpWidth = bytesTy.getSize() * 8;
       if (cmpWidth < 256) {
         Value shiftAmt = bExt.genI256Const(256 - cmpWidth);
-        lhs = r.create<arith::ShRUIOp>(loc, lhs, shiftAmt);
-        rhs = r.create<arith::ShRUIOp>(loc, rhs, shiftAmt);
+        lhs = r.create<yul::ArithShrOp>(loc, lhs, shiftAmt);
+        rhs = r.create<yul::ArithShrOp>(loc, rhs, shiftAmt);
       }
     } else if (sol::isAddressLikeType(cmpTy)) {
       APInt mask = APInt::getLowBitsSet(256, 160);
-      lhs = r.create<arith::AndIOp>(loc, lhs, bExt.genI256Const(mask));
-      rhs = r.create<arith::AndIOp>(loc, rhs, bExt.genI256Const(mask));
+      lhs = r.create<yul::AndOp>(loc, lhs, bExt.genI256Const(mask));
+      rhs = r.create<yul::AndOp>(loc, rhs, bExt.genI256Const(mask));
     } else if (isa<sol::ExtFuncRefType>(cmpTy)) {
       // External function references are represented as
       //   i256: | address (160) | selector (32) | zeros (64) |
       // Two ext-func-refs are equal iff both address and selector match.
       // The lower 64 bits are always zero (normalized).
       APInt mask = APInt::getHighBitsSet(256, 192);
-      lhs = r.create<arith::AndIOp>(loc, lhs, bExt.genI256Const(mask));
-      rhs = r.create<arith::AndIOp>(loc, rhs, bExt.genI256Const(mask));
+      lhs = r.create<yul::AndOp>(loc, lhs, bExt.genI256Const(mask));
+      rhs = r.create<yul::AndOp>(loc, rhs, bExt.genI256Const(mask));
     } else if (isa<sol::FuncRefType>(cmpTy)) {
       // Internal function references are 64-bit code pointers stored
       // right-aligned in the lower 64 bits of an i256.
       APInt mask = APInt::getLowBitsSet(256, 64);
-      lhs = r.create<arith::AndIOp>(loc, lhs, bExt.genI256Const(mask));
-      rhs = r.create<arith::AndIOp>(loc, rhs, bExt.genI256Const(mask));
+      lhs = r.create<yul::AndOp>(loc, lhs, bExt.genI256Const(mask));
+      rhs = r.create<yul::AndOp>(loc, rhs, bExt.genI256Const(mask));
     } else if (!isa<sol::EnumType>(cmpTy)) {
       llvm_unreachable("Unexpected type for comparison");
     }
 
-    arith::CmpIPredicate signlessPred =
+    yul::CmpPredicate signlessPred =
         getSignlessPred(op.getPredicate(), isSigned);
-    r.replaceOpWithNewOp<arith::CmpIOp>(op, signlessPred, lhs, rhs);
+    r.replaceOp(op, bExt.genCmp(signlessPred, lhs, rhs));
     return success();
   }
 };
@@ -1489,8 +1440,7 @@ struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
     mlir::solgen::BuilderExt bExt(r, loc);
 
     Value freePtr = evmB.genFreePtr();
-    Value dstStart =
-        r.create<arith::AddIOp>(loc, freePtr, bExt.genI256Const(32));
+    Value dstStart = r.create<yul::AddOp>(loc, freePtr, bExt.genI256Const(32));
 
     Value currDst = dstStart;
     for (auto [origSrc, src] : llvm::zip(op.getArgs(), adaptor.getArgs())) {
@@ -1501,17 +1451,17 @@ struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
         // bytes. See solx-solidity, #78.
         r.create<yul::MStoreOp>(loc, currDst, src);
         Value length = bExt.genI256Const(bytesTy.getSize());
-        currDst = r.create<arith::AddIOp>(loc, currDst, length);
+        currDst = r.create<yul::AddOp>(loc, currDst, length);
         continue;
       }
 
       assert(isa<sol::StringType>(ty));
       Value length = evmB.genCopyStringDataToMemory(src, ty, currDst, loc);
-      currDst = r.create<arith::AddIOp>(loc, currDst, length);
+      currDst = r.create<yul::AddOp>(loc, currDst, length);
     }
-    Value dataSize = r.create<arith::SubIOp>(loc, currDst, dstStart);
+    Value dataSize = r.create<yul::SubOp>(loc, currDst, dstStart);
     r.create<yul::MStoreOp>(loc, freePtr, dataSize);
-    Value allocationSize = r.create<arith::SubIOp>(loc, currDst, freePtr);
+    Value allocationSize = r.create<yul::SubOp>(loc, currDst, freePtr);
     evmB.genFreePtrUpd(freePtr, allocationSize);
     r.replaceOp(op, freePtr);
 
@@ -1579,7 +1529,7 @@ struct PushOpLowering : public OpConversionPattern<sol::PushOp> {
 
     Value slot = adaptor.getInp();
     Value oldSize = r.create<yul::SLoadOp>(loc, slot);
-    Value newSize = r.create<arith::AddIOp>(loc, oldSize, bExt.genI256Const(1));
+    Value newSize = r.create<yul::AddOp>(loc, oldSize, bExt.genI256Const(1));
     r.create<yul::SStoreOp>(loc, slot, newSize);
     Value dataSlot = evmB.genDataAddrPtr(slot, sol::DataLocation::Storage);
 
@@ -1596,8 +1546,8 @@ struct PushOpLowering : public OpConversionPattern<sol::PushOp> {
     } else {
       // Slot-aligned layout.
       Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
-      Value scaledIdx = r.create<arith::MulIOp>(loc, oldSize, stride);
-      r.replaceOp(op, r.create<arith::AddIOp>(loc, dataSlot, scaledIdx));
+      Value scaledIdx = r.create<yul::MulOp>(loc, oldSize, stride);
+      r.replaceOp(op, r.create<yul::AddOp>(loc, dataSlot, scaledIdx));
     }
     return success();
   }
@@ -1620,7 +1570,7 @@ struct PushStringOpLowering : public OpConversionPattern<sol::PushStringOp> {
     // legalization handles this automatically when legalizing zext i8 to i256.
     Value byte =
         isa<sol::FixedBytesType>(inpValueTy)
-            ? r.create<arith::ShRUIOp>(loc, castedVal, bExt.genI256Const(248))
+            ? r.create<yul::ArithShrOp>(loc, castedVal, bExt.genI256Const(248))
                   .getResult()
             : castedVal;
     evmB.genPushToString(adaptor.getAddr(), byte, loc);
@@ -1647,8 +1597,8 @@ struct PopOpLowering : public OpConversionPattern<sol::PopOp> {
                         : data;
 
     // Generate the empty array panic check.
-    Value panicCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                              oldSize, bExt.genI256Const(0));
+    Value panicCond =
+        bExt.genCmp(yul::CmpPredicate::eq, oldSize, bExt.genI256Const(0));
     evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond);
 
     if (isa<sol::StringType>(inpTy)) {
@@ -1657,7 +1607,7 @@ struct PopOpLowering : public OpConversionPattern<sol::PopOp> {
       return success();
     }
 
-    Value newSize = r.create<arith::SubIOp>(loc, oldSize, bExt.genI256Const(1));
+    Value newSize = r.create<yul::SubOp>(loc, oldSize, bExt.genI256Const(1));
     Value dataSlot = evmB.genDataAddrPtr(slot, sol::DataLocation::Storage);
 
     // Get element type from the input type.
@@ -1681,8 +1631,8 @@ struct PopOpLowering : public OpConversionPattern<sol::PopOp> {
     } else {
       // Slot-aligned: zero the whole slot.
       Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
-      Value scaledIdx = r.create<arith::MulIOp>(loc, newSize, stride);
-      Value tailAddr = r.create<arith::AddIOp>(loc, dataSlot, scaledIdx);
+      Value scaledIdx = r.create<yul::MulOp>(loc, newSize, stride);
+      Value tailAddr = r.create<yul::AddOp>(loc, dataSlot, scaledIdx);
       r.create<yul::SStoreOp>(loc, tailAddr, bExt.genI256Const(0));
     }
 
@@ -1762,13 +1712,12 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         auto idxTy = cast<IntegerType>(idx.getType());
         Value castedIdx = bExt.genIntCast(256, idxTy.isSigned(), idx);
         bool isConstIdx = !isa<BlockArgument>(idx) &&
-                          isa<arith::ConstantIntOp>(idx.getDefiningOp());
+                          isa<yul::ConstantOp>(idx.getDefiningOp());
         if (arrTy.isDynSized() || !isConstIdx) {
           Value size = arrTy.isDynSized()
                            ? evmB.genDynSize(remappedBaseAddr, baseAddrTy)
                            : bExt.genI256Const(arrTy.getSize());
-          auto panicCond = r.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::uge, castedIdx, size);
+          auto panicCond = bExt.genCmp(yul::CmpPredicate::uge, castedIdx, size);
           evmB.genPanic(mlir::evm::PanicCode::ArrayOutOfBounds, panicCond);
         }
 
@@ -1782,14 +1731,14 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         } else {
           // Slot-aligned layout.
           Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
-          Value scaledIdx = r.create<arith::MulIOp>(loc, castedIdx, stride);
-          res = r.create<arith::AddIOp>(loc, baseSlot, scaledIdx);
+          Value scaledIdx = r.create<yul::MulOp>(loc, castedIdx, stride);
+          res = r.create<yul::AddOp>(loc, baseSlot, scaledIdx);
         }
 
       } else if (auto structTy = dyn_cast<sol::StructType>(baseAddrTy)) {
         // Field index is always constant for struct access.
-        auto constIdx = cast<arith::ConstantIntOp>(idx.getDefiningOp());
-        uint64_t fieldIdx = constIdx.value();
+        auto constIdx = cast<yul::ConstantOp>(idx.getDefiningOp());
+        uint64_t fieldIdx = constIdx.getValue().getZExtValue();
 
         ArrayRef<Type> memberTypes = structTy.getMemberTypes();
         Type fieldTy = memberTypes[fieldIdx];
@@ -1799,12 +1748,12 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         // Position for target field.
         if (sol::canBePacked(fieldTy)) {
           // Result: {baseSlot + slotOffset, byteOffset}
-          Value slot = r.create<arith::AddIOp>(loc, remappedBaseAddr,
-                                               bExt.genI256Const(slotOffset));
+          Value slot = r.create<yul::AddOp>(loc, remappedBaseAddr,
+                                            bExt.genI256Const(slotOffset));
           res = bExt.genLLVMStruct({slot, bExt.genI256Const(byteOffset)});
         } else {
-          res = r.create<arith::AddIOp>(loc, remappedBaseAddr,
-                                        bExt.genI256Const(slotOffset));
+          res = r.create<yul::AddOp>(loc, remappedBaseAddr,
+                                     bExt.genI256Const(slotOffset));
         }
 
       } else if (isa<sol::StringType>(baseAddrTy)) {
@@ -1826,19 +1775,17 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         // Don't generate out-of-bounds check for constant indexing of static
         // arrays.
         if (!isa<BlockArgument>(idx) &&
-            isa<arith::ConstantIntOp>(idx.getDefiningOp())) {
-          auto constIdx = cast<arith::ConstantIntOp>(idx.getDefiningOp());
-          if (!arrTy.isDynSized()) {
-            // FIXME: Should this be done by the verifier?
-            assert(constIdx.value() < arrTy.getSize());
-            unsigned stride =
-                (dataLoc == sol::DataLocation::Memory)
-                    ? 32u
-                    : evm::getCallDataHeadSize(arrTy.getEltType());
-            addrAtIdx = r.create<arith::AddIOp>(
-                loc, remappedBaseAddr,
-                bExt.genI256Const(constIdx.value() * stride));
-          }
+            isa<yul::ConstantOp>(idx.getDefiningOp()) && !arrTy.isDynSized()) {
+          auto constIdx = cast<yul::ConstantOp>(idx.getDefiningOp())
+                              .getValue()
+                              .getZExtValue();
+          // FIXME: Should this be done by the verifier?
+          assert(constIdx < static_cast<uint64_t>(arrTy.getSize()));
+          unsigned stride = (dataLoc == sol::DataLocation::Memory)
+                                ? 32u
+                                : evm::getCallDataHeadSize(arrTy.getEltType());
+          addrAtIdx = r.create<yul::AddOp>(
+              loc, remappedBaseAddr, bExt.genI256Const(constIdx * stride));
         }
 
         if (!addrAtIdx) {
@@ -1854,8 +1801,7 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
           // Generate `if iszero(lt(index, <arrayLen>(baseRef)))` (yul).
           auto idxTy = cast<IntegerType>(idx.getType());
           Value castedIdx = bExt.genIntCast(256, idxTy.isSigned(), idx);
-          auto panicCond = r.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::uge, castedIdx, size);
+          auto panicCond = bExt.genCmp(yul::CmpPredicate::uge, castedIdx, size);
           evmB.genPanic(mlir::evm::PanicCode::ArrayOutOfBounds, panicCond);
 
           //
@@ -1870,13 +1816,12 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
                   ? 32u
                   : evm::getCallDataHeadSize(arrTy.getEltType());
           Value stride = bExt.genI256Const(strideVal);
-          Value scaledIdx = r.create<arith::MulIOp>(loc, castedIdx, stride);
+          Value scaledIdx = r.create<yul::MulOp>(loc, castedIdx, stride);
           if (arrTy.isDynSized()) {
             Value dataAddr = evmB.genDataAddrPtr(remappedBaseAddr, baseAddrTy);
-            addrAtIdx = r.create<arith::AddIOp>(loc, dataAddr, scaledIdx);
+            addrAtIdx = r.create<yul::AddOp>(loc, dataAddr, scaledIdx);
           } else {
-            addrAtIdx =
-                r.create<arith::AddIOp>(loc, remappedBaseAddr, scaledIdx);
+            addrAtIdx = r.create<yul::AddOp>(loc, remappedBaseAddr, scaledIdx);
           }
         }
         assert(addrAtIdx);
@@ -1898,13 +1843,13 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
 
         // Memory/calldata struct
       } else if (auto structTy = dyn_cast<sol::StructType>(baseAddrTy)) {
-        auto idxConstOp = cast<arith::ConstantIntOp>(idx.getDefiningOp());
-        uint64_t fieldIdx = idxConstOp.value();
+        auto idxConstOp = cast<yul::ConstantOp>(idx.getDefiningOp());
+        uint64_t fieldIdx = idxConstOp.getValue().getZExtValue();
         Value memberIdx =
-            bExt.genIntCast(/*width=*/256, /*isSigned=*/false, idxConstOp);
+            bExt.genIntCast(/*width=*/256, /*isSigned=*/false, idx);
         auto scaledIdx =
-            r.create<arith::MulIOp>(loc, memberIdx, bExt.genI256Const(32));
-        res = r.create<arith::AddIOp>(loc, remappedBaseAddr, scaledIdx);
+            r.create<yul::MulOp>(loc, memberIdx, bExt.genI256Const(32));
+        res = r.create<yul::AddOp>(loc, remappedBaseAddr, scaledIdx);
 
         // For calldata structs, resolve ABI relative-offset for dynamic
         // members.
@@ -1920,12 +1865,11 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         Value size = evmB.genDynSize(remappedBaseAddr, baseAddrTy);
         Value castedIdx =
             bExt.genIntCast(/*width=*/256, /*isSigned=*/false, idx);
-        auto panicCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge,
-                                                 castedIdx, size);
+        auto panicCond = bExt.genCmp(yul::CmpPredicate::uge, castedIdx, size);
         evmB.genPanic(mlir::evm::PanicCode::ArrayOutOfBounds, panicCond);
 
         Value dataAddr = evmB.genDataAddrPtr(remappedBaseAddr, baseAddrTy);
-        res = r.create<arith::AddIOp>(loc, dataAddr, castedIdx);
+        res = r.create<yul::AddOp>(loc, dataAddr, castedIdx);
       }
 
       assert(res);
@@ -1963,10 +1907,10 @@ struct MapOpLowering : public OpConversionPattern<sol::MapOp> {
       Value pos = evmB.genFreePtr(loc);
       Value dataLen =
           evmB.genCopyStringDataToMemory(adaptor.getKey(), keyTy, pos, loc);
-      Value slotAddr = r.create<arith::AddIOp>(loc, pos, dataLen);
+      Value slotAddr = r.create<yul::AddOp>(loc, pos, dataLen);
       r.create<yul::MStoreOp>(loc, slotAddr, adaptor.getMapping());
       Value totalLen =
-          r.create<arith::AddIOp>(loc, dataLen, bExt.genI256Const(0x20));
+          r.create<yul::AddOp>(loc, dataLen, bExt.genI256Const(0x20));
       slot = r.create<yul::Keccak256Op>(loc, pos, totalLen);
     } else {
       // Static key types (integers, address, contract, enum, fixedbytes, byte,
@@ -2025,7 +1969,7 @@ struct LoadOpLowering : public OpConversionPattern<sol::LoadOp> {
 
       if (isa<sol::ByteType>(eltTy)) {
         APInt mask = APInt::getHighBitsSet(256, 8);
-        ld = r.create<arith::AndIOp>(loc, ld, bExt.genI256Const(mask));
+        ld = r.create<yul::AndOp>(loc, ld, bExt.genI256Const(mask));
       } else if (isa<sol::EnumType>(eltTy) || sol::isAddressLikeType(eltTy) ||
                  isa<sol::FixedBytesType>(eltTy) ||
                  isa<sol::ExtFuncRefType>(eltTy)) {
@@ -2038,8 +1982,7 @@ struct LoadOpLowering : public OpConversionPattern<sol::LoadOp> {
         if (dataLoc == sol::DataLocation::CallData && intTy.getWidth() < 256) {
           Value normalized =
               bExt.genIntCast(/*width=*/256, intTy.isSigned(), castedRes, loc);
-          Value revertCond = r.create<arith::CmpIOp>(
-              loc, arith::CmpIPredicate::ne, ld, normalized);
+          Value revertCond = bExt.genCmp(yul::CmpPredicate::ne, ld, normalized);
           evmB.genRevert(revertCond, loc);
         }
         ld = castedRes;
@@ -2067,8 +2010,8 @@ struct LoadOpLowering : public OpConversionPattern<sol::LoadOp> {
         // Load the full slot and shift right by (offset * 8) to extract.
         Value slotVal = genSlotLoad(slot);
         Value shiftBits =
-            r.create<arith::MulIOp>(loc, offset, bExt.genI256Const(8));
-        Value shifted = r.create<arith::ShRUIOp>(loc, slotVal, shiftBits);
+            r.create<yul::MulOp>(loc, offset, bExt.genI256Const(8));
+        Value shifted = r.create<yul::ArithShrOp>(loc, slotVal, shiftBits);
         Value cleaned = evmB.genCleanupPackedStorageValue(eltTy, shifted, loc);
         r.replaceOp(op, cleaned);
       } else {
@@ -2204,13 +2147,13 @@ struct StoreOpLowering : public OpConversionPattern<sol::StoreOp> {
         if (sol::isBytesLikeType(eltTy)) {
           // Bytes-like types: shr to convert from MSB-aligned to LSB-aligned.
           numBits = sol::getBytesSize(eltTy) * 8;
-          preparedVal = r.create<arith::ShRUIOp>(
+          preparedVal = r.create<yul::ArithShrOp>(
               loc, remappedVal, bExt.genI256Const(256 - numBits));
         } else if (sol::isAddressLikeType(op.getVal().getType())) {
           numBits = 160;
           APInt mask = APInt::getLowBitsSet(256, numBits);
-          preparedVal = r.create<arith::AndIOp>(loc, remappedVal,
-                                                bExt.genI256Const(mask));
+          preparedVal =
+              r.create<yul::AndOp>(loc, remappedVal, bExt.genI256Const(mask));
         } else if (auto intTy = dyn_cast<IntegerType>(op.getVal().getType())) {
           // In storage packing, bool occupies 1 byte not a single bit.
           numBits = intTy.getWidth() == 1 ? 8 : intTy.getWidth();
@@ -2224,8 +2167,8 @@ struct StoreOpLowering : public OpConversionPattern<sol::StoreOp> {
         } else if (isa<sol::ExtFuncRefType>(eltTy)) {
           // ExtFuncRef is MSB-aligned like bytes24. shr(64) to right-align.
           numBits = 192;
-          preparedVal =
-              r.create<arith::ShRUIOp>(loc, remappedVal, bExt.genI256Const(64));
+          preparedVal = r.create<yul::ArithShrOp>(loc, remappedVal,
+                                                  bExt.genI256Const(64));
         } else if (isa<sol::EnumType>(eltTy)) {
           // Enums can have at most 256 members, so always 1 byte.
           numBits = 8;
@@ -2237,16 +2180,15 @@ struct StoreOpLowering : public OpConversionPattern<sol::StoreOp> {
 
         // Punch hole in slot for new value.
         Value shiftBits =
-            r.create<arith::MulIOp>(loc, offset, bExt.genI256Const(8));
+            r.create<yul::MulOp>(loc, offset, bExt.genI256Const(8));
         Value slotWithHole =
             evmB.genPunchHole(slot, shiftBits, numBits, dataLoc);
 
         // Shift new value to position: shl(offset * 8, preparedVal)
-        preparedVal = r.create<arith::ShLIOp>(loc, preparedVal, shiftBits);
+        preparedVal = r.create<yul::ArithShlOp>(loc, preparedVal, shiftBits);
 
         // Combine, i.e. or(slotWithHole, preparedVal) and store.
-        genSlotStore(slot,
-                     r.create<arith::OrIOp>(loc, slotWithHole, preparedVal));
+        genSlotStore(slot, r.create<yul::OrOp>(loc, slotWithHole, preparedVal));
       } else {
         // addr is just slot, do direct store.
         genSlotStore(remappedAddr, remappedVal);
@@ -2282,7 +2224,7 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       if (arrTy.isDynSized()) {
         size = evmB.genDynSize(srcAddr, ty);
         dstAddr = evmB.genMemAllocForDynArray(
-            size, r.create<arith::MulIOp>(loc, size, bExt.genI256Const(32)));
+            size, r.create<yul::MulOp>(loc, size, bExt.genI256Const(32)));
         dstDataAddr = evmB.genDataAddrPtr(dstAddr, dstDataLoc);
         srcDataAddr = evmB.genDataAddrPtr(srcAddr, srcDataLoc);
       } else {
@@ -2315,21 +2257,16 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       // TODO: Support multi-dimensional arrays.
       if (srcDataLoc == sol::DataLocation::CallData &&
           !sol::isNonPtrRefType(eltTy)) {
-        Value sizeInBytes = r.create<arith::MulIOp>(
+        Value sizeInBytes = r.create<yul::MulOp>(
             loc, size, bExt.genI256Const(evm::getCallDataHeadSize(eltTy)));
         r.create<yul::CallDataCopyOp>(loc, dstDataAddr, srcDataAddr,
                                       sizeInBytes);
         return dstAddr;
       }
 
-      r.create<scf::ForOp>(
-          loc, /*lowerBound=*/bExt.genIdxConst(0),
-          /*upperBound=*/bExt.genCastToIdx(size),
-          /*step=*/bExt.genIdxConst(1),
-          /*initArgs=*/ValueRange{},
-          /*builder=*/
-          [&](OpBuilder &b, Location loc, Value indVar, ValueRange initArgs) {
-            Value i256IndVar = bExt.genCastToI256(indVar);
+      bExt.createCountedLoop(
+          bExt.genI256Const(0), size, bExt.genI256Const(1), ValueRange{},
+          [&](OpBuilder &b, Location loc, Value i256IndVar, ValueRange) {
             Value srcAddrI = evmB.genAddrAtIdx(srcDataAddr, i256IndVar, arrTy,
                                                srcDataLoc, loc);
             Value dstAddrI = evmB.genAddrAtIdx(dstDataAddr, i256IndVar, arrTy,
@@ -2342,7 +2279,7 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
                                                    /*isNonABI=*/true, loc);
             Value subElm = genCopy(mod, srcAddrI, eltTy, eltSrcDataLoc, r, loc);
             evmB.genStore(subElm, dstAddrI, dstDataLoc);
-            r.create<scf::YieldOp>(loc);
+            return SmallVector<Value>{};
           });
       return dstAddr;
     }
@@ -2384,12 +2321,12 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
     Value val = evmB.genLoad(srcAddr, srcDataLoc);
     if (isa<sol::ExtFuncRefType>(ty) &&
         srcDataLoc == sol::DataLocation::Storage)
-      val = r.create<arith::ShLIOp>(loc, val, bExt.genI256Const(64));
+      val = r.create<yul::ArithShlOp>(loc, val, bExt.genI256Const(64));
     else if (sol::isBytesLikeType(ty) &&
              srcDataLoc == sol::DataLocation::Storage) {
       unsigned shift = (32 - sol::getBytesSize(ty)) * 8;
       if (shift > 0)
-        val = r.create<arith::ShLIOp>(loc, val, bExt.genI256Const(shift));
+        val = r.create<yul::ArithShlOp>(loc, val, bExt.genI256Const(shift));
     }
     return val;
   }
@@ -2462,13 +2399,11 @@ struct SliceOpLowering : public OpConversionPattern<sol::SliceOp> {
     Value length = evmB.genDynSize(arr, arrTy);
 
     // Validate: start <= end
-    auto startGtEnd =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, start, end);
+    auto startGtEnd = bExt.genCmp(yul::CmpPredicate::ugt, start, end);
     evmB.genDebugRevertWithMsg(startGtEnd, "Slice starts after end", loc);
 
     // Validate: end <= length
-    auto endGtLen =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt, end, length);
+    auto endGtLen = bExt.genCmp(yul::CmpPredicate::ugt, end, length);
     evmB.genDebugRevertWithMsg(endGtLen, "Slice is greater than length", loc);
 
     // Compute stride (element size in calldata)
@@ -2480,11 +2415,11 @@ struct SliceOpLowering : public OpConversionPattern<sol::SliceOp> {
 
     // newOffset = dataAddr + start * stride
     Value scaledStart =
-        r.create<arith::MulIOp>(loc, start, bExt.genI256Const(stride));
-    Value newOffset = r.create<arith::AddIOp>(loc, dataAddr, scaledStart);
+        r.create<yul::MulOp>(loc, start, bExt.genI256Const(stride));
+    Value newOffset = r.create<yul::AddOp>(loc, dataAddr, scaledStart);
 
     // newLength = end - start
-    Value newLength = r.create<arith::SubIOp>(loc, end, start);
+    Value newLength = r.create<yul::SubOp>(loc, end, start);
 
     r.replaceOp(op, bExt.genLLVMStruct({newOffset, newLength}));
     return success();
@@ -2573,7 +2508,7 @@ struct SigOpLowering : public OpConversionPattern<sol::SigOp> {
     Value data = r.create<yul::CallDataLoadOp>(loc, zero);
     // Mask to keep only the top 4 bytes (bytes4 is MSB-aligned).
     Value mask = bExt.genI256Const(llvm::APInt::getHighBitsSet(256, 32));
-    r.replaceOp(op, r.create<arith::AndIOp>(loc, data, mask));
+    r.replaceOp(op, r.create<yul::AndOp>(loc, data, mask));
     return success();
   }
 };
@@ -2710,36 +2645,36 @@ struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
     Value freePtr = evmB.genFreePtr();
     if (op.getPacked()) {
       Value dataStart =
-          r.create<arith::AddIOp>(loc, freePtr, bExt.genI256Const(32));
+          r.create<yul::AddOp>(loc, freePtr, bExt.genI256Const(32));
       Value dataEnd = evmB.genABIPackedEncoding(op.getIns().getType(),
                                                 adaptor.getIns(), dataStart);
-      Value dataSize = r.create<arith::SubIOp>(loc, dataEnd, dataStart);
+      Value dataSize = r.create<yul::SubOp>(loc, dataEnd, dataStart);
       r.create<yul::MStoreOp>(loc, freePtr, dataSize);
-      Value allocationSize = r.create<arith::SubIOp>(loc, dataEnd, freePtr);
+      Value allocationSize = r.create<yul::SubOp>(loc, dataEnd, freePtr);
       evmB.genFreePtrUpd(freePtr, allocationSize);
     } else if (op.getSelector()) {
       assert(adaptor.getSelector() && "selector operand is required");
 
       Value selectorAddr =
-          r.create<arith::AddIOp>(loc, freePtr, bExt.genI256Const(32));
+          r.create<yul::AddOp>(loc, freePtr, bExt.genI256Const(32));
       r.create<yul::MStoreOp>(loc, selectorAddr, adaptor.getSelector());
 
       Value tupleStart =
-          r.create<arith::AddIOp>(loc, selectorAddr, bExt.genI256Const(4));
+          r.create<yul::AddOp>(loc, selectorAddr, bExt.genI256Const(4));
       Value tupleEnd = evmB.genABITupleEncoding(op.getIns().getType(),
                                                 adaptor.getIns(), tupleStart);
-      Value dataSize = r.create<arith::SubIOp>(loc, tupleEnd, selectorAddr);
+      Value dataSize = r.create<yul::SubOp>(loc, tupleEnd, selectorAddr);
       r.create<yul::MStoreOp>(loc, freePtr, dataSize);
-      Value allocationSize = r.create<arith::SubIOp>(loc, tupleEnd, freePtr);
+      Value allocationSize = r.create<yul::SubOp>(loc, tupleEnd, freePtr);
       evmB.genFreePtrUpd(freePtr, allocationSize);
     } else {
       Value tupleStart =
-          r.create<arith::AddIOp>(loc, freePtr, bExt.genI256Const(32));
+          r.create<yul::AddOp>(loc, freePtr, bExt.genI256Const(32));
       Value tupleEnd = evmB.genABITupleEncoding(op.getIns().getType(),
                                                 adaptor.getIns(), tupleStart);
-      Value tupleSize = r.create<arith::SubIOp>(loc, tupleEnd, tupleStart);
+      Value tupleSize = r.create<yul::SubOp>(loc, tupleEnd, tupleStart);
       r.create<yul::MStoreOp>(loc, freePtr, tupleSize);
-      Value allocationSize = r.create<arith::SubIOp>(loc, tupleEnd, freePtr);
+      Value allocationSize = r.create<yul::SubOp>(loc, tupleEnd, freePtr);
       evmB.genFreePtrUpd(freePtr, allocationSize);
     }
     r.replaceOp(op, freePtr);
@@ -2767,7 +2702,7 @@ struct DecodeOpLowering : public OpConversionPattern<sol::DecodeOp> {
 
     Value tupleStart = evmB.genDataAddrPtr(adaptor.getAddr(), srcTy);
     Value tupleSize = evmB.genDynSize(adaptor.getAddr(), srcTy);
-    Value tupleEnd = r.create<arith::AddIOp>(loc, tupleStart, tupleSize);
+    Value tupleEnd = r.create<yul::AddOp>(loc, tupleStart, tupleSize);
     bool fromMem = dataLoc == sol::DataLocation::Memory;
     evmB.genABITupleDecoding(op.getResultTypes(), tupleStart, tupleEnd, results,
                              fromMem);
@@ -2814,21 +2749,21 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     if (extCodeSizeCheck) {
       // Generate the revert code.
       auto extCodeSize = r.create<yul::ExtCodeSizeOp>(loc, adaptor.getAddr());
-      auto isExtCodeSizeZero = r.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::eq, extCodeSize, bExt.genI256Const(0));
+      auto isExtCodeSizeZero =
+          bExt.genCmp(yul::CmpPredicate::eq, extCodeSize, bExt.genI256Const(0));
       evmB.genDebugRevertWithMsg(isExtCodeSizeZero,
                                  "Target contract does not contain code");
     }
 
     // Generate the store of the selector.
     Value selectorAddr = evmB.genFreePtr();
-    Value shiftedSelector = r.create<arith::ShLIOp>(loc, adaptor.getSelector(),
-                                                    bExt.genI256Const(224));
+    Value shiftedSelector = r.create<yul::ArithShlOp>(
+        loc, adaptor.getSelector(), bExt.genI256Const(224));
     r.create<yul::MStoreOp>(loc, selectorAddr, shiftedSelector);
 
     // Generate the abi encoding code.
     Value tupleStart =
-        r.create<arith::AddIOp>(loc, selectorAddr, bExt.genI256Const(4));
+        r.create<yul::AddOp>(loc, selectorAddr, bExt.genI256Const(4));
     Value tupleEnd =
         evmB.genABITupleEncoding(abiInputTys, adaptor.getIns(), tupleStart);
 
@@ -2846,7 +2781,7 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     }
 
     // Generate the call.
-    Value inpSize = r.create<arith::SubIOp>(loc, tupleEnd, selectorAddr);
+    Value inpSize = r.create<yul::SubOp>(loc, tupleEnd, selectorAddr);
     Value staticRetSize = bExt.genI256Const(staticRetSizeVal);
     mlir::Value status;
 
@@ -2869,8 +2804,8 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
 
     // Generate forwarding revert if not try-call.
     if (!op.getTryCall()) {
-      auto statusIsZero = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                                  status, bExt.genI256Const(0));
+      auto statusIsZero =
+          bExt.genCmp(yul::CmpPredicate::eq, status, bExt.genI256Const(0));
       evmB.genForwardingRevert(statusIsZero);
     }
 
@@ -2882,9 +2817,9 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
       return failure();
 
     // Generate the if-else op of the status that yields the decoded results.
-    auto statusIsNotZero = r.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::ne, status, bExt.genI256Const(0));
-    auto statusIfOp = r.create<scf::IfOp>(loc, /*resultTys=*/decodedResultTys,
+    auto statusIsNotZero =
+        bExt.genCmp(yul::CmpPredicate::ne, status, bExt.genI256Const(0));
+    auto statusIfOp = r.create<yul::IfOp>(loc, /*resultTys=*/decodedResultTys,
                                           /*cond=*/statusIsNotZero);
 
     // Generate the else block (failure) which yields undefs. The undefs will
@@ -2895,7 +2830,7 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     for (Type ty : decodedResultTys) {
       undefYields.push_back(r.create<LLVM::UndefOp>(loc, ty));
     }
-    r.create<scf::YieldOp>(loc, undefYields);
+    r.create<yul::YieldOp>(loc, undefYields);
 
     // Generte the then block (success).
     r.setInsertionPointToStart(&statusIfOp.getThenRegion().emplaceBlock());
@@ -2910,34 +2845,33 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
                                       /*src=*/bExt.genI256Const(0),
                                       retDataSize);
       evmB.genFreePtrUpd(selectorAddr, retDataSize);
-      Value tupleEnd = r.create<arith::AddIOp>(loc, selectorAddr, retDataSize);
+      Value tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, retDataSize);
       evmB.genABITupleDecoding(abiResultTys, selectorAddr, tupleEnd,
                                decodedResults, /*fromMem=*/true);
     } else {
       // See https://github.com/ethereum/solidity/pull/12684
-      Value staticRetSizeGreater = r.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::ugt, staticRetSize, retDataSize);
+      Value staticRetSizeGreater =
+          bExt.genCmp(yul::CmpPredicate::ugt, staticRetSize, retDataSize);
 
-      auto ifOp = r.create<scf::IfOp>(loc, /*resultTy=*/r.getIntegerType(256),
-                                      /*cond=*/staticRetSizeGreater,
-                                      /*withElse=*/true);
+      auto ifOp =
+          bExt.createIf(TypeRange{r.getIntegerType(256)}, staticRetSizeGreater);
       // Then block:
       r.setInsertionPointToStart(&ifOp.getThenRegion().front());
       evmB.genFreePtrUpd(selectorAddr, retDataSize);
-      Value tupleEnd = r.create<arith::AddIOp>(loc, selectorAddr, retDataSize);
-      r.create<scf::YieldOp>(loc, tupleEnd);
+      Value tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, retDataSize);
+      r.create<yul::YieldOp>(loc, ValueRange{tupleEnd});
       // Else block:
       r.setInsertionPointToStart(&ifOp.getElseRegion().front());
       evmB.genFreePtrUpd(selectorAddr, staticRetSize);
-      tupleEnd = r.create<arith::AddIOp>(loc, selectorAddr, staticRetSize);
-      r.create<scf::YieldOp>(loc, tupleEnd);
+      tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, staticRetSize);
+      r.create<yul::YieldOp>(loc, ValueRange{tupleEnd});
 
       r.setInsertionPointAfter(ifOp);
       evmB.genABITupleDecoding(abiResultTys, selectorAddr, ifOp.getResult(0),
                                decodedResults,
                                /*fromMem=*/true);
     }
-    r.create<scf::YieldOp>(loc, decodedResults);
+    r.create<yul::YieldOp>(loc, decodedResults);
 
     SmallVector<Value, 2> newResults{statusIsNotZero};
     newResults.append(statusIfOp.getResults().begin(),
@@ -2964,15 +2898,15 @@ static LogicalResult lowerBareCallLikeOp(OpT op, AdaptorT adaptor,
   Value zero = bExt.genI256Const(0);
   Value rawStatus = opBuilderFunc(loc, adaptor, inpStart, inpSize, zero, r);
 
-  Value status = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
-                                         rawStatus, bExt.genI256Const(0));
+  Value status = bExt.genCmp(yul::CmpPredicate::ne, rawStatus, zero);
   Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
-  Value retData = evmB.genMemAllocForDynArray(
-      retDataSize, bExt.genRoundUpToMultiple<32>(retDataSize), loc);
+  Value roundedRetDataSize = bExt.genRoundUpToMultiple<32>(retDataSize);
+  Value retData =
+      evmB.genMemAllocForDynArray(retDataSize, roundedRetDataSize, loc);
   Value retDataStart =
       evmB.genDataAddrPtr(retData, sol::DataLocation::Memory, loc);
   r.create<yul::ReturnDataCopyOp>(loc, /*dst=*/retDataStart,
-                                  /*src=*/bExt.genI256Const(0), retDataSize);
+                                  /*src=*/zero, retDataSize);
 
   r.replaceOp(op, SmallVector<Value, 2>{status, retData});
   return success();
@@ -3035,20 +2969,20 @@ struct BareStaticCallOpLowering
 /// 'sol.transfer' and returns the requested status predicate.
 template <typename AdaptorT>
 static Value genValueTransferStatus(Location loc, AdaptorT adaptor,
-                                    arith::CmpIPredicate pred,
+                                    yul::CmpPredicate pred,
                                     ConversionPatternRewriter &r) {
   mlir::solgen::BuilderExt bExt(r, loc);
   Value zero = bExt.genI256Const(0);
   Value callStipend = bExt.genI256Const(2300);
-  Value valueIsZero = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                              adaptor.getVal(), zero);
-  Value gas = r.create<arith::SelectOp>(loc, valueIsZero, callStipend, zero);
+  Value valueIsZero =
+      bExt.genCmp(yul::CmpPredicate::eq, adaptor.getVal(), zero);
+  Value gas = r.create<yul::ArithSelectOp>(loc, valueIsZero, callStipend, zero);
 
   Value callStatus = r.create<yul::CallOp>(
       loc, gas, adaptor.getAddr(), adaptor.getVal(),
       /*inpOffset=*/zero, /*inpSize=*/zero, /*outOffset=*/zero,
       /*outSize=*/zero);
-  return r.create<arith::CmpIOp>(loc, pred, callStatus, zero);
+  return bExt.genCmp(pred, callStatus, zero);
 }
 
 struct SendOpLowering : public OpConversionPattern<sol::SendOp> {
@@ -3058,7 +2992,7 @@ struct SendOpLowering : public OpConversionPattern<sol::SendOp> {
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
     Value status =
-        genValueTransferStatus(loc, adaptor, arith::CmpIPredicate::ne, r);
+        genValueTransferStatus(loc, adaptor, yul::CmpPredicate::ne, r);
     r.replaceOp(op, status);
     return success();
   }
@@ -3073,7 +3007,7 @@ struct TransferOpLowering : public OpConversionPattern<sol::TransferOp> {
     evm::Builder evmB(getModule(op), r, loc);
 
     Value statusIsZero =
-        genValueTransferStatus(loc, adaptor, arith::CmpIPredicate::eq, r);
+        genValueTransferStatus(loc, adaptor, yul::CmpPredicate::eq, r);
     evmB.genForwardingRevert(statusIsZero);
     r.eraseOp(op);
     return success();
@@ -3092,10 +3026,10 @@ struct ExtICallOpLowering : public OpConversionPattern<sol::ExtICallOp> {
     // selector = (callee >> 64) & 0xffffffff; addr = callee >> 96
     Value callee = adaptor.getCallee();
     Value shifted =
-        r.create<arith::ShRUIOp>(loc, callee, bExt.genI256Const(64));
-    Value selector = r.create<arith::AndIOp>(
+        r.create<yul::ArithShrOp>(loc, callee, bExt.genI256Const(64));
+    Value selector = r.create<yul::AndOp>(
         loc, shifted, bExt.genI256Const(APInt::getLowBitsSet(256, 32)));
-    Value addr = r.create<arith::ShRUIOp>(loc, shifted, bExt.genI256Const(32));
+    Value addr = r.create<yul::ArithShrOp>(loc, shifted, bExt.genI256Const(32));
 
     // Get callee function type from the ext_func_ref type.
     auto extFuncRefTy = cast<sol::ExtFuncRefType>(op.getCallee().getType());
@@ -3137,10 +3071,10 @@ struct NewOpLowering : public OpConversionPattern<sol::NewOp> {
     Value dataSize = r.create<yul::DataSizeOp>(loc, op.getObjName());
     r.create<yul::CodeCopyOp>(loc, bytecodeAddr, dataOffset, dataSize);
 
-    Value tupleStart = r.create<arith::AddIOp>(loc, bytecodeAddr, dataSize);
+    Value tupleStart = r.create<yul::AddOp>(loc, bytecodeAddr, dataSize);
     Value tupleEnd = evmB.genABITupleEncoding(
         op.getCtorArgs().getType(), adaptor.getCtorArgs(), tupleStart);
-    Value allocSize = r.create<arith::SubIOp>(loc, tupleEnd, bytecodeAddr);
+    Value allocSize = r.create<yul::SubOp>(loc, tupleEnd, bytecodeAddr);
 
     Value status;
     if (op.getSalt())
@@ -3151,8 +3085,7 @@ struct NewOpLowering : public OpConversionPattern<sol::NewOp> {
                                        allocSize);
 
     Value zero = bExt.genI256Const(0);
-    Value statusIsZero =
-        r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq, status, zero);
+    Value statusIsZero = bExt.genCmp(yul::CmpPredicate::eq, status, zero);
     evmB.genForwardingRevert(statusIsZero);
     r.replaceOp(op, status);
     return success();
@@ -3256,8 +3189,8 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
     // The ops after this if op belong to the fallback. Track it for the
     // fallback lowering.
     auto returnDataSize = r.create<yul::ReturnDataSizeOp>(loc);
-    auto selectorRetCond = r.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::ugt, returnDataSize, bExt.genI256Const(3));
+    auto selectorRetCond = bExt.genCmp(yul::CmpPredicate::ugt, returnDataSize,
+                                       bExt.genI256Const(3));
     auto ifSelectorRet = r.create<sol::IfOp>(loc, selectorRetCond);
     auto fallbackPoint = r.saveInsertionPoint().getPoint();
 
@@ -3273,7 +3206,7 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
                                     /*size=*/bExt.genI256Const(4));
     auto selectorWord = r.create<yul::MLoadOp>(loc, zero);
     auto selector =
-        r.create<arith::ShRUIOp>(loc, selectorWord, bExt.genI256Const(224));
+        r.create<yul::ArithShrOp>(loc, selectorWord, bExt.genI256Const(224));
 
     // Generate the switch for the panic and error catch blocks.
     SmallVector<APInt, 2> switchSelectors;
@@ -3305,9 +3238,8 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
 
       // Genereate an if op that checks if the returndata is large enough to
       // hold the panic code.
-      auto panicRetCond =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ugt,
-                                  returnDataSize, bExt.genI256Const(0x23));
+      auto panicRetCond = bExt.genCmp(yul::CmpPredicate::ugt, returnDataSize,
+                                      bExt.genI256Const(0x23));
       auto ifPanicRet = r.create<sol::IfOp>(loc, panicRetCond);
 
       // Inline the panic region.
@@ -3345,9 +3277,8 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
 
       // Genereate an if op that checks if the returndata is large enough to
       // hold the error message.
-      auto errMsgRetCond =
-          r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge,
-                                  returnDataSize, bExt.genI256Const(0x44));
+      auto errMsgRetCond = bExt.genCmp(yul::CmpPredicate::uge, returnDataSize,
+                                       bExt.genI256Const(0x44));
       auto ifErrMsg = r.create<sol::IfOp>(loc, errMsgRetCond);
 
       // Inline the error region.
@@ -3366,13 +3297,13 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
       Location loc = blkArg.getLoc();
       evm::Builder evmB(getModule(tryOp), r, loc);
       Value abiTupleSize =
-          r.create<arith::SubIOp>(loc, returnDataSize, bExt.genI256Const(4));
+          r.create<yul::SubOp>(loc, returnDataSize, bExt.genI256Const(4));
       Value abiTuple = evmB.genMemAlloc(abiTupleSize);
       r.create<yul::ReturnDataCopyOp>(loc, /*dst=*/abiTuple,
                                       /*src=*/bExt.genI256Const(4),
                                       abiTupleSize);
       Value errMsgOffset = r.create<yul::MLoadOp>(loc, abiTuple);
-      Value errMsg = r.create<arith::AddIOp>(loc, abiTuple, errMsgOffset);
+      Value errMsg = r.create<yul::AddOp>(loc, abiTuple, errMsgOffset);
       auto blkArgRepl = getTypeConverter()->materializeSourceConversion(
           r, loc, blkArg.getType(), errMsg);
       // FIXME: See panic clause lowering.
@@ -3403,13 +3334,13 @@ struct AssertOpLowering : public OpConversionPattern<sol::AssertOp> {
   LogicalResult matchAndRewrite(sol::AssertOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
+    mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(op), r, loc);
 
     // Generate: if (!cond) { panic(0x01) }
-    mlir::Value falseVal =
-        r.create<arith::ConstantIntOp>(loc, r.getI1Type(), 0);
-    mlir::Value negCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                                  op.getCond(), falseVal);
+    mlir::Value falseVal = bExt.genBool(false);
+    mlir::Value negCond =
+        bExt.genCmp(yul::CmpPredicate::eq, op.getCond(), falseVal);
     evmB.genPanic(evm::PanicCode::Assert, negCond);
 
     r.eraseOp(op);
@@ -3427,10 +3358,9 @@ struct RequireOpLowering : public OpConversionPattern<sol::RequireOp> {
     evm::Builder evmB(getModule(op), r, loc);
 
     // Generate the revert condition.
-    mlir::Value falseVal =
-        r.create<arith::ConstantIntOp>(loc, r.getI1Type(), 0);
-    mlir::Value negCond = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                                  op.getCond(), falseVal);
+    mlir::Value falseVal = bExt.genBool(false);
+    mlir::Value negCond =
+        bExt.genCmp(yul::CmpPredicate::eq, op.getCond(), falseVal);
     if (op.getCall()) {
       assert(op.getMsg());
       evmB.genRevert(negCond, op.getArgs().getTypes(), adaptor.getArgs(),
@@ -3483,7 +3413,7 @@ struct EmitOpLowering : public OpConversionPattern<sol::EmitOp> {
     Value tupleStart = evmB.genFreePtr();
     Value tupleEnd = evmB.genABITupleEncoding(nonIndexedArgsType,
                                               nonIndexedArgs, tupleStart);
-    Value tupleSize = r.create<arith::SubIOp>(loc, tupleEnd, tupleStart);
+    Value tupleSize = r.create<yul::SubOp>(loc, tupleEnd, tupleStart);
 
     // Generate sol.log and replace sol.emit with it.
     r.replaceOpWithNewOp<yul::LogOp>(op, tupleStart, tupleSize, indexedArgs);
@@ -3515,63 +3445,46 @@ struct RevertOpLowering : public OpConversionPattern<sol::RevertOp> {
   }
 };
 
-// (Copied and modified from clangir).
+static void lowerSolRegionTerminatorsToYul(Region &region, PatternRewriter &r) {
+  for (Block &block : region) {
+    Operation *terminator = block.getTerminator();
+    if (auto yieldOp = dyn_cast<sol::YieldOp>(terminator)) {
+      assert(yieldOp.getIns().empty() &&
+             "Yul structured control flow does not support yielded values yet");
+      r.setInsertionPoint(yieldOp);
+      r.replaceOpWithNewOp<yul::YieldOp>(yieldOp);
+    } else if (auto conditionOp = dyn_cast<sol::ConditionOp>(terminator)) {
+      r.setInsertionPoint(conditionOp);
+      r.replaceOpWithNewOp<yul::ConditionOp>(
+          conditionOp, conditionOp.getCondition(), ValueRange{});
+    } else if (auto breakOp = dyn_cast<sol::BreakOp>(terminator)) {
+      r.setInsertionPoint(breakOp);
+      r.replaceOpWithNewOp<yul::BreakOp>(breakOp);
+    } else if (auto continueOp = dyn_cast<sol::ContinueOp>(terminator)) {
+      r.setInsertionPoint(continueOp);
+      r.replaceOpWithNewOp<yul::ContinueOp>(continueOp);
+    }
+  }
+}
+
 struct IfOpLowering : public OpRewritePattern<sol::IfOp> {
   using OpRewritePattern<sol::IfOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(sol::IfOp ifOp,
                                 PatternRewriter &r) const override {
     Location loc = ifOp.getLoc();
+    assert(ifOp->getResults().empty() &&
+           "Yul structured control flow does not support results yet");
 
-    bool emptyElse = ifOp.getElseRegion().empty();
-    Block *currentBlock = r.getInsertionBlock();
-    Block *remainingOpsBlock =
-        r.splitBlock(currentBlock, r.getInsertionPoint());
-    Block *continueBlock;
-    if (ifOp->getResults().empty())
-      continueBlock = remainingOpsBlock;
-    else
-      llvm_unreachable("NYI");
+    auto yulIfOp = r.create<yul::IfOp>(loc, TypeRange{}, ifOp.getCond());
+    r.inlineRegionBefore(ifOp.getThenRegion(), yulIfOp.getThenRegion(),
+                         yulIfOp.getThenRegion().end());
+    lowerSolRegionTerminatorsToYul(yulIfOp.getThenRegion(), r);
+    r.inlineRegionBefore(ifOp.getElseRegion(), yulIfOp.getElseRegion(),
+                         yulIfOp.getElseRegion().end());
+    lowerSolRegionTerminatorsToYul(yulIfOp.getElseRegion(), r);
 
-    // Inline then region.
-    Block *thenBeforeBody = &ifOp.getThenRegion().front();
-    Block *thenAfterBody = &ifOp.getThenRegion().back();
-    r.inlineRegionBefore(ifOp.getThenRegion(), continueBlock);
-
-    r.setInsertionPointToEnd(thenAfterBody);
-    if (auto thenYieldOp =
-            dyn_cast<sol::YieldOp>(thenAfterBody->getTerminator())) {
-      r.replaceOpWithNewOp<cf::BranchOp>(thenYieldOp, thenYieldOp.getIns(),
-                                         continueBlock);
-    }
-
-    r.setInsertionPointToEnd(continueBlock);
-
-    // Has else region: inline it.
-    Block *elseBeforeBody = nullptr;
-    Block *elseAfterBody = nullptr;
-    if (!emptyElse) {
-      elseBeforeBody = &ifOp.getElseRegion().front();
-      elseAfterBody = &ifOp.getElseRegion().back();
-      r.inlineRegionBefore(ifOp.getElseRegion(), thenAfterBody);
-    } else {
-      elseBeforeBody = elseAfterBody = continueBlock;
-    }
-
-    r.setInsertionPointToEnd(currentBlock);
-    r.create<cf::CondBranchOp>(loc, ifOp.getCond(), thenBeforeBody,
-                               elseBeforeBody);
-
-    if (!emptyElse) {
-      r.setInsertionPointToEnd(elseAfterBody);
-      if (auto elseYieldOp =
-              dyn_cast<sol::YieldOp>(elseAfterBody->getTerminator())) {
-        r.replaceOpWithNewOp<cf::BranchOp>(elseYieldOp, elseYieldOp.getIns(),
-                                           continueBlock);
-      }
-    }
-
-    r.replaceOp(ifOp, continueBlock->getArguments());
+    r.eraseOp(ifOp);
     return success();
   }
 };
@@ -3581,60 +3494,22 @@ struct SwitchOpLowering : public OpRewritePattern<sol::SwitchOp> {
 
   LogicalResult matchAndRewrite(sol::SwitchOp switchOp,
                                 PatternRewriter &r) const override {
-    // Split the block at the op.
-    Block *condBlk = r.getInsertionBlock();
-    Block *continueBlk = r.splitBlock(condBlk, Block::iterator(switchOp));
+    auto yulSwitchOp = r.create<yul::SwitchOp>(
+        switchOp.getLoc(), TypeRange{}, switchOp.getArg(), switchOp.getCases(),
+        switchOp.getCaseRegions().size());
 
-    auto convertRegion = [&](Region &region) -> Block * {
-      for (Block &blk : region) {
-        auto yield = dyn_cast<sol::YieldOp>(blk.getTerminator());
-        if (!yield)
-          continue;
-        // Convert the yield terminator to a branch to the continue block.
-        r.setInsertionPoint(yield);
-        r.replaceOpWithNewOp<cf::BranchOp>(yield, continueBlk,
-                                           yield.getOperands());
-      }
+    r.inlineRegionBefore(switchOp.getDefaultRegion(),
+                         yulSwitchOp.getDefaultRegion(),
+                         yulSwitchOp.getDefaultRegion().end());
+    lowerSolRegionTerminatorsToYul(yulSwitchOp.getDefaultRegion(), r);
 
-      // Inline the region.
-      Block *entryBlk = &region.front();
-      r.inlineRegionBefore(region, continueBlk);
-      return entryBlk;
-    };
-
-    // Convert the case regions.
-    SmallVector<Block *> caseSuccessors;
-    SmallVector<llvm::APInt> caseVals;
-    caseSuccessors.reserve(switchOp.getCases().size());
-    caseVals.reserve(switchOp.getCases().size());
-    for (auto [region, val] :
-         llvm::zip(switchOp.getCaseRegions(), switchOp.getCases())) {
-      caseSuccessors.push_back(convertRegion(region));
-      caseVals.push_back(val);
+    for (auto [srcRegion, dstRegion] :
+         llvm::zip(switchOp.getCaseRegions(), yulSwitchOp.getCaseRegions())) {
+      r.inlineRegionBefore(srcRegion, dstRegion, dstRegion.end());
+      lowerSolRegionTerminatorsToYul(dstRegion, r);
     }
 
-    // Convert the default region.
-    Block *defaultBlk = convertRegion(switchOp.getDefaultRegion());
-
-    if (caseVals.empty()) {
-      r.replaceOp(switchOp, continueBlk->getArguments());
-      return success();
-    }
-
-    // Create the switch.
-    r.setInsertionPointToEnd(condBlk);
-    SmallVector<ValueRange> caseOperands(caseSuccessors.size(), {});
-
-    // Create the attribute for the case values.
-    auto caseValsAttr = DenseIntElementsAttr::get(
-        VectorType::get(static_cast<int64_t>(caseVals.size()),
-                        switchOp.getArg().getType()),
-        caseVals);
-
-    r.create<cf::SwitchOp>(switchOp.getLoc(), switchOp.getArg(), defaultBlk,
-                           ValueRange(), caseValsAttr, caseSuccessors,
-                           caseOperands);
-    r.replaceOp(switchOp, continueBlk->getArguments());
+    r.eraseOp(switchOp);
     return success();
   }
 };
@@ -3645,94 +3520,43 @@ struct LoopOpInterfaceLowering
   using OpInterfaceRewritePattern<
       sol::LoopOpInterface>::OpInterfaceRewritePattern;
 
-  /// Walks a region while skipping operations of type `Ops`. This ensures the
-  /// callback is not applied to said operations and its children.
-  template <typename... Ops>
-  void
-  walkRegionSkipping(Region &region,
-                     function_ref<WalkResult(Operation *)> callback) const {
-    region.walk<WalkOrder::PreOrder>([&](Operation *op) {
-      if (isa<Ops...>(op))
-        return WalkResult::skip();
-      return callback(op);
-    });
-  }
-
-  /// Lowers operations with the terminator trait that have a single successor.
-  void lowerTerminator(Operation *op, Block *dest, PatternRewriter &r) const {
-    assert(op->hasTrait<OpTrait::IsTerminator>() && "not a terminator");
-    OpBuilder::InsertionGuard guard(r);
-    r.setInsertionPoint(op);
-    r.replaceOpWithNewOp<cf::BranchOp>(op, dest);
-  }
-
-  void lowerConditionOp(sol::ConditionOp op, Block *body, Block *exit,
-                        PatternRewriter &r) const {
-    OpBuilder::InsertionGuard guard(r);
-    r.setInsertionPoint(op);
-    r.replaceOpWithNewOp<cf::CondBranchOp>(op, op.getCondition(), body, exit);
-  }
-
   LogicalResult matchAndRewrite(sol::LoopOpInterface op,
                                 PatternRewriter &r) const override {
-    // Setup CFG blocks.
-    Block *entry = r.getInsertionBlock();
-    Block *exit = r.splitBlock(entry, r.getInsertionPoint());
-    Block *cond = &op.getCond().front();
-    Block *body = &op.getBody().front();
-    Block *step = (op.maybeGetStep() ? &op.maybeGetStep()->front() : nullptr);
-
-    // Setup loop entry branch.
-    r.setInsertionPointToEnd(entry);
-    r.create<cf::BranchOp>(op.getLoc(), &op.getEntry().front());
-
-    // Branch from condition region to body or exit.
-    auto conditionOp = cast<sol::ConditionOp>(cond->getTerminator());
-    lowerConditionOp(conditionOp, body, exit, r);
-
-    // TODO: Remove the walks below. It visits operations unnecessarily,
-    // however, to solve this we would likely need a custom DialectConversion
-    // driver to customize the order that operations are visited.
-
-    // Lower continue statements.
-    Block *dest = (step ? step : cond);
-    op.walkBodySkippingNestedLoops([&](Operation *op) {
-      if (!isa<sol::ContinueOp>(op))
-        return WalkResult::advance();
-
-      lowerTerminator(op, dest, r);
-      return WalkResult::skip();
-    });
-
-    // Lower break statements.
-    // FIXME: Skip sol.switch once we implement it.
-    walkRegionSkipping<sol::LoopOpInterface /* TODO:, sol::SwitchOp */>(
-        op.getBody(), [&](Operation *op) {
-          if (!isa<sol::BreakOp>(op))
-            return WalkResult::advance();
-
-          lowerTerminator(op, exit, r);
-          return mlir::WalkResult::skip();
-        });
-
-    // Lower optional body region yield.
-    for (Block &blk : op.getBody().getBlocks()) {
-      auto bodyYield = dyn_cast<sol::YieldOp>(blk.getTerminator());
-      if (bodyYield)
-        lowerTerminator(bodyYield, (step ? step : cond), r);
+    Operation *rawOp = op.getOperation();
+    if (auto forOp = dyn_cast<sol::ForOp>(rawOp)) {
+      auto yulForOp =
+          r.create<yul::ForOp>(forOp.getLoc(), TypeRange{}, ValueRange{});
+      r.inlineRegionBefore(forOp.getCond(), yulForOp.getCond(),
+                           yulForOp.getCond().end());
+      lowerSolRegionTerminatorsToYul(yulForOp.getCond(), r);
+      r.inlineRegionBefore(forOp.getBody(), yulForOp.getBody(),
+                           yulForOp.getBody().end());
+      lowerSolRegionTerminatorsToYul(yulForOp.getBody(), r);
+      r.inlineRegionBefore(forOp.getStep(), yulForOp.getStep(),
+                           yulForOp.getStep().end());
+      lowerSolRegionTerminatorsToYul(yulForOp.getStep(), r);
+    } else if (auto whileOp = dyn_cast<sol::WhileOp>(rawOp)) {
+      auto yulWhileOp =
+          r.create<yul::WhileOp>(whileOp.getLoc(), TypeRange{}, ValueRange{});
+      r.inlineRegionBefore(whileOp.getCond(), yulWhileOp.getCond(),
+                           yulWhileOp.getCond().end());
+      lowerSolRegionTerminatorsToYul(yulWhileOp.getCond(), r);
+      r.inlineRegionBefore(whileOp.getBody(), yulWhileOp.getBody(),
+                           yulWhileOp.getBody().end());
+      lowerSolRegionTerminatorsToYul(yulWhileOp.getBody(), r);
+    } else if (auto doWhileOp = dyn_cast<sol::DoWhileOp>(rawOp)) {
+      auto yulDoWhileOp = r.create<yul::DoWhileOp>(doWhileOp.getLoc());
+      r.inlineRegionBefore(doWhileOp.getBody(), yulDoWhileOp.getBody(),
+                           yulDoWhileOp.getBody().end());
+      lowerSolRegionTerminatorsToYul(yulDoWhileOp.getBody(), r);
+      r.inlineRegionBefore(doWhileOp.getCond(), yulDoWhileOp.getCond(),
+                           yulDoWhileOp.getCond().end());
+      lowerSolRegionTerminatorsToYul(yulDoWhileOp.getCond(), r);
+    } else {
+      llvm_unreachable("unexpected Sol loop op");
     }
 
-    // Lower mandatory step region yield.
-    if (step)
-      lowerTerminator(cast<sol::YieldOp>(step->getTerminator()), cond, r);
-
-    // Move region contents out of the loop op.
-    r.inlineRegionBefore(op.getCond(), exit);
-    r.inlineRegionBefore(op.getBody(), exit);
-    if (step)
-      r.inlineRegionBefore(*op.maybeGetStep(), exit);
-
-    r.eraseOp(op);
+    r.eraseOp(rawOp);
     return success();
   }
 };
@@ -3797,7 +3621,6 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
   LogicalResult matchAndRewrite(sol::ICallOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
-    mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(op), r, loc);
 
     auto calleeArgs = adaptor.getOperands().drop_front();
@@ -3822,15 +3645,24 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
       }
     });
 
-    auto switchOp = r.create<scf::IndexSwitchOp>(
-        loc, op.getResultTypes(), bExt.genCastToIdx(adaptor.getCallee()),
-        caseIds, caseIds.size());
+    auto calleeIntTy = cast<IntegerType>(adaptor.getCallee().getType());
+    SmallVector<APInt> caseVals;
+    caseVals.reserve(caseIds.size());
+    for (int64_t caseId : caseIds)
+      caseVals.emplace_back(calleeIntTy.getWidth(), caseId);
+    auto caseIdsAttr = DenseIntElementsAttr::get(
+        RankedTensorType::get(static_cast<int64_t>(caseVals.size()),
+                              calleeIntTy),
+        caseVals);
+    auto switchOp =
+        r.create<yul::SwitchOp>(loc, op.getResultTypes(), adaptor.getCallee(),
+                                caseIdsAttr, caseIds.size());
     for (size_t i = 0; i < caseFns.size(); ++i) {
       r.setInsertionPointToStart(&switchOp.getCaseRegions()[i].emplaceBlock());
       auto call = r.create<yul::FuncCallOp>(loc, op.getResultTypes(),
                                             FlatSymbolRefAttr::get(caseFns[i]),
                                             calleeArgs);
-      r.create<scf::YieldOp>(loc, call.getResults());
+      r.create<yul::YieldOp>(loc, call.getResults());
     }
 
     r.setInsertionPointToStart(&switchOp.getDefaultRegion().emplaceBlock());
@@ -3839,7 +3671,7 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
     undefs.reserve(op.getNumResults());
     for (Type ty : op.getResultTypes())
       undefs.push_back(r.create<LLVM::UndefOp>(loc, ty));
-    r.create<scf::YieldOp>(loc, undefs);
+    r.create<yul::YieldOp>(loc, undefs);
 
     r.replaceOp(op, switchOp.getResults());
     return success();
@@ -3857,8 +3689,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     evm::Builder evmB(mod, r, loc);
 
     auto callVal = r.create<yul::CallValOp>(loc);
-    auto callValChk = r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne,
-                                              callVal, bExt.genI256Const(0));
+    auto callValChk =
+        bExt.genCmp(yul::CmpPredicate::ne, callVal, bExt.genI256Const(0));
     evmB.genRevert(callValChk);
   };
 
@@ -3885,8 +3717,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       auto libAddr = r.create<yul::LoadImmutableOp>(loc, r.getIntegerType(256),
                                                     libAddrName);
       auto currAddr = r.create<yul::AddressOp>(loc);
-      notDelegateCallCond = r.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::eq, libAddr, currAddr);
+      notDelegateCallCond =
+          bExt.genCmp(yul::CmpPredicate::eq, libAddr, currAddr);
     }
 
     // Do nothing if there are no interface functions.
@@ -3896,19 +3728,18 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     // Generate `if iszero(lt(calldatasize(), 4))` and set the insertion point
     // to its then block.
     auto callDataSz = r.create<yul::CallDataSizeOp>(loc);
-    auto callDataSzCmp = r.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::uge, callDataSz, bExt.genI256Const(4));
-    auto ifOp =
-        r.create<scf::IfOp>(loc, callDataSzCmp, /*withElseRegion=*/false);
+    auto callDataSzCmp =
+        bExt.genCmp(yul::CmpPredicate::uge, callDataSz, bExt.genI256Const(4));
+    auto ifOp = bExt.createIf(callDataSzCmp);
     OpBuilder::InsertionGuard insertGuard(r);
     r.setInsertionPointToStart(&ifOp.getThenRegion().front());
 
     // Load the selector from the calldata.
     auto callDataLd = r.create<yul::CallDataLoadOp>(loc, bExt.genI256Const(0));
     Value callDataSelector =
-        r.create<arith::ShRUIOp>(loc, callDataLd, bExt.genI256Const(224));
-    callDataSelector =
-        r.create<arith::TruncIOp>(loc, r.getIntegerType(32), callDataSelector);
+        r.create<yul::ArithShrOp>(loc, callDataLd, bExt.genI256Const(224));
+    callDataSelector = r.create<yul::ArithTruncIOp>(loc, r.getIntegerType(32),
+                                                    callDataSelector);
 
     auto selectorsAttr = mlir::DenseIntElementsAttr::get(
         mlir::RankedTensorType::get(static_cast<int64_t>(selectors.size()),
@@ -3916,15 +3747,15 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
         selectors);
 
     // Generate the switch op.
-    auto switchOp = r.create<mlir::scf::IntSwitchOp>(
-        loc, /*resultTypes=*/TypeRange{}, callDataSelector, selectorsAttr,
-        selectors.size());
+    auto switchOp = r.create<yul::SwitchOp>(loc, /*resultTypes=*/TypeRange{},
+                                            callDataSelector, selectorsAttr,
+                                            selectors.size());
 
     // Generate the default block.
     {
       OpBuilder::InsertionGuard insertGuard(r);
       r.setInsertionPointToStart(r.createBlock(&switchOp.getDefaultRegion()));
-      r.create<scf::YieldOp>(loc);
+      r.create<yul::YieldOp>(loc);
     }
 
     for (auto [caseRegion, ifcFnOp] :
@@ -3972,7 +3803,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       if (!callOp.getResultTypes().empty()) {
         auto tupleEnd = evmB.genABITupleEncoding(
             abiResultTys, callOp.getResults(), tupleStart);
-        tupleSize = r.create<arith::SubIOp>(loc, tupleEnd, tupleStart);
+        tupleSize = r.create<yul::SubOp>(loc, tupleEnd, tupleStart);
       } else {
         tupleSize = bExt.genI256Const(0);
       }
@@ -3981,7 +3812,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       assert(tupleSize);
       r.create<yul::ReturnOp>(loc, tupleStart, tupleSize);
 
-      r.create<mlir::scf::YieldOp>(loc);
+      r.create<yul::YieldOp>(loc);
     }
   }
 
@@ -4111,7 +3942,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     if (ctor && op.getKind() != sol::ContractKind::Library) {
       auto progSize = r.create<yul::DataSizeOp>(loc, creationObj.getName());
       auto codeSize = r.create<yul::CodeSizeOp>(loc);
-      auto argSize = r.create<arith::SubIOp>(loc, codeSize, progSize);
+      auto argSize = r.create<yul::SubOp>(loc, codeSize, progSize);
       Value tupleStart = evmB.genMemAlloc(argSize);
       r.create<yul::CodeCopyOp>(loc, tupleStart, progSize, argSize);
       std::vector<Value> decodedArgs;
@@ -4119,7 +3950,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       if (!ctorFnTy.getInputs().empty()) {
         evmB.genABITupleDecoding(
             ctorFnTy.getInputs(), tupleStart,
-            /*tupleEnd=*/r.create<arith::AddIOp>(loc, tupleStart, argSize),
+            /*tupleEnd=*/r.create<yul::AddOp>(loc, tupleStart, argSize),
             decodedArgs,
             /*fromMem=*/true);
       }
@@ -4169,10 +4000,9 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     // Generate receive function.
     if (receiveFn) {
       auto callDataSz = r.create<yul::CallDataSizeOp>(loc);
-      auto callDataSzIsZero = r.create<arith::CmpIOp>(
-          loc, arith::CmpIPredicate::eq, callDataSz, bExt.genI256Const(0));
-      auto ifOp =
-          r.create<scf::IfOp>(loc, callDataSzIsZero, /*withElseRegion=*/false);
+      auto callDataSzIsZero =
+          bExt.genCmp(yul::CmpPredicate::eq, callDataSz, bExt.genI256Const(0));
+      auto ifOp = bExt.createIf(callDataSzIsZero);
       OpBuilder::InsertionGuard insertGuard(r);
       r.setInsertionPointToStart(&ifOp.getThenRegion().front());
       r.create<sol::CallOp>(loc, receiveFn, /*operands=*/ValueRange{});
@@ -4239,14 +4069,14 @@ void evm::populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv) {
            EnumCastOpLowering, BytesCastOpLowering,
            DynBytesToFixedBytesOpLowering, ExtFuncConstantOpLowering,
            ExtFuncSelectorOpLowering,
-           ArithBinOpLowering<sol::AddOp, arith::AddIOp>,
-           ArithBinOpLowering<sol::SubOp, arith::SubIOp>,
-           ArithBinOpLowering<sol::MulOp, arith::MulIOp>,
-           ArithBinOpLowering<sol::AndOp, arith::AndIOp>,
-           ArithBinOpLowering<sol::OrOp, arith::OrIOp>,
-           ArithBinOpLowering<sol::XorOp, arith::XOrIOp>,
-           DivOrModOpLowering<sol::DivOp, arith::DivSIOp, arith::DivUIOp>,
-           DivOrModOpLowering<sol::ModOp, arith::RemSIOp, arith::RemUIOp>,
+           ArithBinOpLowering<sol::AddOp, yul::AddOp>,
+           ArithBinOpLowering<sol::SubOp, yul::SubOp>,
+           ArithBinOpLowering<sol::MulOp, yul::MulOp>,
+           ArithBinOpLowering<sol::AndOp, yul::AndOp>,
+           ArithBinOpLowering<sol::OrOp, yul::OrOp>,
+           ArithBinOpLowering<sol::XorOp, yul::XOrOp>,
+           DivOrModOpLowering<sol::DivOp, yul::ArithSDivOp, yul::ArithDivOp>,
+           DivOrModOpLowering<sol::ModOp, yul::ArithSModOp, yul::ArithModOp>,
            ExpOpLowering, ShrOpLowering, ShlOpLowering, CmpOpLowering,
            AddModOpLowering, MulModOpLowering>(tyConv, pats.getContext());
 }

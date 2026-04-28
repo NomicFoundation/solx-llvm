@@ -13,10 +13,11 @@
 #include "mlir/Conversion/SolToStandard/YulToStandard.h"
 #include "mlir/Conversion/SolToStandard/EVMUtil.h"
 #include "mlir/Conversion/SolToStandard/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/APInt.h"
@@ -78,7 +79,10 @@ void createCallToUnreachableWrapper(PatternRewriter &r, ModuleOp mod,
 // For some dialects, we have to pass i1 instead of i256 for boolean values,
 // so this helper generates Yul like cast to i1 for such cases.
 Value genI1Cast(PatternRewriter &r, Location loc, Value val) {
-  assert(val.getType().isInteger(256) && "expected i256 type");
+  if (val.getType().isInteger(1))
+    return val;
+
+  assert(isa<IntegerType>(val.getType()) && "expected integer type");
   auto zero =
       r.create<arith::ConstantOp>(loc, r.getIntegerAttr(val.getType(), 0));
   return r.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, val, zero);
@@ -89,6 +93,20 @@ Value genI1Cast(PatternRewriter &r, Location loc, Value val) {
 Value genI256Cast(PatternRewriter &r, Location loc, Value val) {
   assert(val.getType().isInteger(1) && "expected i1 type");
   return r.create<arith::ExtUIOp>(loc, r.getIntegerType(256), val);
+}
+
+LLVM::LoopAnnotationAttr getFullUnrollLoopAnnotation(MLIRContext *ctx) {
+  Builder b(ctx);
+  auto fullUnroll = LLVM::LoopUnrollAttr::get(
+      ctx, /*disable=*/{}, /*count=*/{}, /*runtimeDisable=*/{},
+      /*full=*/b.getBoolAttr(true), /*followupUnrolled=*/{},
+      /*followupRemainder=*/{}, /*followupAll=*/{});
+  return LLVM::LoopAnnotationAttr::get(
+      ctx, /*disableNonforced=*/{}, /*vectorize=*/{}, /*interleave=*/{},
+      /*unroll=*/fullUnroll, /*unrollAndJam=*/{}, /*licm=*/{},
+      /*distribute=*/{}, /*pipeline=*/{}, /*peeled=*/{},
+      /*unswitch=*/{}, /*mustProgress=*/{}, /*isVectorized=*/{},
+      /*startLoc=*/{}, /*endLoc=*/{}, /*parallelAccesses=*/{});
 }
 
 struct ConstantOpLowering : public OpRewritePattern<yul::ConstantOp> {
@@ -155,7 +173,33 @@ struct CmpOpLowering : public OpRewritePattern<yul::CmpOp> {
     arith::CmpIPredicate predicate = getCmpPredicate(op.getPredicate());
     Value cmp = r.create<arith::CmpIOp>(op.getLoc(), predicate, op.getLhs(),
                                         op.getRhs());
+    if (op.getOut().getType().isInteger(1)) {
+      r.replaceOp(op, cmp);
+      return success();
+    }
     r.replaceOp(op, genI256Cast(r, op.getLoc(), cmp));
+    return success();
+  }
+};
+
+template <typename YulOp, typename ArithOp>
+struct CastOpLowering : public OpRewritePattern<YulOp> {
+  using OpRewritePattern<YulOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(YulOp op, PatternRewriter &r) const override {
+    r.replaceOpWithNewOp<ArithOp>(op, op.getOut().getType(), op.getInput());
+    return success();
+  }
+};
+
+struct ArithSelectOpLowering : public OpRewritePattern<yul::ArithSelectOp> {
+  using OpRewritePattern<yul::ArithSelectOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(yul::ArithSelectOp op,
+                                PatternRewriter &r) const override {
+    r.replaceOpWithNewOp<arith::SelectOp>(
+        op, genI1Cast(r, op.getLoc(), op.getCondition()), op.getTrueValue(),
+        op.getFalseValue());
     return success();
   }
 };
@@ -1201,6 +1245,7 @@ struct InvalidOpLowering : public OpRewritePattern<yul::InvalidOp> {
   }
 };
 
+// (Copied and modified from clangir).
 struct IfOpLowering : public OpRewritePattern<yul::IfOp> {
   using OpRewritePattern<yul::IfOp>::OpRewritePattern;
 
@@ -1212,11 +1257,9 @@ struct IfOpLowering : public OpRewritePattern<yul::IfOp> {
     Block *currentBlock = r.getInsertionBlock();
     Block *remainingOpsBlock =
         r.splitBlock(currentBlock, r.getInsertionPoint());
-    Block *continueBlock;
-    if (ifOp->getResults().empty())
-      continueBlock = remainingOpsBlock;
-    else
-      llvm_unreachable("NYI");
+    Block *continueBlock = remainingOpsBlock;
+    SmallVector<Location> resultLocs(ifOp->getNumResults(), loc);
+    continueBlock->addArguments(ifOp->getResultTypes(), resultLocs);
 
     // Inline then region.
     Block *thenBeforeBody = &ifOp.getThenRegion().front();
@@ -1240,6 +1283,8 @@ struct IfOpLowering : public OpRewritePattern<yul::IfOp> {
       elseAfterBody = &ifOp.getElseRegion().back();
       r.inlineRegionBefore(ifOp.getElseRegion(), thenAfterBody);
     } else {
+      assert(ifOp->getResults().empty() &&
+             "resultful yul.if requires an else region");
       elseBeforeBody = elseAfterBody = continueBlock;
     }
 
@@ -1256,7 +1301,8 @@ struct IfOpLowering : public OpRewritePattern<yul::IfOp> {
       }
     }
 
-    r.replaceOp(ifOp, continueBlock->getArguments());
+    r.replaceOp(
+        ifOp, continueBlock->getArguments().take_front(ifOp->getNumResults()));
     return success();
   }
 };
@@ -1269,6 +1315,9 @@ struct SwitchOpLowering : public OpRewritePattern<yul::SwitchOp> {
     // Split the block at the op.
     Block *condBlk = r.getInsertionBlock();
     Block *continueBlk = r.splitBlock(condBlk, Block::iterator(switchOp));
+    SmallVector<Location> resultLocs(switchOp->getNumResults(),
+                                     switchOp.getLoc());
+    continueBlk->addArguments(switchOp->getResultTypes(), resultLocs);
 
     auto convertRegion = [&](Region &region) -> Block * {
       for (Block &blk : region) {
@@ -1317,7 +1366,8 @@ struct SwitchOpLowering : public OpRewritePattern<yul::SwitchOp> {
       r.create<cf::BranchOp>(switchOp.getLoc(), defaultBlk);
     }
 
-    r.replaceOp(switchOp, continueBlk->getArguments());
+    r.replaceOp(switchOp, continueBlk->getArguments().take_front(
+                              switchOp->getNumResults()));
     return success();
   }
 };
@@ -1341,11 +1391,12 @@ struct LoopOpInterfaceLowering
   }
 
   /// Lowers operations with the terminator trait that have a single successor.
-  void lowerTerminator(Operation *op, Block *dest, PatternRewriter &r) const {
+  cf::BranchOp lowerTerminator(Operation *op, Block *dest,
+                               PatternRewriter &r) const {
     assert(op->hasTrait<OpTrait::IsTerminator>() && "not a terminator");
     OpBuilder::InsertionGuard guard(r);
     r.setInsertionPoint(op);
-    r.replaceOpWithNewOp<cf::BranchOp>(op, dest);
+    return r.replaceOpWithNewOp<cf::BranchOp>(op, dest, op->getOperands());
   }
 
   void lowerConditionOp(yul::ConditionOp op, Block *body, Block *exit,
@@ -1354,7 +1405,8 @@ struct LoopOpInterfaceLowering
     Location loc = op.getLoc();
     r.setInsertionPoint(op);
     r.replaceOpWithNewOp<cf::CondBranchOp>(
-        op, genI1Cast(r, loc, op.getCondition()), body, exit);
+        op, genI1Cast(r, loc, op.getCondition()), body, op.getArgs(), exit,
+        op.getArgs());
   }
 
   LogicalResult matchAndRewrite(yul::LoopOpInterface op,
@@ -1362,13 +1414,16 @@ struct LoopOpInterfaceLowering
     // Setup CFG blocks.
     Block *entry = r.getInsertionBlock();
     Block *exit = r.splitBlock(entry, r.getInsertionPoint());
+    SmallVector<Location> resultLocs(op->getNumResults(), op.getLoc());
+    exit->addArguments(op->getResultTypes(), resultLocs);
     Block *cond = &op.getCond().front();
     Block *body = &op.getBody().front();
     Block *step = (op.maybeGetStep() ? &op.maybeGetStep()->front() : nullptr);
 
     // Setup loop entry branch.
     r.setInsertionPointToEnd(entry);
-    r.create<cf::BranchOp>(op.getLoc(), &op.getEntry().front());
+    r.create<cf::BranchOp>(op.getLoc(), &op.getEntry().front(),
+                           op->getOperands());
 
     // Branch from condition region to body or exit.
     auto conditionOp = cast<yul::ConditionOp>(cond->getTerminator());
@@ -1407,8 +1462,13 @@ struct LoopOpInterfaceLowering
     }
 
     // Lower mandatory step region yield.
-    if (step)
-      lowerTerminator(cast<yul::YieldOp>(step->getTerminator()), cond, r);
+    if (step) {
+      auto branch =
+          lowerTerminator(cast<yul::YieldOp>(step->getTerminator()), cond, r);
+      if (op->hasAttr("full_unroll"))
+        branch->setAttr("loop_annotation",
+                        getFullUnrollLoopAnnotation(op->getContext()));
+    }
 
     // Move region contents out of the loop op.
     r.inlineRegionBefore(op.getCond(), exit);
@@ -1416,7 +1476,7 @@ struct LoopOpInterfaceLowering
     if (step)
       r.inlineRegionBefore(*op.maybeGetStep(), exit);
 
-    r.eraseOp(op);
+    r.replaceOp(op, exit->getArguments().take_front(op->getNumResults()));
     return success();
   }
 };
@@ -1496,12 +1556,24 @@ void evm::populateYulPats(RewritePatternSet &pats) {
            BinaryOpLowering<yul::MulOp, arith::MulIOp>,
            BinaryOpLowering<yul::AndOp, arith::AndIOp>,
            BinaryOpLowering<yul::OrOp, arith::OrIOp>,
-           BinaryOpLowering<yul::XOrOp, arith::XOrIOp>>(pats.getContext());
+           BinaryOpLowering<yul::XOrOp, arith::XOrIOp>,
+           BinaryOpLowering<yul::ArithShlOp, arith::ShLIOp>,
+           BinaryOpLowering<yul::ArithShrOp, arith::ShRUIOp>,
+           BinaryOpLowering<yul::ArithSarOp, arith::ShRSIOp>,
+           BinaryOpLowering<yul::ArithDivOp, arith::DivUIOp>,
+           BinaryOpLowering<yul::ArithSDivOp, arith::DivSIOp>,
+           BinaryOpLowering<yul::ArithModOp, arith::RemUIOp>,
+           BinaryOpLowering<yul::ArithSModOp, arith::RemSIOp>,
+           CastOpLowering<yul::ArithExtUIOp, arith::ExtUIOp>,
+           CastOpLowering<yul::ArithExtSIOp, arith::ExtSIOp>,
+           CastOpLowering<yul::ArithTruncIOp, arith::TruncIOp>>(
+      pats.getContext());
   pats.add<
       // clang-format off
       ConstantOpLowering,
       NotOpLowering,
       CmpOpLowering,
+      ArithSelectOpLowering,
       FuncCallOpLowering,
       FuncReturnOpLowering,
       FuncOpLowering,
