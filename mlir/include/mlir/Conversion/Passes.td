@@ -1514,7 +1514,6 @@ def ConvertSolToStandardPass : Pass<"convert-sol-to-std", "ModuleOp"> {
   let dependentDialects = [
     "yul::YulDialect",
     "func::FuncDialect",
-    "scf::SCFDialect",
     "cf::ControlFlowDialect",
     "arith::ArithDialect",
     "LLVM::LLVMDialect",

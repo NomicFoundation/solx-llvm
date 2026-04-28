@@ -14,11 +14,10 @@
 #include "mlir/Conversion/SolToStandard/SolToStandard.h"
 #include "mlir/Conversion/SolToStandard/SolToYul.h"
 #include "mlir/Conversion/SolToStandard/YulToStandard.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -92,8 +91,7 @@ struct ConvertSolToStandardPass
     ConversionTarget convTgt(getContext());
     convTgt.addLegalOp<ModuleOp>();
     convTgt.addLegalDialect<sol::SolDialect, yul::YulDialect, func::FuncDialect,
-                            scf::SCFDialect, cf::ControlFlowDialect,
-                            arith::ArithDialect, LLVM::LLVMDialect>();
+                            LLVM::LLVMDialect>();
     convTgt.addIllegalOp<
         // clang-format off
         sol::ConstantOp,
@@ -196,22 +194,18 @@ struct ConvertSolToStandardPass
     convTgt.addDynamicallyLegalOp<sol::FuncOp>([&](sol::FuncOp op) {
       return tyConv.isSignatureLegal(op.getFunctionType());
     });
-    // arith.select: scf.if -> arith.select folding.
     convTgt.addDynamicallyLegalOp<sol::CallOp, sol::ICallOp, sol::ReturnOp,
-                                  sol::LoadImmutableOp, arith::SelectOp>(
+                                  sol::LoadImmutableOp>(
         [&](Operation *op) { return tyConv.isLegal(op); });
-    scf::populateSCFStructuralTypeConversionTarget(tyConv, convTgt);
 
     RewritePatternSet pats(&getContext());
     pats.add<ConvCastOpLowering>(tyConv, &getContext());
     populateAnyFunctionOpInterfaceTypeConversionPattern(pats, tyConv);
     pats.add<GenericTypeConversion<sol::CallOp>,
              GenericTypeConversion<sol::ICallOp>,
-             GenericTypeConversion<sol::ReturnOp>,
-             GenericTypeConversion<arith::SelectOp>>(tyConv, &getContext());
+             GenericTypeConversion<sol::ReturnOp>>(tyConv, &getContext());
 
     evm::populateStage1Pats(pats, tyConv);
-    scf::populateSCFStructuralTypeConversions(tyConv, pats);
 
     // Assign addresses to immutables.
     // TODO: Move this to the frontend like we did for state variable slots.
@@ -236,8 +230,7 @@ struct ConvertSolToStandardPass
     ConversionTarget convTgt(getContext());
     convTgt.addLegalOp<ModuleOp>();
     convTgt.addLegalDialect<sol::SolDialect, yul::YulDialect, func::FuncDialect,
-                            scf::SCFDialect, cf::ControlFlowDialect,
-                            arith::ArithDialect, LLVM::LLVMDialect>();
+                            LLVM::LLVMDialect>();
     convTgt.addIllegalOp<sol::ContractOp, sol::ICallOp, sol::LoadImmutableOp>();
 
     RewritePatternSet pats(&getContext());
@@ -256,9 +249,8 @@ struct ConvertSolToStandardPass
     {
       ConversionTarget convTgt(getContext());
       convTgt.addLegalOp<ModuleOp>();
-      convTgt.addLegalDialect<
-          sol::SolDialect, yul::YulDialect, func::FuncDialect, scf::SCFDialect,
-          cf::ControlFlowDialect, arith::ArithDialect, LLVM::LLVMDialect>();
+      convTgt.addLegalDialect<sol::SolDialect, yul::YulDialect,
+                              func::FuncDialect, LLVM::LLVMDialect>();
       convTgt.addIllegalOp<sol::CallOp, sol::ReturnOp>();
 
       RewritePatternSet pats(&getContext());
@@ -272,8 +264,7 @@ struct ConvertSolToStandardPass
       ConversionTarget convTgt(getContext());
       convTgt.addLegalOp<ModuleOp>();
       convTgt.addLegalDialect<yul::YulDialect, func::FuncDialect,
-                              scf::SCFDialect, cf::ControlFlowDialect,
-                              arith::ArithDialect, LLVM::LLVMDialect>();
+                              LLVM::LLVMDialect>();
       convTgt.addIllegalDialect<sol::SolDialect>();
 
       RewritePatternSet pats(&getContext());
@@ -288,9 +279,8 @@ struct ConvertSolToStandardPass
   LogicalResult runYulToStandardConversion(ModuleOp mod) {
     ConversionTarget convTgt(getContext());
     convTgt.addLegalOp<ModuleOp>();
-    convTgt.addLegalDialect<func::FuncDialect, scf::SCFDialect,
-                            cf::ControlFlowDialect, arith::ArithDialect,
-                            LLVM::LLVMDialect>();
+    convTgt.addLegalDialect<func::FuncDialect, cf::ControlFlowDialect,
+                            arith::ArithDialect, LLVM::LLVMDialect>();
     convTgt.addIllegalDialect<yul::YulDialect>();
 
     RewritePatternSet pats(&getContext());

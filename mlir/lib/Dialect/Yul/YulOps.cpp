@@ -77,7 +77,7 @@ LogicalResult FuncOp::verify() {
 void IfOp::getSuccessorRegions(RegionBranchPoint point,
                                SmallVectorImpl<RegionSuccessor> &regions) {
   if (!point.isParent()) {
-    regions.push_back(RegionSuccessor());
+    regions.push_back(RegionSuccessor(getResults()));
     return;
   }
 
@@ -89,7 +89,7 @@ void IfOp::getSuccessorRegions(RegionBranchPoint point,
 void SwitchOp::getSuccessorRegions(RegionBranchPoint point,
                                    SmallVectorImpl<RegionSuccessor> &regions) {
   if (!point.isParent()) {
-    regions.push_back(RegionSuccessor());
+    regions.push_back(RegionSuccessor(getResults()));
     return;
   }
 
@@ -113,14 +113,9 @@ void SwitchOp::getRegionInvocationBounds(
 }
 
 LogicalResult SwitchOp::verify() {
-  auto i256Ty = IntegerType::get(getContext(), 256);
-
-  if (getArg().getType() != i256Ty)
-    return emitOpError("expects switch argument type to be i256");
-
   auto caseElementTy = getCases().getType().getElementType();
-  if (caseElementTy != i256Ty)
-    return emitOpError("expects case value type to be i256");
+  if (caseElementTy != getArg().getType())
+    return emitOpError("expects case value type to match switch argument type");
 
   if (getCases().getNumElements() !=
       static_cast<int64_t>(getCaseRegions().size()))
@@ -156,6 +151,20 @@ void LoopOpInterface::getLoopOpSuccessorRegions(
   }
 }
 
+void WhileOp::getSuccessorRegions(RegionBranchPoint point,
+                                  SmallVectorImpl<RegionSuccessor> &regions) {
+  LoopOpInterface::getLoopOpSuccessorRegions(*this, point, regions);
+}
+
+SmallVector<Region *> WhileOp::getLoopRegions() { return {&getBody()}; }
+
+void DoWhileOp::getSuccessorRegions(RegionBranchPoint point,
+                                    SmallVectorImpl<RegionSuccessor> &regions) {
+  LoopOpInterface::getLoopOpSuccessorRegions(*this, point, regions);
+}
+
+SmallVector<Region *> DoWhileOp::getLoopRegions() { return {&getBody()}; }
+
 void ForOp::getSuccessorRegions(RegionBranchPoint point,
                                 SmallVectorImpl<RegionSuccessor> &regions) {
   LoopOpInterface::getLoopOpSuccessorRegions(*this, point, regions);
@@ -165,6 +174,8 @@ SmallVector<Region *> ForOp::getLoopRegions() { return {&getBody()}; }
 
 void SwitchOp::print(OpAsmPrinter &p) {
   p << ' ' << getArg() << " : " << getArg().getType();
+  if (!getResultTypes().empty())
+    p << " -> " << getResultTypes();
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/getCasesAttrName().getValue());
 
@@ -190,6 +201,8 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
     if (p.resolveOperand(arg, argTy, result.operands))
       return failure();
   }
+  if (p.parseOptionalArrowTypeList(result.types))
+    return failure();
 
   SmallVector<APInt> caseVals;
   while (succeeded(p.parseOptionalKeyword("case"))) {
