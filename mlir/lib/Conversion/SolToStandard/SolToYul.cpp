@@ -2079,9 +2079,6 @@ struct LoadOpLowering : public OpConversionPattern<sol::LoadOp> {
       }
       return success();
     }
-    default: {
-      llvm_unreachable("");
-    }
     };
   }
 };
