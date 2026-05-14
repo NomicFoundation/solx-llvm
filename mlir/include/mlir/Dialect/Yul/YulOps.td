@@ -456,6 +456,12 @@ def Yul_InvalidOp : Yul_Op<"invalid"> {
   let assemblyFormat = "attr-dict";
 }
 
+def Yul_SelfDestructOp : Yul_Op<"selfdestruct"> {
+  let summary = "Represents the `selfdestruct` call in yul";
+  let arguments = (ins I256:$addr);
+  let assemblyFormat = "$addr attr-dict";
+}
+
 def Yul_MLoadOp : Yul_Op<"mload"> {
   let summary = "Represents the `mload` call in yul";
   let arguments = (ins I256:$addr);
