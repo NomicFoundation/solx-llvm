@@ -2548,6 +2548,39 @@ struct GasLeftOpLowering : public OpRewritePattern<sol::GasLeftOp> {
   }
 };
 
+struct BlockHashOpLowering : public OpConversionPattern<sol::BlockHashOp> {
+  using OpConversionPattern<sol::BlockHashOp>::OpConversionPattern;
+  LogicalResult matchAndRewrite(sol::BlockHashOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    r.replaceOpWithNewOp<yul::BlockHashOp>(op, adaptor.getBlockNumber());
+    return success();
+  }
+};
+
+struct BlobHashOpLowering : public OpConversionPattern<sol::BlobHashOp> {
+  using OpConversionPattern<sol::BlobHashOp>::OpConversionPattern;
+  LogicalResult matchAndRewrite(sol::BlobHashOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    r.replaceOpWithNewOp<yul::BlobHashOp>(op, adaptor.getIdx());
+    return success();
+  }
+};
+
+struct SelfdestructOpLowering
+    : public CleanedOperandsLowering<sol::SelfdestructOp,
+                                     SelfdestructOpLowering> {
+  using Base =
+      CleanedOperandsLowering<sol::SelfdestructOp, SelfdestructOpLowering>;
+  using Base::Base;
+
+  LogicalResult rewriteCleaned(sol::SelfdestructOp op,
+                               ConversionPatternRewriter &r,
+                               Value recipient) const {
+    r.replaceOpWithNewOp<yul::SelfDestructOp>(op, recipient);
+    return success();
+  }
+};
+
 struct LibAddrOpLowering : public OpConversionPattern<sol::LibAddrOp> {
   using OpConversionPattern<sol::LibAddrOp>::OpConversionPattern;
 
@@ -4136,6 +4169,8 @@ void evm::populateAddrPat(RewritePatternSet &pats, TypeConverter &tyConv) {
            CodeHashOpLowering, CallerOpLowering, BalanceOpLowering>(
       pats.getContext());
   pats.add<SigOpLowering>(tyConv, pats.getContext());
+  pats.add<BlockHashOpLowering, BlobHashOpLowering, SelfdestructOpLowering>(
+      tyConv, pats.getContext());
 }
 
 void evm::populateAbiPats(mlir::RewritePatternSet &pats,

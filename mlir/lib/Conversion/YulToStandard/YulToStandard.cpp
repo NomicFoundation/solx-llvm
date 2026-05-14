@@ -616,6 +616,22 @@ struct BlobHashOpLowering : public OpRewritePattern<yul::BlobHashOp> {
   }
 };
 
+struct SelfDestructOpLowering : public OpRewritePattern<yul::SelfDestructOp> {
+  using OpRewritePattern<yul::SelfDestructOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(yul::SelfDestructOp op,
+                                PatternRewriter &r) const override {
+    Location loc = op.getLoc();
+    auto mod = getModule(op);
+    r.replaceOpWithNewOp<LLVM::IntrCallOp>(
+        op, llvm::Intrinsic::evm_selfdestruct,
+        /*resTy=*/Type{},
+        /*ins=*/ValueRange{op.getAddr()}, "evm.selfdestruct");
+    createCallToUnreachableWrapper(r, mod, loc);
+    return success();
+  }
+};
+
 struct CoinBaseOpLowering : public OpRewritePattern<yul::CoinBaseOp> {
   using OpRewritePattern<yul::CoinBaseOp>::OpRewritePattern;
 
@@ -1586,6 +1602,7 @@ void evm::populateYulPats(RewritePatternSet &pats) {
       GasPriceOpLowering,
       BlockHashOpLowering,
       BlobHashOpLowering,
+      SelfDestructOpLowering,
       CoinBaseOpLowering,
       TimeStampOpLowering,
       NumberOpLowering,

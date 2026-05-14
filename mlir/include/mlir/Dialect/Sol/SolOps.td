@@ -949,6 +949,29 @@ def Sol_GasLeftOp : Sol_Op<"gasleft"> {
   let assemblyFormat = "attr-dict `:` type($val)";
 }
 
+def Sol_BlockHashOp : Sol_Op<"blockhash"> {
+  let summary = "Returns the hash of the given block (blockhash(uint))";
+  let arguments = (ins UI256:$blockNumber);
+  let results = (outs Sol_FixedBytesType:$val);
+
+  let assemblyFormat = "$blockNumber attr-dict `:` type($val)";
+}
+
+def Sol_BlobHashOp : Sol_Op<"blobhash"> {
+  let summary = "Returns the hash of the versioned blob (blobhash(uint))";
+  let arguments = (ins UI256:$idx);
+  let results = (outs Sol_FixedBytesType:$val);
+
+  let assemblyFormat = "$idx attr-dict `:` type($val)";
+}
+
+def Sol_SelfdestructOp : Sol_Op<"selfdestruct"> {
+  let summary = "Terminates the contract and sends balance to the recipient";
+  let arguments = (ins Sol_AddressType:$recipient);
+
+  let assemblyFormat = "$recipient attr-dict `:` qualified(type($recipient))";
+}
+
 def Sol_ExtCallOp : Sol_Op<"ext_call", [CallOpInterface]> {
   let arguments = (ins StrAttr:$callee, Variadic<AnyType>:$ins,
                        AnyTypeOf<[Sol_AddressType, UI256]>:$addr,
