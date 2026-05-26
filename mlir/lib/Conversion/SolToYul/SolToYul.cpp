@@ -3217,6 +3217,31 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
     } else {
       r.inlineRegionBefore(tryOp.getFallbackRegion(), ifStatus.getElseRegion(),
                            ifStatus.getElseRegion().begin());
+      // If the fallback clause declared a parameter, materialize the raw return
+      // data as a `bytes memory` and replace uses of the block argument.
+      Block &entry = ifStatus.getElseRegion().front();
+      if (entry.getNumArguments() > 0) {
+        BlockArgument blkArg = entry.getArgument(0);
+        Location argLoc = blkArg.getLoc();
+        OpBuilder::InsertionGuard g(r);
+        r.setInsertionPointToStart(&entry);
+        evm::Builder evmB(getModule(tryOp), r, argLoc);
+        auto memBytesTy =
+            sol::StringType::get(r.getContext(), sol::DataLocation::Memory);
+        Value retDataSize = r.create<yul::ReturnDataSizeOp>(argLoc);
+        Value buf =
+            evmB.genMemAlloc(memBytesTy, /*zeroInit=*/false,
+                             /*initVals=*/{}, retDataSize, Type{}, argLoc);
+        Value dataPtr =
+            evmB.genDataAddrPtr(buf, sol::DataLocation::Memory, argLoc);
+        r.create<yul::ReturnDataCopyOp>(argLoc, /*dst=*/dataPtr,
+                                        /*src=*/bExt.genI256Const(0, argLoc),
+                                        retDataSize);
+        Value repl = getTypeConverter()->materializeSourceConversion(
+            r, argLoc, blkArg.getType(), buf);
+        blkArg.replaceAllUsesWith(repl);
+        entry.eraseArgument(0);
+      }
     }
 
     if (tryOp.getPanicRegion().empty() && tryOp.getErrorRegion().empty()) {
