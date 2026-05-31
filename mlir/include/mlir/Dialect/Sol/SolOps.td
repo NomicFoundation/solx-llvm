@@ -362,6 +362,23 @@ def Sol_CopyOp : Sol_Op<"copy"> {
   }];
 }
 
+def Sol_DeleteOp : Sol_Op<"delete"> {
+  let summary = "Resets a reference-typed storage variable to its zero value.";
+  let description = [{
+    Recursively clears every storage slot occupied by the reference-typed value
+    rooted at the given storage reference (Solidity `delete x`). Mirrors solc's
+    deep storage clear: dynamic arrays/strings reset to empty (length slot zeroed,
+    data tail freed); fixed arrays and structs recurse into their elements/members.
+    The operand is a `Storage` reference, e.g. the result of `sol.addr_of` for an
+    aggregate state variable.
+  }];
+  let arguments = (ins AnyType:$reference);
+
+  let assemblyFormat = [{
+    $reference attr-dict `:` type($reference)
+  }];
+}
+
 // TODO: Simplify the asm format by inferring element type of Sol_RefType.
 
 def Sol_LoadOp : Sol_Op<"load", [

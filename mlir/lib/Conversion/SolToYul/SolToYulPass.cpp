@@ -136,6 +136,7 @@ struct ConvertSolToYulPass
         sol::GepOp,
         sol::MapOp,
         sol::CopyOp,
+        sol::DeleteOp,
         sol::DataLocCastOp,
         sol::LoadOp,
         sol::StoreOp,

@@ -2435,6 +2435,27 @@ struct CopyOpLowering : public OpConversionPattern<sol::CopyOp> {
   }
 };
 
+struct DeleteOpLowering : public OpConversionPattern<sol::DeleteOp> {
+  using OpConversionPattern<sol::DeleteOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::DeleteOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    Location loc = op.getLoc();
+    evm::Builder evmB(getModule(op), r, loc);
+
+    // The operand is a storage reference: `address_type` makes the aggregate
+    // type itself the reference type, and AddrOfOp lowers a non-packable storage
+    // variable to its i256 slot. So the original operand type is the value type
+    // to clear, and the remapped operand is the slot.
+    Type refTy = op.getReference().getType();
+    assert(sol::getDataLocation(refTy) == sol::DataLocation::Storage &&
+           "sol.delete expects a Storage reference");
+    evmB.genClearStorageValue(refTy, adaptor.getReference(), loc);
+    r.eraseOp(op);
+    return success();
+  }
+};
+
 struct ThisOpLowering : public OpRewritePattern<sol::ThisOp> {
   using OpRewritePattern<sol::ThisOp>::OpRewritePattern;
 
@@ -4262,8 +4283,8 @@ void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv) {
            PopOpLowering, GepOpLowering, MapOpLowering, LoadOpLowering,
            LoadImmutableMetadataConversion, StoreOpLowering,
            DataLocCastOpLowering, LengthOpLowering, SliceOpLowering,
-           CopyOpLowering, PushStringOpLowering, StringLitOpLowering,
-           ConcatOpLowering>(tyConv, pats.getContext());
+           CopyOpLowering, DeleteOpLowering, PushStringOpLowering,
+           StringLitOpLowering, ConcatOpLowering>(tyConv, pats.getContext());
   pats.add<AddrOfOpLowering>(pats.getContext());
 }
 
