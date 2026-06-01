@@ -1477,6 +1477,34 @@ struct GetCallDataOpLowering : public OpConversionPattern<sol::GetCallDataOp> {
   }
 };
 
+struct GetReturnDataOpLowering
+    : public OpConversionPattern<sol::GetReturnDataOp> {
+  using OpConversionPattern<sol::GetReturnDataOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::GetReturnDataOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    Location loc = op.getLoc();
+    mlir::solgen::BuilderExt bExt(r, loc);
+    auto mod = getModule(op);
+    evm::Builder evmB(mod, r, loc);
+
+    // Materialise the returndata as a fresh memory `bytes`, mirroring the
+    // (status, returndata) tail of the bare-call lowering: allocate a dynamic
+    // array sized to `returndatasize` and `returndatacopy` into it.
+    Value zero = bExt.genI256Const(0);
+    Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
+    Value roundedRetDataSize = bExt.genRoundUpToMultiple<32>(retDataSize);
+    Value retData =
+        evmB.genMemAllocForDynArray(retDataSize, roundedRetDataSize, loc);
+    Value retDataStart =
+        evmB.genDataAddrPtr(retData, sol::DataLocation::Memory, loc);
+    r.create<yul::ReturnDataCopyOp>(loc, /*dst=*/retDataStart,
+                                    /*src=*/zero, retDataSize);
+    r.replaceOp(op, retData);
+    return success();
+  }
+};
+
 struct DefaultCallDataOpLowering
     : public OpConversionPattern<sol::DefaultCallDataOp> {
   using OpConversionPattern<sol::DefaultCallDataOp>::OpConversionPattern;
@@ -4279,7 +4307,8 @@ void evm::populateCryptoPats(mlir::RewritePatternSet &pats,
 
 void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv) {
   pats.add<AllocaOpLowering, MallocOpLowering, ArrayLitOpLowering,
-           GetCallDataOpLowering, DefaultCallDataOpLowering, PushOpLowering,
+           GetCallDataOpLowering, GetReturnDataOpLowering,
+           DefaultCallDataOpLowering, PushOpLowering,
            PopOpLowering, GepOpLowering, MapOpLowering, LoadOpLowering,
            LoadImmutableMetadataConversion, StoreOpLowering,
            DataLocCastOpLowering, LengthOpLowering, SliceOpLowering,

@@ -128,6 +128,7 @@ struct ConvertSolToYulPass
         sol::ArrayLitOp,
         sol::StringLitOp,
         sol::GetCallDataOp,
+        sol::GetReturnDataOp,
         sol::DefaultCallDataOp,
         sol::PushOp,
         sol::PushStringOp,

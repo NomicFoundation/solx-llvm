@@ -239,6 +239,26 @@ def Sol_GetCallDataOp : Sol_Op<"get_calldata"> {
   let skipDefaultBuilders = 1;
 }
 
+def Sol_GetReturnDataOp : Sol_Op<"get_returndata"> {
+  let summary = "Copies the current returndata into a fresh memory `bytes`.";
+  let description = [{
+    Yields the returndata of the most recent external call as a memory-located
+    `bytes` value (`returndatasize` + `returndatacopy` into a freshly allocated
+    dynamic array). Used by `try`/`catch` to materialise the revert data for the
+    catch error parameter.
+  }];
+  let results = (outs Sol_AggType:$addr);
+  let assemblyFormat = [{ attr-dict `:` type($addr) }];
+
+  let builders = [
+    OpBuilder<(ins), [{
+      $_state.addTypes(sol::StringType::get($_builder.getContext(),
+                                            sol::DataLocation::Memory));
+    }]>
+  ];
+  let skipDefaultBuilders = 1;
+}
+
 def Sol_PushOp : Sol_Op<"push"> {
   let arguments = (ins AnyType:$inp);
   // FIXME: AnyType -> Sol_PtrTy causes the asm printer to miss the prefix!
