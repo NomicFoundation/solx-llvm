@@ -241,6 +241,43 @@ struct FuncOpLowering : public OpRewritePattern<yul::FuncOp> {
   }
 };
 
+struct AllocaOpLowering : public OpConversionPattern<yul::AllocaOp> {
+  using OpConversionPattern<yul::AllocaOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(yul::AllocaOp op, OpAdaptor,
+                                ConversionPatternRewriter &r) const override {
+    auto i256Ty = r.getIntegerType(256);
+    auto ptrTy = LLVM::LLVMPointerType::get(r.getContext());
+    Value one =
+        r.create<arith::ConstantOp>(op.getLoc(), r.getIntegerAttr(i256Ty, 1));
+    r.replaceOpWithNewOp<LLVM::AllocaOp>(op, ptrTy, i256Ty, one,
+                                         /*alignment=*/32);
+    return success();
+  }
+};
+
+struct LoadOpLowering : public OpConversionPattern<yul::LoadOp> {
+  using OpConversionPattern<yul::LoadOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(yul::LoadOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    r.replaceOpWithNewOp<LLVM::LoadOp>(op, r.getIntegerType(256),
+                                       adaptor.getPtr(), /*alignment=*/32);
+    return success();
+  }
+};
+
+struct StoreOpLowering : public OpConversionPattern<yul::StoreOp> {
+  using OpConversionPattern<yul::StoreOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(yul::StoreOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    r.replaceOpWithNewOp<LLVM::StoreOp>(op, adaptor.getVal(), adaptor.getPtr(),
+                                        /*alignment=*/32);
+    return success();
+  }
+};
+
 struct UpdFreePtrOpLowering : public OpRewritePattern<yul::UpdFreePtrOp> {
   using OpRewritePattern<yul::UpdFreePtrOp>::OpRewritePattern;
 
@@ -1549,7 +1586,9 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
 
 } // namespace
 
-void evm::populateYulPats(RewritePatternSet &pats) {
+void evm::populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv) {
+  pats.add<AllocaOpLowering, LoadOpLowering, StoreOpLowering>(
+      tyConv, pats.getContext());
   pats.add<BinaryOpLowering<yul::AddOp, arith::AddIOp>,
            BinaryOpLowering<yul::SubOp, arith::SubIOp>,
            BinaryOpLowering<yul::MulOp, arith::MulIOp>,
