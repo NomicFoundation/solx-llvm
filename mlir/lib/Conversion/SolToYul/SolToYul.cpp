@@ -22,6 +22,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Types.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -4079,21 +4080,22 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
   }
 
   /// Collects reachable function from `fn` in `reachableFns`.
-  void getReachableFuncs(sol::FuncOp fn,
-                         llvm::SetVector<sol::FuncOp> &reachableFns) const {
+  void
+  getReachableFuncs(FunctionOpInterface fn,
+                    llvm::SetVector<FunctionOpInterface> &reachableFns) const {
     reachableFns.insert(fn);
     fn.walk([&](Operation *op) {
-      FlatSymbolRefAttr calleeSym;
-      if (auto callOp = dyn_cast<sol::CallOp>(op))
-        calleeSym = callOp.getCalleeAttr();
+      SymbolRefAttr calleeSym;
+      if (auto call = dyn_cast<CallOpInterface>(op))
+        calleeSym = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
       else if (auto fnRef = dyn_cast<sol::FuncConstantOp>(op))
         calleeSym = fnRef.getSymAttr();
-      else
+      if (!calleeSym)
         return;
 
-      auto callee =
-          SymbolTable::lookupNearestSymbolFrom<sol::FuncOp>(fn, calleeSym);
-      if (reachableFns.contains(callee))
+      auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+          fn.getOperation(), calleeSym);
+      if (!callee || reachableFns.contains(callee))
         return;
       getReachableFuncs(callee, reachableFns);
     });
@@ -4155,7 +4157,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       } else if (isa<sol::StateVarOp>(i)) {
         r.eraseOp(&i);
 
-      } else {
+      } else if (!isa<yul::FuncOp>(i)) {
         llvm_unreachable("NYI");
       }
     }
@@ -4163,26 +4165,30 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     if (ctor) {
       // Clone functions reachable from the ctor to creation and runtime
       // objects.
-      llvm::SetVector<sol::FuncOp> reachableFns;
+      llvm::SetVector<FunctionOpInterface> reachableFns;
       getReachableFuncs(ctor, reachableFns);
       ctor->moveBefore(creationObj.getEntryBlock(),
                        creationObj.getEntryBlock()->begin());
-      for (auto reachableFn : reachableFns) {
-        if (reachableFn == ctor)
+      for (FunctionOpInterface reachableFn : reachableFns) {
+        Operation *fnOp = reachableFn.getOperation();
+        if (fnOp == ctor.getOperation())
           continue;
         // Clone in the creation object and move the original to runtime object.
-        r.clone(*reachableFn);
-        reachableFn->moveBefore(runtimeObj.getEntryBlock(),
-                                runtimeObj.getEntryBlock()->begin());
-        reachableFn.setRuntimeAttr(r.getUnitAttr());
+        r.clone(*fnOp);
+        fnOp->moveBefore(runtimeObj.getEntryBlock(),
+                         runtimeObj.getEntryBlock()->begin());
+        if (auto solFn = dyn_cast<sol::FuncOp>(fnOp))
+          solFn.setRuntimeAttr(r.getUnitAttr());
       }
     }
 
-    for (auto fn :
-         llvm::make_early_inc_range(op.getBody()->getOps<sol::FuncOp>())) {
-      fn.setRuntimeAttr(r.getUnitAttr());
-      fn->moveBefore(runtimeObj.getEntryBlock(),
-                     runtimeObj.getEntryBlock()->begin());
+    for (Operation &i : llvm::make_early_inc_range(*op.getBody())) {
+      if (!isa<FunctionOpInterface>(i))
+        continue;
+      if (auto solFn = dyn_cast<sol::FuncOp>(&i))
+        solFn.setRuntimeAttr(r.getUnitAttr());
+      i.moveBefore(runtimeObj.getEntryBlock(),
+                   runtimeObj.getEntryBlock()->begin());
     }
 
     //
@@ -4452,6 +4458,166 @@ void evm::populateContractPat(RewritePatternSet &pats) {
   pats.add<ContractOpLowering>(pats.getContext());
 }
 
+//===----------------------------------------------------------------------===//
+// Inline-asm wrapper + yul.* bridge / pointer-plumbing op lowerings.
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
+  using OpConversionPattern<sol::InlineAsmOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::InlineAsmOp op, OpAdaptor,
+                                ConversionPatternRewriter &r) const override {
+    Operation *dest = SymbolTable::getNearestSymbolTable(op->getParentOp());
+    assert(dest && "inline_asm must be within a symbol table");
+    Block &destBlock = dest->getRegion(0).front();
+    Block &block = op.getBody().front();
+    MLIRContext *ctx = r.getContext();
+
+    auto fns = llvm::to_vector(block.getOps<yul::FuncOp>());
+
+    for (yul::FuncOp fn : fns) {
+      StringAttr oldName = fn.getSymNameAttr();
+      if (!SymbolTable::lookupSymbolIn(dest, oldName))
+        continue;
+
+      // Uniquify the name
+      unsigned counter = 0;
+      StringAttr uniqName = StringAttr::get(
+          ctx, SymbolTable::generateSymbolName<64>(
+                   oldName.getValue(),
+                   [&](StringRef cand) {
+                     auto a = StringAttr::get(ctx, cand);
+                     return SymbolTable::lookupSymbolIn(dest, a) ||
+                            SymbolTable::lookupSymbolIn(op, a);
+                   },
+                   counter));
+      if (failed(SymbolTable::replaceAllSymbolUses(oldName, uniqName, op)))
+        return failure();
+      SymbolTable::setSymbolName(fn, uniqName);
+    }
+
+    for (yul::FuncOp fn : fns)
+      r.moveOpBefore(fn, &destBlock, destBlock.begin());
+
+    r.inlineBlockBefore(&block, op);
+    r.eraseOp(op);
+    return success();
+  }
+};
+
+// sol.yul_ptr_cast / sol.yul_val_cast / sol.yul_storage_slot
+template <typename OpT>
+struct IdentityCastLowering : public OpConversionPattern<OpT> {
+  using OpConversionPattern<OpT>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(OpT op, typename OpT::Adaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    r.replaceOp(op, adaptor.getSrc());
+    return success();
+  }
+};
+
+// Generates gep to a struct field through an opaque !llvm.ptr operand.
+static Value genStructFieldGep(ConversionPatternRewriter &r, Location loc,
+                               Value structPtr, LLVM::LLVMStructType structTy,
+                               int field) {
+  auto ptrTy = LLVM::LLVMPointerType::get(r.getContext());
+  return r.create<LLVM::GEPOp>(
+      loc, ptrTy, structTy, structPtr,
+      ArrayRef<LLVM::GEPArg>{LLVM::GEPArg(0), LLVM::GEPArg(field)});
+}
+
+// sol.yul_calldata_offset / sol.yul_calldata_length
+template <typename OpT, int Field>
+struct CallDataMemberLowering : public OpConversionPattern<OpT> {
+  using OpConversionPattern<OpT>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(OpT op, typename OpT::Adaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    auto i256Ty = IntegerType::get(r.getContext(), 256,
+                                   IntegerType::SignednessSemantics::Signless);
+    auto structTy =
+        LLVM::LLVMStructType::getLiteral(r.getContext(), {i256Ty, i256Ty});
+    Value gep =
+        genStructFieldGep(r, op.getLoc(), adaptor.getSrc(), structTy, Field);
+    r.replaceOp(op, gep);
+    return success();
+  }
+};
+
+// sol.yul_selector / sol.yul_address_of
+template <typename OpT, int Field>
+struct ExtFuncMemberLowering : public OpConversionPattern<OpT> {
+  using OpConversionPattern<OpT>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(OpT op, typename OpT::Adaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    auto i256Ty = IntegerType::get(r.getContext(), 256,
+                                   IntegerType::SignednessSemantics::Signless);
+    auto structTy =
+        LLVM::LLVMStructType::getLiteral(r.getContext(), {i256Ty, i256Ty});
+    Value gep =
+        genStructFieldGep(r, op.getLoc(), adaptor.getSrc(), structTy, Field);
+    r.replaceOp(op, gep);
+    return success();
+  }
+};
+
+// sol.yul_storage_offset: local storage ref `.offset` is always 0 for ref-type
+// pointees (the only kind of local storage ref Solidity admits).
+struct StorageOffsetOpLowering
+    : public OpConversionPattern<sol::YulStorageOffsetOp> {
+  using OpConversionPattern<sol::YulStorageOffsetOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::YulStorageOffsetOp op, OpAdaptor,
+                                ConversionPatternRewriter &r) const override {
+    mlir::solgen::BuilderExt bExt(r, op.getLoc());
+    r.replaceOp(op, bExt.genI256Const(0));
+    return success();
+  }
+};
+
+// sol.yul_state_var_slot / sol.yul_state_var_offset
+template <typename OpT, bool IsOffset>
+struct StateVarFieldLowering : public OpConversionPattern<OpT> {
+  using OpConversionPattern<OpT>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(OpT op, typename OpT::Adaptor,
+                                ConversionPatternRewriter &r) const override {
+    auto contract = op->template getParentOfType<sol::ContractOp>();
+    assert(contract);
+
+    auto sym = contract.template lookupSymbol<sol::StateVarOp>(
+        op.getSymAttr().getValue());
+    assert(sym);
+
+    mlir::solgen::BuilderExt bExt(r, op.getLoc());
+    APInt value = IsOffset ? APInt(/*numBits=*/256, sym.getByteOffset())
+                           : sym.getSlot().zextOrTrunc(256);
+    r.replaceOp(op, bExt.genI256Const(value));
+    return success();
+  }
+};
+
+} // namespace
+
+void evm::populateInlineAsmPats(RewritePatternSet &pats,
+                                TypeConverter &tyConv) {
+  pats.add<InlineAsmOpLowering, IdentityCastLowering<sol::YulPtrCastOp>,
+           IdentityCastLowering<sol::YulValCastOp>,
+           IdentityCastLowering<sol::YulStorageSlotOp>,
+           CallDataMemberLowering<sol::YulCallDataOffsetOp, 0>,
+           CallDataMemberLowering<sol::YulCallDataLengthOp, 1>,
+           ExtFuncMemberLowering<sol::YulFuncAddrOp, 0>,
+           ExtFuncMemberLowering<sol::YulSelectorOp, 1>,
+           StorageOffsetOpLowering,
+           StateVarFieldLowering<sol::YulStateVarSlotOp, /*IsOffset=*/false>,
+           StateVarFieldLowering<sol::YulStateVarOffsetOp, /*IsOffset=*/true>>(
+      tyConv, pats.getContext());
+}
+
 void evm::populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv) {
   populateArithPats(pats, tyConv);
   populateCheckedArithPats(pats, tyConv);
@@ -4463,6 +4629,7 @@ void evm::populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv) {
   populateEmitPat(pats, tyConv);
   populateRequirePat(pats);
   populateControlFlowPats(pats, tyConv);
+  populateInlineAsmPats(pats, tyConv);
 }
 
 void evm::populateStage2Pats(RewritePatternSet &pats, TypeConverter &tyConv) {

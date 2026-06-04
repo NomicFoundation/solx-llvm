@@ -83,7 +83,7 @@ struct ConvertSolToYulPass
     OpBuilder b(mod.getContext());
 
     ConversionTarget convTgt(getContext());
-    convTgt.addLegalOp<ModuleOp>();
+    convTgt.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
     convTgt
         .addLegalDialect<sol::SolDialect, yul::YulDialect, LLVM::LLVMDialect>();
     convTgt.addIllegalOp<
@@ -190,7 +190,18 @@ struct ConvertSolToYulPass
         sol::WhileOp,
         sol::DoWhileOp,
         sol::ForOp,
-        sol::TryOp
+        sol::TryOp,
+        sol::InlineAsmOp,
+        sol::YulPtrCastOp,
+        sol::YulValCastOp,
+        sol::YulStorageSlotOp,
+        sol::YulCallDataOffsetOp,
+        sol::YulCallDataLengthOp,
+        sol::YulSelectorOp,
+        sol::YulFuncAddrOp,
+        sol::YulStorageOffsetOp,
+        sol::YulStateVarSlotOp,
+        sol::YulStateVarOffsetOp
         // clang-format on
         >();
     convTgt.addDynamicallyLegalOp<sol::FuncOp>([&](sol::FuncOp op) {
@@ -230,7 +241,7 @@ struct ConvertSolToYulPass
   LogicalResult runStage2Conversion(ModuleOp mod,
                                     evm::SolTypeConverter &tyConv) {
     ConversionTarget convTgt(getContext());
-    convTgt.addLegalOp<ModuleOp>();
+    convTgt.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
     convTgt
         .addLegalDialect<sol::SolDialect, yul::YulDialect, LLVM::LLVMDialect>();
     convTgt.addIllegalOp<sol::ContractOp, sol::ICallOp, sol::LoadImmutableOp>();
@@ -250,7 +261,7 @@ struct ConvertSolToYulPass
     // are already Yul-clean before FuncOpLowering moves them into yul.func.
     {
       ConversionTarget convTgt(getContext());
-      convTgt.addLegalOp<ModuleOp>();
+      convTgt.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
       convTgt.addLegalDialect<sol::SolDialect, yul::YulDialect,
                               LLVM::LLVMDialect>();
       convTgt.addIllegalOp<sol::CallOp, sol::ReturnOp>();
@@ -264,7 +275,7 @@ struct ConvertSolToYulPass
 
     {
       ConversionTarget convTgt(getContext());
-      convTgt.addLegalOp<ModuleOp>();
+      convTgt.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
       convTgt.addLegalDialect<yul::YulDialect, LLVM::LLVMDialect>();
       convTgt.addIllegalDialect<sol::SolDialect>();
 
