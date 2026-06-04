@@ -1212,9 +1212,17 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
     if (stringTy.getDataLocation() == sol::DataLocation::CallData)
       return bExt.genLLVMStruct({bExt.genI256Const(0), bExt.genI256Const(0)},
                                 loc);
-    if (sizeVar)
-      return genMemAllocForDynArray(
-          sizeVar, bExt.genRoundUpToMultiple<32>(sizeVar), loc);
+    if (sizeVar) {
+      Value roundedSize = bExt.genRoundUpToMultiple<32>(sizeVar);
+      Value memPtr = genMemAllocForDynArray(sizeVar, roundedSize, loc);
+      if (zeroInit) {
+        Value dataPtr =
+            b.create<yul::AddOp>(loc, memPtr, bExt.genI256Const(32));
+        Value callDataSz = b.create<yul::CallDataSizeOp>(loc);
+        b.create<yul::CallDataCopyOp>(loc, dataPtr, callDataSz, roundedSize);
+      }
+      return memPtr;
+    }
     return bExt.genI256Const(mlir::evm::MemoryLayout::zeroPointer);
   }
 
