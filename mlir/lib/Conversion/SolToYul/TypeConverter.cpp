@@ -14,6 +14,8 @@
 #include "mlir/Conversion/SolToYul/SolToYul.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Sol/Sol.h"
+#include "mlir/Dialect/Yul/Yul.h"
+#include "mlir/IR/BuiltinOps.h"
 
 using namespace mlir;
 
@@ -203,14 +205,13 @@ evm::SolTypeConverter::SolTypeConverter() {
     llvm_unreachable("Unimplemented type conversion");
   });
 
-  addSourceMaterialization(
-      [](OpBuilder &b, Type resTy, ValueRange ins, Location loc) -> Value {
-        assert(ins.size() == 1);
-        return b.create<sol::ConvCastOp>(loc, resTy, ins);
-      });
-  addTargetMaterialization(
-      [](OpBuilder &b, Type resTy, ValueRange ins, Location loc) -> Value {
-        assert(ins.size() == 1);
-        return b.create<sol::ConvCastOp>(loc, resTy, ins);
-      });
+  auto castMaterialization = [](OpBuilder &b, Type resTy, ValueRange ins,
+                                Location loc) -> Value {
+    assert(ins.size() == 1);
+    if (isa<yul::PtrType>(resTy) || isa<yul::PtrType>(ins[0].getType()))
+      return b.create<UnrealizedConversionCastOp>(loc, resTy, ins).getResult(0);
+    return b.create<sol::ConvCastOp>(loc, resTy, ins);
+  };
+  addSourceMaterialization(castMaterialization);
+  addTargetMaterialization(castMaterialization);
 }

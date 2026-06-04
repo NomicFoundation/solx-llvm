@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Yul/Yul.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 namespace mlir {
@@ -40,8 +41,20 @@ struct ConvertYulToStandardPass
                             arith::ArithDialect, LLVM::LLVMDialect>();
     convTgt.addIllegalDialect<yul::YulDialect>();
 
+    TypeConverter tyConv;
+    tyConv.addConversion([](Type ty) { return ty; });
+    tyConv.addConversion([](yul::PtrType ty) -> Type {
+      return LLVM::LLVMPointerType::get(ty.getContext());
+    });
+    auto castMaterialization = [](OpBuilder &b, Type resTy, ValueRange ins,
+                                  Location loc) -> Value {
+      return b.create<UnrealizedConversionCastOp>(loc, resTy, ins).getResult(0);
+    };
+    tyConv.addSourceMaterialization(castMaterialization);
+    tyConv.addTargetMaterialization(castMaterialization);
+
     RewritePatternSet pats(&getContext());
-    evm::populateYulPats(pats);
+    evm::populateYulPats(pats, tyConv);
 
     if (failed(applyPartialConversion(mod, convTgt, std::move(pats)))) {
       signalPassFailure();
