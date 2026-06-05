@@ -23,6 +23,7 @@
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/APInt.h"
 
 #include "mlir/Dialect/Sol/SolInterfaces.h.inc"
 #include "mlir/Dialect/Sol/SolOpsDialect.h.inc"
@@ -78,8 +79,9 @@ bool isAddressLikeType(Type ty);
 /// Return true if the type is bytes-like (i.e. fixedbytes or byte).
 bool isBytesLikeType(Type ty);
 
-/// MLIR version of solidity ast's Type::storageSize().
-unsigned getStorageSlotCount(Type ty);
+/// MLIR version of solidity ast's Type::storageSize(). Returned as a 256-bit
+/// APInt: statically-sized storage arrays can occupy up to 2^256-1 slots.
+llvm::APInt getStorageSlotCount(Type ty);
 
 /// Returns true if `ty` is a scalar value type: Integer, Enum, FuncRef,
 /// ExtFuncRef, AddressLike, or BytesLike (FixedBytes / ByteType).

@@ -30,3 +30,9 @@ func.func private @fixed_array_self_member(!sol.struct<"F", Storage, (!sol.array
 // The same applies to opaque structs embedded in literal struct members.
 // expected-error @below {{literal struct member directly embeds opaque struct 'Q'}}
 func.func private @literal_opaque_member(!sol.struct<(!sol.struct<"Q", Storage>), Storage>)
+
+// -----
+
+// Sizes above 2^64-1 are only representable for storage/transient arrays.
+// expected-error @below {{array size exceeds uint64 for non-storage array}}
+func.func private @huge_memory_array(!sol.array<18446744073709551616 x i256, Memory>)
