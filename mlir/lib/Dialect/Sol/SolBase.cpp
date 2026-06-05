@@ -16,6 +16,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Support/LLVM.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -234,24 +235,33 @@ bool mlir::sol::isBytesLikeType(Type ty) {
   return isa<FixedBytesType, ByteType>(ty);
 }
 
-unsigned mlir::sol::getStorageSlotCount(Type ty) {
+llvm::APInt mlir::sol::getStorageSlotCount(Type ty) {
   if (isa<IntegerType>(ty) || isa<EnumType>(ty) || isa<FixedBytesType>(ty) ||
       isa<MappingType>(ty) || isa<FuncRefType>(ty) || isa<ExtFuncRefType>(ty) ||
       isa<StringType>(ty) || isAddressLikeType(ty))
-    return 1;
+    return llvm::APInt(256, 1);
 
   if (auto arrTy = dyn_cast<ArrayType>(ty)) {
     // Dynamic arrays store only the head slot in-place.
     if (arrTy.isDynSized())
-      return 1;
+      return llvm::APInt(256, 1);
 
     Type eltTy = arrTy.getEltType();
-    unsigned size = arrTy.getSize();
-    if (!canBePacked(eltTy))
-      return size * getStorageSlotCount(eltTy);
+    llvm::APInt size = arrTy.getSize();
+    if (!canBePacked(eltTy)) {
+      [[maybe_unused]] bool overflow = false;
+      llvm::APInt total = size.umul_ov(getStorageSlotCount(eltTy), overflow);
+      assert(!overflow && "storage slot count overflows 256 bits");
+      return total;
+    }
 
     // Packed arrays of small elements can fit in fewer slots.
-    return llvm::divideCeil(size, 32u / getNumBytes(eltTy));
+    llvm::APInt perSlot(256, 32u / getNumBytes(eltTy));
+    llvm::APInt slots, remainder;
+    llvm::APInt::udivrem(size, perSlot, slots, remainder);
+    if (!remainder.isZero())
+      ++slots;
+    return slots;
   }
 
   if (auto structTy = dyn_cast<StructType>(ty)) {
@@ -330,13 +340,28 @@ static ParseResult parseDataLocation(AsmParser &parser,
 ///   size ::= fixed-size | `?`
 ///
 Type ArrayType::parse(AsmParser &parser) {
+  SMLoc beginLoc = parser.getCurrentLocation();
   if (parser.parseLess())
     return {};
 
-  int64_t size = -1;
+  // size ::= '?' (dynamic) | integer (static, possibly > INT64_MAX)
+  std::optional<llvm::APInt> sizeOpt = std::nullopt;
   if (parser.parseOptionalQuestion()) {
-    if (parser.parseInteger(size))
+    // '?' not found: parse a static integer
+    SMLoc sizeLoc = parser.getCurrentLocation();
+    llvm::APInt rawSize;
+    if (parser.parseInteger(rawSize))
       return {};
+    if (rawSize.isNegative()) {
+      parser.emitError(sizeLoc, "array size must be non-negative");
+      return {};
+    }
+    if (rawSize.getActiveBits() > 256) {
+      parser.emitError(sizeLoc, "array size too large, maximum is 2^256 - 1");
+      return {};
+    }
+    // Normalize to 256 bits (the canonical width for Sol_ArrayType sizes).
+    sizeOpt = rawSize.zextOrTrunc(256);
   }
 
   if (parser.parseKeyword("x"))
@@ -356,20 +381,38 @@ Type ArrayType::parse(AsmParser &parser) {
   if (parser.parseGreater())
     return {};
 
-  return get(parser.getContext(), size, eleTy, dataLocation);
+  // getChecked routes verification failures (e.g. a huge size on a
+  // non-storage array) to the parser as a diagnostic. Plain get would assert.
+  return getChecked([&] { return parser.emitError(beginLoc); },
+                    parser.getContext(), sizeOpt, eleTy, dataLocation);
 }
 
 /// Prints a sol.array type.
 void ArrayType::print(AsmPrinter &printer) const {
   printer << "<";
 
-  if (getSize() == -1)
+  if (isDynSized())
     printer << "?";
   else
-    printer << getSize();
+    getSize().print(printer.getStream(), /*isSigned=*/false);
 
   printer << " x " << getEltType() << ", "
           << stringifyDataLocation(getDataLocation()) << ">";
+}
+
+/// Sizes that exceed uint64_t are only valid for storage/transient arrays;
+/// for all other locations getSize().getZExtValue() must be safe.
+llvm::LogicalResult
+ArrayType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
+                  std::optional<llvm::APInt> sizeOpt, Type,
+                  DataLocation dataLocation) {
+  if (!sizeOpt.has_value())
+    return mlir::success();
+  bool isStorage = dataLocation == DataLocation::Storage ||
+                   dataLocation == DataLocation::Transient;
+  if (!isStorage && sizeOpt->getActiveBits() > 64)
+    return emitError() << "array size exceeds uint64 for non-storage array";
+  return mlir::success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -404,9 +447,9 @@ void StringType::print(AsmPrinter &printer) const {
 //===----------------------------------------------------------------------===//
 
 static void computeStructStorageMemberOffsets(
-    ArrayRef<Type> memberTypes, SmallVectorImpl<uint64_t> &slotOffsets,
-    SmallVectorImpl<uint64_t> &byteOffsets, uint64_t &storageSlotCount) {
-  uint64_t slotOffset = 0;
+    ArrayRef<Type> memberTypes, SmallVectorImpl<llvm::APInt> &slotOffsets,
+    SmallVectorImpl<uint64_t> &byteOffsets, llvm::APInt &storageSlotCount) {
+  llvm::APInt slotOffset(256, 0);
   uint64_t byteOffset = 0;
 
   slotOffsets.reserve(memberTypes.size());
@@ -432,7 +475,9 @@ static void computeStructStorageMemberOffsets(
     }
     slotOffsets.push_back(slotOffset);
     byteOffsets.push_back(0);
-    slotOffset += getStorageSlotCount(memberTy);
+    [[maybe_unused]] bool overflow = false;
+    slotOffset = slotOffset.uadd_ov(getStorageSlotCount(memberTy), overflow);
+    assert(!overflow && "struct storage size overflows 256 bits");
   }
 
   if (byteOffset > 0)
@@ -479,9 +524,9 @@ struct StructTypeStorage : public ::mlir::TypeStorage {
   StringRef name;
   DataLocation dataLocation;
   ArrayRef<Type> memberTypes;
-  ArrayRef<uint64_t> memberSlotOffsets;
+  ArrayRef<llvm::APInt> memberSlotOffsets;
   ArrayRef<uint64_t> memberByteOffsets;
-  uint64_t storageSlotCount = 0;
+  llvm::APInt storageSlotCount = llvm::APInt::getZero(256);
   bool identified;
   bool initialized = false;
 
@@ -524,12 +569,13 @@ struct StructTypeStorage : public ::mlir::TypeStorage {
   void setBodyImpl(::mlir::TypeStorageAllocator &allocator,
                    ArrayRef<Type> body) {
     memberTypes = allocator.copyInto(body);
-    SmallVector<uint64_t, 8> slotOffs, byteOffs;
-    uint64_t slotCount = 0;
+    SmallVector<llvm::APInt, 8> slotOffs;
+    SmallVector<uint64_t, 8> byteOffs;
+    llvm::APInt slotCount = llvm::APInt::getZero(256);
     if (dataLocation == DataLocation::Storage)
       computeStructStorageMemberOffsets(memberTypes, slotOffs, byteOffs,
                                         slotCount);
-    memberSlotOffsets = allocator.copyInto(ArrayRef<uint64_t>(slotOffs));
+    memberSlotOffsets = allocator.copyInto(ArrayRef<llvm::APInt>(slotOffs));
     memberByteOffsets = allocator.copyInto(ArrayRef<uint64_t>(byteOffs));
     storageSlotCount = slotCount;
     initialized = true;
@@ -569,7 +615,7 @@ ArrayRef<Type> StructType::getMemberTypes() const {
   return getImpl()->memberTypes;
 }
 
-ArrayRef<uint64_t> StructType::getMemberSlotOffsets() const {
+ArrayRef<llvm::APInt> StructType::getMemberSlotOffsets() const {
   return getImpl()->memberSlotOffsets;
 }
 
@@ -577,7 +623,7 @@ ArrayRef<uint64_t> StructType::getMemberByteOffsets() const {
   return getImpl()->memberByteOffsets;
 }
 
-uint64_t StructType::getStorageSlotCount() const {
+llvm::APInt StructType::getStorageSlotCount() const {
   assert(!isOpaque() && "Storage layout queried before the body is set");
   return getImpl()->storageSlotCount;
 }

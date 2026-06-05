@@ -44,3 +44,23 @@ func.func private @mutual(!sol.struct<"A", Storage, (i256, !sol.array<? x !sol.s
 // CHECK-LABEL: @map_rec
 // CHECK-SAME: !sol.struct<"M", Storage, (i32, !sol.mapping<i8, !sol.struct<"M", Storage>>)>
 func.func private @map_rec(!sol.struct<"M", Storage, (i32, !sol.mapping<i8, !sol.struct<"M", Storage>>)>)
+
+// Static storage array sizes are 256-bit: 2^64 and 2^256-1 round-trip.
+// CHECK-LABEL: @huge_static_array
+// CHECK-SAME: !sol.array<18446744073709551616 x i256, Storage>
+func.func private @huge_static_array(!sol.array<18446744073709551616 x i256, Storage>)
+
+// CHECK-LABEL: @max_static_array
+// CHECK-SAME: !sol.array<115792089237316195423570985008687907853269984665640564039457584007913129639935 x i256, Storage>
+func.func private @max_static_array(!sol.array<115792089237316195423570985008687907853269984665640564039457584007913129639935 x i256, Storage>)
+
+// Transient storage allows huge sizes as well.
+// CHECK-LABEL: @huge_transient_array
+// CHECK-SAME: !sol.array<18446744073709551616 x i256, Transient>
+func.func private @huge_transient_array(!sol.array<18446744073709551616 x i256, Transient>)
+
+// A huge static array of multi-slot elements: a member laid out after it in a
+// struct sits beyond 2^64 slots.
+// CHECK-LABEL: @huge_member_offset
+// CHECK-SAME: !sol.struct<(i256, !sol.array<18446744073709551616 x !sol.array<2 x i256, Storage>, Storage>, i256), Storage>
+func.func private @huge_member_offset(!sol.struct<(i256, !sol.array<18446744073709551616 x !sol.array<2 x i256, Storage>, Storage>, i256), Storage>)

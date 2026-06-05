@@ -19,7 +19,7 @@
 #include "mlir/Conversion/SolToYul/Util.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
-#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <functional>
@@ -58,7 +58,8 @@ unsigned getCalldataEncodedTailSize(Type ty) {
   if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
     if (arrTy.isDynSized())
       return 32;
-    return arrTy.getSize() * evm::getCallDataHeadSize(arrTy.getEltType());
+    return arrTy.getSize().getZExtValue() *
+           evm::getCallDataHeadSize(arrTy.getEltType());
   }
   if (auto structTy = dyn_cast<sol::StructType>(ty))
     return getStructCalldataEncodedTailSize(structTy);
@@ -125,7 +126,7 @@ struct StructEncodeMemberReaderStorage final : evm::StructEncodeMemberReader {
 
   // Cache the last loaded storage slot to avoid repeated sload for packed
   // members that share the same slot.
-  std::optional<uint64_t> previousSlotOffset;
+  std::optional<APInt> previousSlotOffset;
   Value previousSlotValue;
 
   StructEncodeMemberReaderStorage(sol::StructType structTy, evm::Builder &evmB,
@@ -176,7 +177,7 @@ struct StructMemberWriterStorage final : evm::StructMemberWriter {
   // Bits set here are owned by the new value. The rest are preserved from the
   // existing slot contents via a read-modify-write at flush time.
   APInt accumMask;
-  std::optional<uint64_t> previousSlotOffset;
+  std::optional<APInt> previousSlotOffset;
 
   StructMemberWriterStorage(sol::StructType structTy, evm::Builder &evmB,
                             OpBuilder &b, Location loc, Value baseAddr)
@@ -214,7 +215,7 @@ struct StructMemberWriterStorage final : evm::StructMemberWriter {
       // in a different slot. Deferring the sstore until the slot boundary
       // avoids writing a partially-filled word and then overwriting it in the
       // very next iteration.
-      ArrayRef<uint64_t> slotOffsets = structTy.getMemberSlotOffsets();
+      ArrayRef<APInt> slotOffsets = structTy.getMemberSlotOffsets();
       uint64_t nextMemberIdx = memberIdx + 1;
       if ((nextMemberIdx == slotOffsets.size()) ||
           (slotOffsets[nextMemberIdx] != slotOffset)) {
@@ -782,7 +783,7 @@ struct ABIDecodeGuards {
   void requireFixedArraySpan(Value baseAddr, sol::ArrayType arrTy) {
     Value endAddr = b.create<yul::AddOp>(
         loc, baseAddr,
-        bExt.genI256Const(arrTy.getSize() *
+        bExt.genI256Const(arrTy.getSize().getZExtValue() *
                           evm::getCallDataHeadSize(arrTy.getEltType())));
     requireEndInBounds(endAddr, kInvalidArrayStride);
   }
@@ -823,7 +824,8 @@ unsigned evm::getCallDataHeadSize(Type ty) {
     return 32;
 
   if (auto arrTy = dyn_cast<sol::ArrayType>(ty))
-    return arrTy.getSize() * getCallDataHeadSize(arrTy.getEltType());
+    return arrTy.getSize().getZExtValue() *
+           getCallDataHeadSize(arrTy.getEltType());
 
   if (auto structTy = dyn_cast<sol::StructType>(ty)) {
     unsigned size = 0;
@@ -835,13 +837,13 @@ unsigned evm::getCallDataHeadSize(Type ty) {
   llvm_unreachable("NYI: Other types");
 }
 
-unsigned evm::getArrayEltStride(sol::ArrayType arrTy) {
+APInt evm::getArrayEltStride(sol::ArrayType arrTy) {
   Type eltTy = arrTy.getEltType();
   switch (arrTy.getDataLocation()) {
   case sol::DataLocation::Memory:
-    return 32;
+    return APInt(256, 32);
   case sol::DataLocation::CallData:
-    return getCallDataHeadSize(eltTy);
+    return APInt(256, getCallDataHeadSize(eltTy));
   case sol::DataLocation::Storage:
     return sol::getStorageSlotCount(eltTy);
   default:
@@ -855,7 +857,7 @@ int64_t evm::getMallocSize(Type ty) {
   // Array type.
   if (auto arrayTy = dyn_cast<sol::ArrayType>(ty)) {
     assert(!arrayTy.isDynSized());
-    return arrayTy.getSize() * 32;
+    return static_cast<int64_t>(arrayTy.getSize().getZExtValue()) * 32;
   }
   // Struct type.
   if (auto structTy = dyn_cast<sol::StructType>(ty)) {
@@ -2096,8 +2098,8 @@ Value evm::Builder::genStorageArraySlotCount(Value len, Type eltTy,
                                      bExt.genI256Const(elemsPerSlot));
   }
   // Non-packable: each element occupies getStorageSlotCount(eltTy) slots.
-  unsigned slotsPerElt = sol::getStorageSlotCount(eltTy);
-  if (slotsPerElt == 1)
+  APInt slotsPerElt = sol::getStorageSlotCount(eltTy);
+  if (slotsPerElt.isOne())
     return len;
   return b.create<yul::MulOp>(loc, len, bExt.genI256Const(slotsPerElt));
 }
@@ -2262,7 +2264,7 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
 
   // Zero every storage slot that \p ty occupies at \p slot.
   auto genZeroStorageSlots = [&](Type ty, Value slot) {
-    unsigned slotCount = sol::getStorageSlotCount(ty);
+    APInt slotCount = sol::getStorageSlotCount(ty);
     Value zero = bExt.genI256Const(0, loc);
     bExt.createCountedLoop(
         bExt.genI256Const(0), bExt.genI256Const(slotCount),
@@ -2276,7 +2278,7 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
         // keeps the code straight line without growing it much.
         // TODO: #59, tune the loop unroll threshold for storage clearing
         // loops.
-        /*fullUnroll=*/slotCount <= 8);
+        /*fullUnroll=*/slotCount.ule(8));
   };
 
   if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
@@ -2296,10 +2298,12 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
       // struct): clear each element in a runtime loop. No full unroll here,
       // the elements are aggregates and their clearing code is not small.
       Type eltTy = arrTy.getEltType();
-      unsigned size = arrTy.getSize();
-      unsigned slotsPerElt = sol::getStorageSlotCount(eltTy);
+      APInt slotsPerElt = sol::getStorageSlotCount(eltTy);
+      [[maybe_unused]] bool overflow = false;
+      APInt totalSlots = arrTy.getSize().umul_ov(slotsPerElt, overflow);
+      assert(!overflow && "storage slot count overflows 256 bits");
       bExt.createCountedLoop(
-          bExt.genI256Const(0), bExt.genI256Const(size * slotsPerElt),
+          bExt.genI256Const(0), bExt.genI256Const(totalSlots),
           bExt.genI256Const(slotsPerElt), ValueRange{},
           [&](OpBuilder &b, Location loc, Value slotOff, ValueRange) {
             Value eltSlot = b.create<yul::AddOp>(loc, slot, slotOff);
@@ -2325,7 +2329,7 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
   if (auto structTy = dyn_cast<sol::StructType>(ty)) {
     // Packed members can share a slot, dedup their zeroing. Members with
     // dynamically-sized elements always recurse, regardless of slot sharing.
-    llvm::SmallSet<uint64_t, 8> clearedSlots;
+    llvm::SmallDenseSet<APInt, 8> clearedSlots;
     for (unsigned m = 0; m < structTy.getMemberTypes().size(); ++m) {
       Type memberTy = structTy.getMemberTypes()[m];
       auto [slotOff, byteOff] = structTy.getStorageMemberOffset(m);
@@ -2445,7 +2449,7 @@ void evm::Builder::genClearStorageArrayTail(Value arraySlot,
       // the loop iterates slot-by-slot; genClearStorageValue zeroes the whole
       // slot. The partial boundary slot at (deleteStart - 1) was already
       // handled by the ifPartial block above.
-      unsigned slotStep = sol::getStorageSlotCount(eltTy);
+      APInt slotStep = sol::getStorageSlotCount(eltTy);
       bExt.createCountedLoop(
           /*lowerBound=*/bExt.genI256Const(0),
           /*upperBound=*/numSlots,
@@ -2482,8 +2486,8 @@ void evm::Builder::genResizeDynStorageArray(Value arraySlot, Value newLen,
   genStore(newLen, arraySlot, sol::DataLocation::Storage, loc);
 
   // Zero out storage slots that fall outside the new range.
-  auto dynArrTy = sol::ArrayType::get(b.getContext(), /*size=*/-1, eltTy,
-                                      sol::DataLocation::Storage);
+  auto dynArrTy = sol::ArrayType::get(b.getContext(), /*size=*/std::nullopt,
+                                      eltTy, sol::DataLocation::Storage);
   genClearStorageArrayTail(arraySlot, dynArrTy, newLen, oldLen,
                            /*isDecrement=*/false, loc);
 }
@@ -2935,7 +2939,7 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
       length = bExt.genI256Const(srcArrTy.getSize());
       dstDataAddr = dstAddr;
       srcDataAddr = srcAddr;
-      if (dstIsStorage && srcArrTy.getSize() < dstArrTy.getSize()) {
+      if (dstIsStorage && srcArrTy.getSize().ult(dstArrTy.getSize())) {
         genClearStorageArrayTail(dstAddr, dstArrTy,
                                  bExt.genI256Const(srcArrTy.getSize()),
                                  bExt.genI256Const(dstArrTy.getSize()),
@@ -3753,7 +3757,8 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
       dstAddr = b.create<yul::AddOp>(loc, dstAddr, thirtyTwo);
       size = i256Size;
     } else {
-      dstAddr = genMemAlloc(bExt.genI256Const(arrTy.getSize() * 32), loc);
+      dstAddr = genMemAlloc(
+          bExt.genI256Const(arrTy.getSize().getZExtValue() * 32), loc);
       ret = dstAddr;
       srcAddr = addr;
       size = bExt.genI256Const(arrTy.getSize());
