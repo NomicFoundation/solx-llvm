@@ -1839,12 +1839,12 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         // arrays.
         if (!isa<BlockArgument>(idx) &&
             isa<yul::ConstantOp>(idx.getDefiningOp()) && !arrTy.isDynSized()) {
-          auto constIdx = cast<yul::ConstantOp>(idx.getDefiningOp())
-                              .getValue()
-                              .getZExtValue();
+          APInt constIdx = cast<yul::ConstantOp>(idx.getDefiningOp())
+                               .getValue()
+                               .zextOrTrunc(256);
           // FIXME: Should this be done by the verifier?
-          assert(constIdx < static_cast<uint64_t>(arrTy.getSize()));
-          unsigned stride = evm::getArrayEltStride(arrTy);
+          assert(constIdx.ult(arrTy.getSize()));
+          APInt stride = evm::getArrayEltStride(arrTy);
           addrAtIdx = r.create<yul::AddOp>(
               loc, remappedBaseAddr, bExt.genI256Const(constIdx * stride));
         }
@@ -2293,7 +2293,7 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
         srcDataAddr = evmB.genDataAddrPtr(srcAddr, srcDataLoc);
       } else {
         size = bExt.genI256Const(arrTy.getSize());
-        dstAddr = evmB.genMemAlloc(arrTy.getSize() * 32);
+        dstAddr = evmB.genMemAlloc(arrTy.getSize().getZExtValue() * 32);
         dstDataAddr = dstAddr;
         srcDataAddr = srcAddr;
       }

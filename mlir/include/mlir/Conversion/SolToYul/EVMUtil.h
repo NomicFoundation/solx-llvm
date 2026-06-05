@@ -56,8 +56,9 @@ unsigned getAlignment(Value ptr);
 unsigned getCallDataHeadSize(Type ty);
 
 /// Per-element iteration step. Unit depends on data location: memory-word
-/// bytes for Memory/CallData, storage slots for Storage.
-unsigned getArrayEltStride(sol::ArrayType arrTy);
+/// bytes for Memory/CallData, storage slots for Storage. 256-bit because a
+/// storage element can itself be a huge static array.
+llvm::APInt getArrayEltStride(sol::ArrayType arrTy);
 
 /// Returns the size (in bytes) of static type without recursively calculating
 /// the element type size.
