@@ -207,6 +207,8 @@ def Sol_EcrecoverOp : Sol_Op<"ecrecover"> {
 }
 
 def Sol_CmpOp : Sol_Op<"cmp", [Pure, SameTypeOperands]> {
+  // TODO: Verifier:
+  // - the predicate is eq or ne for ext-fn-ref type
   let arguments = (ins Sol_CmpPredicateAttr:$predicate,
       AnyTypeOf<[Sol_Int, Sol_AddressType, Sol_ContractType, Sol_FixedBytesType,
                  Sol_ExtFuncRefType, Sol_FuncRefType]>:$lhs,
