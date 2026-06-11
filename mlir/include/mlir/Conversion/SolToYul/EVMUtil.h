@@ -290,6 +290,25 @@ public:
   genCleanupPackedStorageValue(Type eltTy, Value value,
                                std::optional<Location> locArg = std::nullopt);
 
+  /// Ext-func-ref pack/unpack between the packed integer and {addr, selector}
+  /// struct. The packing in storage/transient is LSB-aligned while everything
+  /// else is MSB-aligned. The result is cleaned.
+  Value genExtFuncPack(Value extFuncStruct, bool inStorage,
+                       std::optional<Location> locArg = std::nullopt);
+  Value genExtFuncUnpack(Value word, bool inStorage,
+                         std::optional<Location> locArg = std::nullopt);
+
+  /// Ext-func-ref conversion between data-location forms; calldata sources
+  /// are validated and pair-form src is packed to dstDataLoc's form. The result
+  /// is cleaned.
+  Value genExtFuncConversion(Value src, sol::DataLocation srcDataLoc,
+                             sol::DataLocation dstDataLoc,
+                             std::optional<Location> locArg = std::nullopt);
+
+  /// Reverts on dirty bits outside the MSB bytes24 lanes.
+  void genExtFuncWordValidation(Value word,
+                                std::optional<Location> locArg = std::nullopt);
+
   /// Inserts integer value (<=32 bytes) to the slot value:
   /// or(and(slot, holeMask), shiftedVal), where
   /// holeMask = not(ones(numBits) << offset * 8),
@@ -369,7 +388,8 @@ public:
                            bool isDecrement = false,
                            std::optional<mlir::Location> locArg = std::nullopt);
 
-  /// Recursively zeros the storage occupied by a value of type \p ty at \p slot.
+  /// Recursively zeros the storage occupied by a value of type \p ty at \p
+  /// slot.
   void genClearStorageValue(mlir::Type ty, mlir::Value slot,
                             mlir::Location loc);
 
@@ -437,7 +457,7 @@ public:
                             std::optional<Location> locArg = std::nullopt);
 
   Value genABITupleDecoding(Type ty, Value addr, bool fromMem, Value tupleStart,
-                            Value tupleEnd,
+                            Value tupleEnd, bool topLevel,
                             std::optional<Location> locArg = std::nullopt);
 
   /// Generates the tuple decoder code as per the ABI and populates the results.
