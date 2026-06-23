@@ -1943,6 +1943,11 @@ Value evm::Builder::genStorageArraySlotCount(Value len, Type eltTy,
 void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
   mlir::solgen::BuilderExt bExt(b, loc);
 
+  // Mappings reserve a slot but are never cleared: their entries live at hashed
+  // slots and the reserved slot itself always reads zero.
+  if (isa<sol::MappingType>(ty))
+    return;
+
   // Zero every storage slot that \p ty occupies at \p slot.
   auto genZeroStorageSlots = [&](Type ty, Value slot) {
     unsigned slotCount = sol::getStorageSlotCount(ty);
@@ -1958,6 +1963,11 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
       genStore(bExt.genI256Const(0, loc), slot, sol::DataLocation::Storage, loc);
       genClearStorageArrayTail(slot, arrTy, bExt.genI256Const(0, loc), oldLen,
                                /*isDecrement=*/false, loc);
+    } else if (isa<sol::MappingType>(arrTy.getEltType())) {
+      // Fixed-size array of mappings: each element reserves a slot that always
+      // reads zero and a fixed-size array has length slot, so there is nothing
+      // to clear.
+      return;
     } else if (sol::hasDynamicallySizedElt(arrTy.getEltType())) {
       // Fixed-size array with complex element type (dyn array, string,
       // struct): iterate each element and recurse.
@@ -2020,6 +2030,12 @@ void evm::Builder::genClearStorageArrayTail(Value arraySlot,
   mlir::solgen::BuilderExt bExt(b, loc);
 
   Type eltTy = arrTy.getEltType();
+
+  // Arrays of mappings have nothing to clear in their data region: each element
+  // is a mapping whose reserved slot always reads zero.
+  if (isa<sol::MappingType>(eltTy))
+    return;
+
   // Multiple elements share one slot when byteSize <= 16 (elemsPerSlot >= 2).
   bool trulyPacked =
       sol::canBePacked(eltTy) && sol::getNumBytes(eltTy) <= 16;
