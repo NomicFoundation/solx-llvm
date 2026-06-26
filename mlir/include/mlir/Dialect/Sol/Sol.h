@@ -136,6 +136,12 @@ struct ValidationResource
 
 mlir::SideEffects::Resource *getResource(DataLocation dataLoc);
 
+namespace detail {
+/// Custom storage for the (literal/identified) StructType defined in
+/// SolBase.cpp. Forward-declared here so the generated type class can name it.
+struct StructTypeStorage;
+} // namespace detail
+
 } // namespace sol
 } // namespace mlir
 

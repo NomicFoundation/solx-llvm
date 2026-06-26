@@ -110,33 +110,66 @@ def Sol_ArrayType : Sol_Type<"Array", "array"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def Sol_StructType : Sol_Type<"Struct", "struct"> {
-  let parameters = (ins ArrayRefParameter<"Type">:$memberTypes,
-                        Sol_DataLocation:$dataLocation,
-                        ArrayRefParameter<"uint64_t">:$memberSlotOffsets,
-                        ArrayRefParameter<"uint64_t">:$memberByteOffsets,
-                        "uint64_t":$storageSlotCount);
-  let skipDefaultBuilders = 1;
-  let builders = [
-    TypeBuilder<(ins "ArrayRef<Type>":$memberTypes,
-                     "DataLocation":$dataLocation), [{
-      ::llvm::SmallVector<uint64_t, 8> memberSlotOffsets;
-      ::llvm::SmallVector<uint64_t, 8> memberByteOffsets;
-      uint64_t storageSlotCount = 0;
-      if (dataLocation == DataLocation::Storage)
-        computeStructStorageMemberOffsets(memberTypes, memberSlotOffsets,
-                                          memberByteOffsets,
-                                          storageSlotCount);
+def Sol_StructType : Sol_Type<"Struct", "struct", [MutableType]> {
+  let summary =
+      "Solidity struct type (supports identified, self-referential structs)";
+  let description = [{
+    Like LLVM's struct type, a Sol struct is either *literal* (uniqued by its
+    member types and data location, immutable) or *identified* (uniqued by a
+    name and data location, with a mutable body). Identified structs can be
+    created opaque (no body) and have their body set later, which is what makes
+    recursive (self-referential) structs representable: the body may reference
+    the identified struct itself, e.g. `struct S { S[] arr; }`.
 
-      return $_get($_ctxt, memberTypes, dataLocation, memberSlotOffsets,
-                   memberByteOffsets, storageSlotCount);
-    }]>
-  ];
+    Storage member offsets / slot count are computed once the body is known
+    (at construction for literal structs, at `setBody` for identified ones).
+    This is well-founded for the legal recursive forms because the only
+    cycle-breaking members (dynamic arrays, mappings) occupy a fixed one-slot
+    footprint and never require the nested struct's layout.
+  }];
+
+  let parameters = (ins StringRefParameter<"struct name", [{""}]>:$name,
+      Sol_DataLocation:$dataLocation,
+      OptionalArrayRefParameter<"Type">:$memberTypes);
+
+  let storageClass = "StructTypeStorage";
+  let genStorageClass = 0;
+  let skipDefaultBuilders = 1;
+  let genAccessors = 0;
+
   let extraClassDeclaration = [{
     struct StorageMemberOffset {
       uint64_t slotOffset;
       uint64_t byteOffset;
     };
+
+    /// Gets or creates a literal struct uniqued by its members + location.
+    static StructType get(::mlir::MLIRContext *ctx,
+                          ::llvm::ArrayRef<Type> memberTypes,
+                          DataLocation dataLocation);
+
+    /// Gets or creates an identified struct uniqued by (name, location). If it
+    /// does not yet exist it is created opaque (no body). Use `setBody` to fill
+    /// it in. Re-fetching the same (name, location) returns the same instance,
+    /// which is what closes self-referential cycles.
+    static StructType getIdentified(::mlir::MLIRContext *ctx,
+                                    ::llvm::StringRef name,
+                                    DataLocation dataLocation);
+
+    /// Sets the body of an identified struct (computing storage offsets).
+    /// Fails on a literal struct or on re-setting a different body.
+    ::llvm::LogicalResult setBody(::llvm::ArrayRef<Type> memberTypes);
+
+    bool isIdentified() const;
+    /// An identified struct whose body has not been set yet.
+    bool isOpaque() const;
+
+    ::llvm::StringRef getName() const;
+    DataLocation getDataLocation() const;
+    ::llvm::ArrayRef<Type> getMemberTypes() const;
+    ::llvm::ArrayRef<uint64_t> getMemberSlotOffsets() const;
+    ::llvm::ArrayRef<uint64_t> getMemberByteOffsets() const;
+    uint64_t getStorageSlotCount() const;
 
     StorageMemberOffset getStorageMemberOffset(uint64_t memberIdx) const;
   }];
