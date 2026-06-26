@@ -403,49 +403,6 @@ void StringType::print(AsmPrinter &printer) const {
 // StructType
 //===----------------------------------------------------------------------===//
 
-/// Parses a sol.struct type.
-///
-///   struct-type ::= `<` `(` member-types `)` `,` data-location `>`
-///
-Type StructType::parse(AsmParser &parser) {
-  if (parser.parseLess())
-    return {};
-
-  if (parser.parseLParen())
-    return {};
-
-  SmallVector<Type, 4> memTys;
-  do {
-    Type memTy;
-    if (parser.parseType(memTy))
-      return {};
-    memTys.push_back(memTy);
-  } while (succeeded(parser.parseOptionalComma()));
-
-  if (parser.parseRParen())
-    return {};
-
-  if (parser.parseComma())
-    return {};
-
-  DataLocation dataLocation = DataLocation::Memory;
-  if (parseDataLocation(parser, dataLocation))
-    return {};
-
-  if (parser.parseGreater())
-    return {};
-
-  return get(parser.getContext(), memTys, dataLocation);
-}
-
-/// Prints a sol.array type.
-void StructType::print(AsmPrinter &printer) const {
-  printer << "<(";
-  llvm::interleaveComma(getMemberTypes(), printer.getStream(),
-                        [&](Type memTy) { printer << memTy; });
-  printer << "), " << stringifyDataLocation(getDataLocation()) << ">";
-}
-
 static void computeStructStorageMemberOffsets(
     ArrayRef<Type> memberTypes, SmallVectorImpl<uint64_t> &slotOffsets,
     SmallVectorImpl<uint64_t> &byteOffsets, uint64_t &storageSlotCount) {
@@ -484,14 +441,319 @@ static void computeStructStorageMemberOffsets(
   storageSlotCount = slotOffset;
 }
 
+namespace mlir::sol::detail {
+/// Storage for StructType. Supports both *literal* structs (uniqued by member
+/// types + data location, immutable) and *identified* structs (uniqued by name
+/// + data location, with a mutable body), the latter enabling self-referential
+/// types. Storage member offsets are computed once the body is known.
+struct StructTypeStorage : public ::mlir::TypeStorage {
+  struct Key {
+    StringRef name;
+    DataLocation dataLocation;
+    ArrayRef<Type> memberTypes;
+    bool identified;
+
+    Key(ArrayRef<Type> memberTypes, DataLocation dataLocation)
+        : dataLocation(dataLocation), memberTypes(memberTypes),
+          identified(false) {}
+    Key(StringRef name, DataLocation dataLocation)
+        : name(name), dataLocation(dataLocation), identified(true) {}
+
+    llvm::hash_code hashValue() const {
+      if (identified)
+        return llvm::hash_combine(true, dataLocation, name);
+      return llvm::hash_combine(
+          false, dataLocation,
+          llvm::hash_combine_range(memberTypes.begin(), memberTypes.end()));
+    }
+    bool operator==(const Key &o) const {
+      if (identified != o.identified)
+        return false;
+      if (identified)
+        return dataLocation == o.dataLocation && name == o.name;
+      return dataLocation == o.dataLocation && memberTypes == o.memberTypes;
+    }
+  };
+  using KeyTy = Key;
+
+  StringRef name;
+  DataLocation dataLocation;
+  ArrayRef<Type> memberTypes;
+  ArrayRef<uint64_t> memberSlotOffsets;
+  ArrayRef<uint64_t> memberByteOffsets;
+  uint64_t storageSlotCount = 0;
+  bool identified;
+  bool initialized = false;
+
+  StructTypeStorage(StringRef name, DataLocation dataLocation, bool identified)
+      : name(name), dataLocation(dataLocation), identified(identified) {}
+
+  bool operator==(const KeyTy &k) const {
+    if (identified != k.identified)
+      return false;
+    if (identified)
+      return dataLocation == k.dataLocation && name == k.name;
+    return dataLocation == k.dataLocation && memberTypes == k.memberTypes;
+  }
+  static llvm::hash_code hashKey(const KeyTy &k) { return k.hashValue(); }
+
+  static StructTypeStorage *construct(::mlir::TypeStorageAllocator &allocator,
+                                      const KeyTy &k) {
+    auto *storage = new (allocator.allocate<StructTypeStorage>())
+        StructTypeStorage(k.identified ? allocator.copyInto(k.name)
+                                       : StringRef(),
+                          k.dataLocation, k.identified);
+    // Literal structs have their body (and offsets) fixed at construction.
+    if (!k.identified)
+      storage->setBodyImpl(allocator, k.memberTypes);
+    return storage;
+  }
+
+  /// Mutation hook used by Type::mutate to fill an identified struct's body.
+  ::llvm::LogicalResult mutate(::mlir::TypeStorageAllocator &allocator,
+                               ArrayRef<Type> body) {
+    if (!identified)
+      return ::llvm::failure();
+    // Allow setting the same body again (idempotent); reject a different one.
+    if (initialized)
+      return ::llvm::success(body == memberTypes);
+    setBodyImpl(allocator, body);
+    return ::llvm::success();
+  }
+
+  void setBodyImpl(::mlir::TypeStorageAllocator &allocator,
+                   ArrayRef<Type> body) {
+    memberTypes = allocator.copyInto(body);
+    SmallVector<uint64_t, 8> slotOffs, byteOffs;
+    uint64_t slotCount = 0;
+    if (dataLocation == DataLocation::Storage)
+      computeStructStorageMemberOffsets(memberTypes, slotOffs, byteOffs,
+                                        slotCount);
+    memberSlotOffsets = allocator.copyInto(ArrayRef<uint64_t>(slotOffs));
+    memberByteOffsets = allocator.copyInto(ArrayRef<uint64_t>(byteOffs));
+    storageSlotCount = slotCount;
+    initialized = true;
+  }
+};
+} // namespace mlir::sol::detail
+
+StructType StructType::get(MLIRContext *ctx, ArrayRef<Type> memberTypes,
+                           DataLocation dataLocation) {
+  return Base::get(ctx,
+                   detail::StructTypeStorage::Key(memberTypes, dataLocation));
+}
+
+StructType StructType::getIdentified(MLIRContext *ctx, StringRef name,
+                                     DataLocation dataLocation) {
+  return Base::get(ctx, detail::StructTypeStorage::Key(name, dataLocation));
+}
+
+LogicalResult StructType::setBody(ArrayRef<Type> memberTypes) {
+  assert(isIdentified() && "cannot set the body of a literal struct");
+  return Base::mutate(memberTypes);
+}
+
+bool StructType::isIdentified() const { return getImpl()->identified; }
+
+bool StructType::isOpaque() const {
+  return getImpl()->identified && !getImpl()->initialized;
+}
+
+StringRef StructType::getName() const { return getImpl()->name; }
+
+DataLocation StructType::getDataLocation() const {
+  return getImpl()->dataLocation;
+}
+
+ArrayRef<Type> StructType::getMemberTypes() const {
+  return getImpl()->memberTypes;
+}
+
+ArrayRef<uint64_t> StructType::getMemberSlotOffsets() const {
+  return getImpl()->memberSlotOffsets;
+}
+
+ArrayRef<uint64_t> StructType::getMemberByteOffsets() const {
+  return getImpl()->memberByteOffsets;
+}
+
+uint64_t StructType::getStorageSlotCount() const {
+  assert(!isOpaque() && "Storage layout queried before the body is set");
+  return getImpl()->storageSlotCount;
+}
+
 StructType::StorageMemberOffset
 StructType::getStorageMemberOffset(uint64_t memberIdx) const {
   assert(getDataLocation() == DataLocation::Storage &&
          "Storage offsets are only defined for storage structs");
+  assert(!isOpaque() && "Storage layout queried before the body is set");
   assert(memberIdx < getMemberTypes().size() && "Member index out of bounds");
 
   return {/*slotOffset=*/getMemberSlotOffsets()[memberIdx],
           /*byteOffset=*/getMemberByteOffsets()[memberIdx]};
+}
+
+/// Returns the first opaque identified struct that \p ty embeds outside of a
+/// cycle-breaking position, or a null type if there is none. Layout and value
+/// size computation must recurse into direct struct members, fixed-size array
+/// elements, and literal-struct members, so an opaque struct (one whose body
+/// is not yet set, e.g. the enclosing struct while its own body is being
+/// parsed) in those positions cannot be laid out. Dynamic arrays and mappings
+/// occupy a fixed one-slot footprint independent of their element/value type,
+/// which is what makes recursive structs representable.
+static StructType findIllFoundedOpaqueRef(Type ty) {
+  if (auto structTy = dyn_cast<StructType>(ty)) {
+    if (structTy.isOpaque())
+      return structTy;
+    // A bodied identified struct was validated when its body was set; only
+    // literal struct members need to be inspected here.
+    if (!structTy.isIdentified())
+      for (Type memTy : structTy.getMemberTypes())
+        if (StructType found = findIllFoundedOpaqueRef(memTy))
+          return found;
+    return {};
+  }
+  if (auto arrTy = dyn_cast<ArrayType>(ty)) {
+    if (arrTy.isDynSized())
+      return {};
+    return findIllFoundedOpaqueRef(arrTy.getEltType());
+  }
+  // Mappings, strings, pointers and scalars never require the layout of a
+  // nested struct.
+  return {};
+}
+
+/// Parses a sol.struct type.
+///
+///   struct-type ::= `<` `(` member-types `)` `,` data-location `>` (literal)
+///                 | `<` name `,` data-location (`,` `(` member-types `)`)? `>`
+///                 (identified)
+///
+Type StructType::parse(AsmParser &parser) {
+  MLIRContext *ctx = parser.getContext();
+  if (parser.parseLess())
+    return {};
+
+  // Identified form: starts with a string-literal name.
+  std::string name;
+  if (succeeded(parser.parseOptionalString(&name))) {
+    if (parser.parseComma())
+      return {};
+    DataLocation dataLocation = DataLocation::Memory;
+    if (parseDataLocation(parser, dataLocation))
+      return {};
+
+    // Create (or look up) the identified struct first, so that member types
+    // parsed below can refer back to it.
+    StructType structTy = StructType::getIdentified(ctx, name, dataLocation);
+
+    if (succeeded(parser.parseOptionalComma())) {
+      // Guard against a body nested inside this struct's own body: the
+      // printer only ever emits name-only back-references there.
+      FailureOr<AsmParser::CyclicParseReset> cyclicParse =
+          parser.tryStartCyclicParse(structTy);
+      if (failed(cyclicParse)) {
+        parser.emitError(parser.getNameLoc(),
+                         "identifier '" + name +
+                             "' already used for an enclosing struct");
+        return {};
+      }
+      if (parser.parseLParen())
+        return {};
+      SmallVector<Type, 4> memTys;
+      do {
+        Type memTy;
+        if (parser.parseType(memTy))
+          return {};
+        memTys.push_back(memTy);
+      } while (succeeded(parser.parseOptionalComma()));
+      if (parser.parseRParen())
+        return {};
+      // Reject ill-founded recursion before the layout computation in
+      // setBody would query the still-opaque struct.
+      for (Type memTy : memTys) {
+        if (StructType opaque = findIllFoundedOpaqueRef(memTy)) {
+          parser.emitError(parser.getNameLoc())
+              << "member of identified struct '" << name
+              << "' directly embeds opaque struct '" << opaque.getName()
+              << "' (a recursive reference must go through a cycle-breaking "
+                 "member such as a dynamic array or mapping)";
+          return {};
+        }
+      }
+      if (failed(structTy.setBody(memTys))) {
+        parser.emitError(parser.getNameLoc(),
+                         "conflicting body for identified struct '" + name +
+                             "'");
+        return {};
+      }
+    }
+
+    if (parser.parseGreater())
+      return {};
+    return structTy;
+  }
+
+  // Literal form.
+  if (parser.parseLParen())
+    return {};
+  SmallVector<Type, 4> memTys;
+  do {
+    Type memTy;
+    if (parser.parseType(memTy))
+      return {};
+    memTys.push_back(memTy);
+  } while (succeeded(parser.parseOptionalComma()));
+  if (parser.parseRParen())
+    return {};
+  if (parser.parseComma())
+    return {};
+  DataLocation dataLocation = DataLocation::Memory;
+  if (parseDataLocation(parser, dataLocation))
+    return {};
+  if (parser.parseGreater())
+    return {};
+  // Reject ill-founded recursion before the layout computation at
+  // construction would query the still-opaque struct.
+  for (Type memTy : memTys) {
+    if (StructType opaque = findIllFoundedOpaqueRef(memTy)) {
+      parser.emitError(parser.getNameLoc())
+          << "literal struct member directly embeds opaque struct '"
+          << opaque.getName()
+          << "' (a recursive reference must go through a cycle-breaking "
+             "member such as a dynamic array or mapping)";
+      return {};
+    }
+  }
+  return get(ctx, memTys, dataLocation);
+}
+
+/// Prints a sol.struct type.
+void StructType::print(AsmPrinter &printer) const {
+  if (isIdentified()) {
+    printer << "<";
+    printer.printString(getName());
+    printer << ", " << stringifyDataLocation(getDataLocation());
+    // Opaque, or a back-reference to a struct already being printed: name
+    // only. The RAII reset re-enables printing the body once this print (and
+    // anything nested in it) is done.
+    FailureOr<AsmPrinter::CyclicPrintReset> cyclicPrint =
+        printer.tryStartCyclicPrint(*this);
+    if (isOpaque() || failed(cyclicPrint)) {
+      printer << ">";
+      return;
+    }
+    printer << ", (";
+    llvm::interleaveComma(getMemberTypes(), printer.getStream(),
+                          [&](Type memTy) { printer << memTy; });
+    printer << ")>";
+    return;
+  }
+
+  printer << "<(";
+  llvm::interleaveComma(getMemberTypes(), printer.getStream(),
+                        [&](Type memTy) { printer << memTy; });
+  printer << "), " << stringifyDataLocation(getDataLocation()) << ">";
 }
 
 //===----------------------------------------------------------------------===//
