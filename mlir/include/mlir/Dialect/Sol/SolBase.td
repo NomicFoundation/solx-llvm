@@ -110,33 +110,89 @@ def Sol_ArrayType : Sol_Type<"Array", "array"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def Sol_StructType : Sol_Type<"Struct", "struct"> {
-  let parameters = (ins ArrayRefParameter<"Type">:$memberTypes,
-                        Sol_DataLocation:$dataLocation,
-                        ArrayRefParameter<"uint64_t">:$memberSlotOffsets,
-                        ArrayRefParameter<"uint64_t">:$memberByteOffsets,
-                        "uint64_t":$storageSlotCount);
-  let skipDefaultBuilders = 1;
-  let builders = [
-    TypeBuilder<(ins "ArrayRef<Type>":$memberTypes,
-                     "DataLocation":$dataLocation), [{
-      ::llvm::SmallVector<uint64_t, 8> memberSlotOffsets;
-      ::llvm::SmallVector<uint64_t, 8> memberByteOffsets;
-      uint64_t storageSlotCount = 0;
-      if (dataLocation == DataLocation::Storage)
-        computeStructStorageMemberOffsets(memberTypes, memberSlotOffsets,
-                                          memberByteOffsets,
-                                          storageSlotCount);
+def Sol_StructType : Sol_Type<"Struct", "struct", [MutableType]> {
+  let summary =
+      "Solidity struct type (supports identified, self-referential structs)";
+  let description = [{
+    Like LLVM's struct type, a Sol struct is either *literal* (uniqued by its
+    member types and data location, immutable) or *identified* (uniqued by a
+    name and data location, with a mutable body). Identified structs can be
+    created opaque (no body) and have their body set later, which is what makes
+    recursive (self-referential) structs representable: the body may reference
+    the identified struct itself, e.g. `struct S { S[] arr; }`.
 
-      return $_get($_ctxt, memberTypes, dataLocation, memberSlotOffsets,
-                   memberByteOffsets, storageSlotCount);
-    }]>
-  ];
+    Storage member offsets / slot count are computed once the body is known
+    (at construction for literal structs, at `setBody` for identified ones).
+    This is well-founded for the legal recursive forms because the only
+    cycle-breaking members (dynamic arrays, mappings) occupy a fixed one-slot
+    footprint and never require the nested struct's layout.
+  }];
+
+  let parameters = (ins StringRefParameter<"struct name", [{""}]>:$name,
+      Sol_DataLocation:$dataLocation,
+      OptionalArrayRefParameter<"Type">:$memberTypes);
+
+  let storageClass = "StructTypeStorage";
+  let genStorageClass = 0;
+  let skipDefaultBuilders = 1;
+  let genAccessors = 0;
+
   let extraClassDeclaration = [{
     struct StorageMemberOffset {
       uint64_t slotOffset;
       uint64_t byteOffset;
     };
+
+    /// Gets or creates a literal struct uniqued by its members + location.
+    static StructType get(::mlir::MLIRContext *ctx,
+                          ::llvm::ArrayRef<Type> memberTypes,
+                          DataLocation dataLocation);
+
+    /// Gets or creates an identified struct uniqued by (name, location). If it
+    /// does not yet exist it is created opaque (no body). Use `setBody` to fill
+    /// it in. Re-fetching the same (name, location) returns the same instance,
+    /// which is what closes self-referential cycles.
+    static StructType getIdentified(::mlir::MLIRContext *ctx,
+                                    ::llvm::StringRef name,
+                                    DataLocation dataLocation);
+
+    /// Sets the body of an identified struct (computing storage offsets).
+    /// Fails on a literal struct or on re-setting a different body.
+    ::llvm::LogicalResult setBody(::llvm::ArrayRef<Type> memberTypes);
+
+    /// Whether this is an identified (name-uniqued) struct, as opposed to a
+    /// literal one. Being identified is also the "may be recursive" signal:
+    /// a literal struct can never be self-referential (its body is a
+    /// uniquing key, so it would have to contain itself), and frontends are
+    /// expected to create identified structs only for Solidity structs whose
+    /// type is recursive. Lowering therefore branches on this predicate
+    /// wherever inline expansion of a struct's members could recurse without
+    /// bound in the compiler (e.g. `delete` and deep copies), outlining the
+    /// per-struct work into a helper function that recurses at runtime
+    /// instead. A false positive is harmless: a non-recursive identified
+    /// struct (e.g. one parsed from textual IR) only costs an out-of-line
+    /// helper it did not need.
+    bool isIdentified() const;
+    /// An identified struct whose body has not been set yet. Literal structs
+    /// are never opaque (their body is fixed at construction), and opaque is
+    /// distinct from empty: `setBody({})` yields a non-opaque zero-member
+    /// struct. While opaque, `getMemberTypes()` is empty and the
+    /// storage-layout accessors assert. Opaqueness is normally a transient
+    /// state between `getIdentified()` and `setBody()`, exactly the window
+    /// in which a self-reference inside the body being built observes the
+    /// type, though a body-less `!sol.struct<"name", loc>` parsed from
+    /// textual IR remains opaque. An opaque struct may only be embedded in
+    /// cycle-breaking positions (dynamic arrays, mappings) where its layout
+    /// is never needed; the parser rejects other member positions, and the
+    /// printer prints opaque structs name-only.
+    bool isOpaque() const;
+
+    ::llvm::StringRef getName() const;
+    DataLocation getDataLocation() const;
+    ::llvm::ArrayRef<Type> getMemberTypes() const;
+    ::llvm::ArrayRef<uint64_t> getMemberSlotOffsets() const;
+    ::llvm::ArrayRef<uint64_t> getMemberByteOffsets() const;
+    uint64_t getStorageSlotCount() const;
 
     StorageMemberOffset getStorageMemberOffset(uint64_t memberIdx) const;
   }];
