@@ -217,6 +217,23 @@ private:
                            mlir::Type eltTy,
                            std::optional<mlir::Location> locArg = std::nullopt);
 
+  /// Inline expansion behind genClearStorageValue: zeroes the storage for \p ty
+  /// at \p slot, recursing through genClearStorageValue for aggregate members
+  /// so that nested identified structs are dispatched to their out-of-line
+  /// helper.
+  void genClearStorageValueInline(mlir::Type ty, mlir::Value slot,
+                                  mlir::Location loc);
+
+  /// Inline expansion behind genCopy for a struct destined to storage: copies
+  /// each member from \p srcAddr (data location \p srcDataLoc) to \p dstAddr in
+  /// storage, recursing through genCopy for aggregate members so that nested
+  /// identified structs are dispatched to their out-of-line helper.
+  void genStructToStorageCopyInline(mlir::sol::StructType srcStructTy,
+                                    mlir::sol::StructType dstStructTy,
+                                    mlir::Value srcAddr, mlir::Value dstAddr,
+                                    mlir::sol::DataLocation srcDataLoc,
+                                    mlir::Location loc);
+
   /// Generates a revert with message.
   void genRevertWithMsg(std::string const &msg,
                         std::optional<Location> locArg = std::nullopt);
@@ -388,8 +405,12 @@ public:
                            bool isDecrement = false,
                            std::optional<mlir::Location> locArg = std::nullopt);
 
-  /// Recursively zeros the storage occupied by a value of type \p ty at \p
-  /// slot.
+  /// Zeros the storage occupied by a value of type \p ty at \p slot.
+  ///
+  /// Identified (self-referential) structs are cleared via an out-of-line
+  /// helper function that recurses at runtime. Every other type is expanded
+  /// inline. Recursing inline on a self-referential struct (e.g.
+  /// `struct S { S[] arr; }`) would never terminate in the compiler.
   void genClearStorageValue(mlir::Type ty, mlir::Value slot,
                             mlir::Location loc);
 
@@ -414,6 +435,43 @@ public:
                mlir::Value dstAddr, mlir::sol::DataLocation srcDataLoc,
                mlir::sol::DataLocation dstDataLoc,
                std::optional<mlir::Location> locArg = std::nullopt);
+
+  /// Kinds of out-of-line helper functions. Every helper symbol is built by
+  /// getHelperSymbol from its kind and fields, so a new helper must add a
+  /// kind here (and its spelling in getHelperKindSpelling).
+  enum class HelperKind {
+    /// Zeroes a value in storage. Fields: {struct name}.
+    ClearStorage,
+    /// Deep copy between data locations. Fields: {src, dst, struct name}.
+    Copy,
+  };
+
+  /// Returns the helper symbol for \p kind and \p fields: the kind spelling
+  /// and the fields joined with '.' after the reserved "__sol." prefix.
+  /// Two different (kind, fields) combinations can never produce the same
+  /// symbol, because the parts are separated by '.' and no field may contain
+  /// '.' (asserted). Solidity identifiers cannot contain '.' either, so no
+  /// user symbol can collide with a helper symbol.
+  static std::string getHelperSymbol(HelperKind kind,
+                                     llvm::ArrayRef<llvm::StringRef> fields);
+
+  /// Returns the helper function of \p kind for \p fields in the enclosing
+  /// contract, creating it on first request: a `sol.func` with signature
+  /// `argTys -> resTys` whose body is emitted by \p genBody (which receives the
+  /// entry-block arguments and must emit the terminating `sol.return`). The
+  /// symbol is registered before \p genBody runs, so a self-reference reached
+  /// while building the body resolves to a recursive call instead of recursing
+  /// in the compiler. Used to out-of-line recursive storage operations (clear,
+  /// deep copy) over self-referential structs, mirroring upstream solc's named
+  /// Yul copy/convert functions. As a `sol.func` the helper is relocated,
+  /// cloned and lowered by the existing contract/object machinery. The helper
+  /// carries its structured key as a `sol.helper_key` attribute, which is
+  /// verified on reuse together with the signature.
+  mlir::sol::FuncOp
+  getOrCreateHelperFn(HelperKind kind, llvm::ArrayRef<llvm::StringRef> fields,
+                      mlir::TypeRange argTys, mlir::TypeRange resTys,
+                      llvm::function_ref<void(mlir::ValueRange)> genBody,
+                      mlir::Location loc);
 
   /// Generates the 'push' of a value to string.
   void genPushToString(mlir::Value srcAddr, mlir::Value value,
