@@ -25,6 +25,7 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <type_traits>
 #include <utility>
@@ -2375,38 +2376,28 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
     }
 
     if (auto structTy = dyn_cast<sol::StructType>(ty)) {
-      ArrayRef<Type> memberTypes = structTy.getMemberTypes();
-      unsigned numMembers = memberTypes.size();
-
-      // Allocate head area: one 32-byte slot per member.
-      Value dstBase = evmB.genMemAlloc(numMembers * 32);
-      auto reader = evmB.makeStructMemberReader(structTy, r, loc, srcAddr);
-
-      for (uint64_t i = 0; i < numMembers; ++i) {
-        Type memberTy = memberTypes[i];
-        Value dstHeadSlot =
-            r.create<yul::AddOp>(loc, dstBase, bExt.genI256Const(i * 32));
-        Value srcResult = reader->read(i);
-
-        if (sol::isNonPtrRefType(memberTy)) {
-          Value memPtr = genAllocateAndCopy(
-              mod, srcResult, memberTy, sol::getDataLocation(memberTy), r, loc);
-          evmB.genStore(memPtr, dstHeadSlot, sol::DataLocation::Memory);
-        } else {
-          Value cleanedResult;
-          if (isa<sol::ExtFuncRefType>(memberTy)) {
-            cleanedResult = evmB.genExtFuncConversion(
-                srcResult, srcDataLoc, sol::DataLocation::Memory, loc);
-          } else {
-            cleanedResult =
-                evmB.genCleanup(memberTy, srcResult, loc, srcDataLoc);
-          }
-          evmB.genStore(cleanedResult, dstHeadSlot, sol::DataLocation::Memory);
-        }
-        if (i + 1 < numMembers)
-          reader->advance(i);
+      // Identified structs are self-referential; copying them inline would
+      // recurse forever in the compiler. Out-of-line the per-struct copy into a
+      // helper that recurses at runtime (nested struct members/elements call
+      // back into genAllocateAndCopy, which dispatches to the same helper).
+      if (structTy.isIdentified()) {
+        auto i256Ty = r.getIntegerType(256);
+        sol::FuncOp fn = evmB.getOrCreateHelperFn(
+            evm::Builder::HelperKind::Copy,
+            {sol::stringifyDataLocation(srcDataLoc).lower(),
+             sol::stringifyDataLocation(sol::DataLocation::Memory).lower(),
+             structTy.getName()},
+            {i256Ty}, {i256Ty},
+            [&](ValueRange args) {
+              Value memPtr = genStructToMemoryInline(mod, args[0], structTy,
+                                                     srcDataLoc, r, loc);
+              r.create<sol::ReturnOp>(loc, ValueRange{memPtr});
+            },
+            loc);
+        return r.create<sol::CallOp>(loc, fn, ValueRange{srcAddr}).getResult(0);
       }
-      return dstBase;
+      return genStructToMemoryInline(mod, srcAddr, structTy, srcDataLoc, r,
+                                     loc);
     }
 
     assert(sol::canBePacked(ty));
@@ -2421,6 +2412,51 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       val = r.create<yul::ArithShlOp>(loc, val, bExt.genI256Const(shift));
     val = evmB.genCleanup(ty, val, loc, srcDataLoc);
     return val;
+  }
+
+  // Inline expansion behind genAllocateAndCopy for a struct: allocates the
+  // memory head area and copies each member from \p srcAddr (data location
+  // \p srcDataLoc), recursing through genAllocateAndCopy for aggregate members
+  // so that nested identified structs are dispatched to their out-of-line
+  // helper. Returns the memory pointer of the copied struct.
+  Value genStructToMemoryInline(ModuleOp mod, Value srcAddr,
+                                sol::StructType structTy,
+                                sol::DataLocation srcDataLoc,
+                                PatternRewriter &r, Location loc) const {
+    mlir::solgen::BuilderExt bExt(r, loc);
+    evm::Builder evmB(mod, r, loc);
+
+    ArrayRef<Type> memberTypes = structTy.getMemberTypes();
+    unsigned numMembers = memberTypes.size();
+
+    // Allocate head area: one 32-byte slot per member.
+    Value dstBase = evmB.genMemAlloc(numMembers * 32);
+    auto reader = evmB.makeStructMemberReader(structTy, r, loc, srcAddr);
+
+    for (uint64_t i = 0; i < numMembers; ++i) {
+      Type memberTy = memberTypes[i];
+      Value dstHeadSlot =
+          r.create<yul::AddOp>(loc, dstBase, bExt.genI256Const(i * 32));
+      Value srcResult = reader->read(i);
+
+      if (sol::isNonPtrRefType(memberTy)) {
+        Value memPtr = genAllocateAndCopy(
+            mod, srcResult, memberTy, sol::getDataLocation(memberTy), r, loc);
+        evmB.genStore(memPtr, dstHeadSlot, sol::DataLocation::Memory);
+      } else {
+        Value cleanedResult;
+        if (isa<sol::ExtFuncRefType>(memberTy)) {
+          cleanedResult = evmB.genExtFuncConversion(
+              srcResult, srcDataLoc, sol::DataLocation::Memory, loc);
+        } else {
+          cleanedResult = evmB.genCleanup(memberTy, srcResult, loc, srcDataLoc);
+        }
+        evmB.genStore(cleanedResult, dstHeadSlot, sol::DataLocation::Memory);
+      }
+      if (i + 1 < numMembers)
+        reader->advance(i);
+    }
+    return dstBase;
   }
 
   LogicalResult matchAndRewrite(sol::DataLocCastOp op, OpAdaptor adaptor,
@@ -2441,7 +2477,7 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       return success();
     }
 
-    llvm_unreachable("NYI");
+    llvm_unreachable("Unexpected data location cast");
   }
 };
 
