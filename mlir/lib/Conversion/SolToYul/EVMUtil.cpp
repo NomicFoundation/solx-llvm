@@ -20,6 +20,8 @@
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/raw_ostream.h"
 #include <functional>
 
 using namespace mlir;
@@ -2036,6 +2038,138 @@ Value evm::Builder::genStorageArraySlotCount(Value len, Type eltTy,
 }
 
 void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
+  // Route self-referential structures through an out-of-line helper that
+  // recurses at runtime instead. Every other type (including literal structs,
+  // which cannot be self-referential) is expanded inline.
+  if (auto structTy = dyn_cast<sol::StructType>(ty);
+      structTy && structTy.isIdentified()) {
+    sol::FuncOp fn = getOrCreateClearStorageFn(structTy, loc);
+    b.create<sol::CallOp>(loc, fn, ValueRange{slot});
+    return;
+  }
+  genClearStorageValueInline(ty, slot, loc);
+}
+
+const char *evm::Builder::dataLocationName(sol::DataLocation loc) {
+  switch (loc) {
+  case sol::DataLocation::Stack:
+    return "stack";
+  case sol::DataLocation::Storage:
+    return "storage";
+  case sol::DataLocation::Memory:
+    return "memory";
+  case sol::DataLocation::CallData:
+    return "calldata";
+  case sol::DataLocation::Transient:
+    return "transient";
+  case sol::DataLocation::Immutable:
+    return "immutable";
+  }
+  llvm_unreachable("Unexpected data location");
+}
+
+/// Fixed spelling of a helper kind used in helper symbols.
+static llvm::StringRef getHelperKindSpelling(evm::Builder::HelperKind kind) {
+  switch (kind) {
+  case evm::Builder::HelperKind::ClearStorage:
+    return "clear_storage";
+  case evm::Builder::HelperKind::Copy:
+    return "copy";
+  }
+  llvm_unreachable("Unexpected helper kind");
+}
+
+/// Attribute holding a helper's structured key (kind spelling followed by the
+/// fields, as an array of strings). It is checked when a helper is reused: if
+/// the symbol scheme ever maps two different helpers to the same name, the
+/// check fails with an assert instead of silently reusing the wrong helper
+/// body.
+static constexpr llvm::StringLiteral kHelperKeyAttrName = "sol.helper_key";
+
+/// Builds the key attribute for \p kind and \p fields.
+static ArrayAttr getHelperKeyAttr(MLIRContext *ctx,
+                                  evm::Builder::HelperKind kind,
+                                  ArrayRef<StringRef> fields) {
+  SmallVector<Attribute> key;
+  key.push_back(StringAttr::get(ctx, getHelperKindSpelling(kind)));
+  for (StringRef field : fields)
+    key.push_back(StringAttr::get(ctx, field));
+  return ArrayAttr::get(ctx, key);
+}
+
+std::string evm::Builder::getHelperSymbol(HelperKind kind,
+                                          ArrayRef<StringRef> fields) {
+  std::string sym;
+  llvm::raw_string_ostream os(sym);
+  os << "__sol." << getHelperKindSpelling(kind);
+  for (StringRef field : fields) {
+    assert(!field.contains('.') && "helper symbol field must not contain '.'");
+    os << '.' << field;
+  }
+  return sym;
+}
+
+sol::FuncOp evm::Builder::getOrCreateHelperFn(
+    HelperKind kind, ArrayRef<StringRef> fields, TypeRange argTys,
+    TypeRange resTys, llvm::function_ref<void(ValueRange)> genBody,
+    Location loc) {
+  // The helper lives in the enclosing contract: stage-2 contract lowering then
+  // relocates it into the creation/runtime objects and clones it where needed,
+  // and the regular sol.func -> yul.func lowering handles the rest, so a
+  // recursive helper behaves exactly like a user-written recursive function.
+  auto contract =
+      b.getInsertionBlock()->getParentOp()->getParentOfType<sol::ContractOp>();
+  assert(contract && "helper must be created within a contract");
+
+  std::string name = getHelperSymbol(kind, fields);
+  auto fnTy = FunctionType::get(b.getContext(), argTys, resTys);
+  ArrayAttr keyAttr = getHelperKeyAttr(b.getContext(), kind, fields);
+
+  // A helper may already exist (created by an earlier site, or by the
+  // self-reference emitted while building the body below). Two different
+  // (kind, fields) combinations can never produce the same symbol, so if the
+  // key or signature of the found function does not match, the symbol scheme
+  // is broken.
+  if (auto fn = contract.lookupSymbol<sol::FuncOp>(name)) {
+    assert(fn->getAttr(kHelperKeyAttrName) == keyAttr &&
+           "helper symbol collision");
+    assert(fn.getFunctionType() == fnTy && "helper signature mismatch");
+    return fn;
+  }
+
+  OpBuilder::InsertionGuard guard(b);
+  b.setInsertionPointToEnd(&contract.getBodyRegion().front());
+
+  auto fn = b.create<sol::FuncOp>(loc, name, fnTy);
+  fn->setAttr(kHelperKeyAttrName, keyAttr);
+
+  Block *entry = &fn.getBody().emplaceBlock();
+  SmallVector<Location> argLocs(argTys.size(), loc);
+  entry->addArguments(argTys, argLocs);
+  b.setInsertionPointToStart(entry);
+  genBody(entry->getArguments());
+
+  return fn;
+}
+
+sol::FuncOp evm::Builder::getOrCreateClearStorageFn(sol::StructType structTy,
+                                                    Location loc) {
+  // The struct name is the only field. Identified structs are uniqued by
+  // (name, data location), but only the Storage variant is ever cleared, so
+  // no location field is needed to keep the symbol unique (unlike the copy
+  // helpers, which embed the source and destination data locations).
+  auto i256Ty = b.getIntegerType(256);
+  return getOrCreateHelperFn(
+      HelperKind::ClearStorage, {structTy.getName()}, {i256Ty}, {},
+      [&](ValueRange args) {
+        genClearStorageValueInline(structTy, args[0], loc);
+        b.create<sol::ReturnOp>(loc);
+      },
+      loc);
+}
+
+void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
+                                              Location loc) {
   mlir::solgen::BuilderExt bExt(b, loc);
 
   // Mappings reserve a slot but are never cleared: their entries live at hashed
@@ -2092,7 +2226,7 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
   }
 
   if (auto structTy = dyn_cast<sol::StructType>(ty)) {
-    // Packed members can share a slot; dedup their zeroing. Members with
+    // Packed members can share a slot, dedup their zeroing. Members with
     // dynamically-sized elements always recurse, regardless of slot sharing.
     llvm::SmallSet<uint64_t, 8> clearedSlots;
     for (unsigned m = 0; m < structTy.getMemberTypes().size(); ++m) {
@@ -2954,72 +3088,103 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
       llvm_unreachable(
           "struct -> memory copy must be lowered by DataLocCastOpLowering");
     auto srcStructTy = cast<sol::StructType>(srcTy);
-    ArrayRef<Type> memberTypes = dstStructTy.getMemberTypes();
-    ArrayRef<Type> srcMemberTypes = srcStructTy.getMemberTypes();
-    assert(memberTypes.size() == srcMemberTypes.size());
 
-    std::unique_ptr<StructEncodeMemberReader> srcReader =
-        makeStructMemberReader(srcStructTy, b, loc, srcAddr);
-    std::unique_ptr<StructMemberWriter> dstWriter =
-        makeStructMemberWriter(dstStructTy, b, loc, dstAddr);
-
-    bool srcIsCallData =
-        srcStructTy.getDataLocation() == sol::DataLocation::CallData;
-
-    for (uint64_t i = 0, e = memberTypes.size(); i < e; ++i) {
-      Type dstMemberTy = memberTypes[i];
-      bool packedDstMember = dstIsStorage && sol::canBePacked(dstMemberTy);
-      // For storage→storage packed members, skip canonical-form conversion in
-      // the reader and apply AND(fieldMask) here. This avoids the
-      // signextend+AND and shl+shr round-trips that
-      // genCleanupPackedStorageValue introduces for signed integers, bytesN,
-      // and ExtFuncRef types.
-      Value val =
-          srcReader->read(i, /*skipCleanup=*/packedDstMember && srcIsStorage);
-      if (packedDstMember) {
-        unsigned storageBits = sol::getNumBytes(dstMemberTy) * 8;
-        APInt fieldMask = APInt::getLowBitsSet(256, storageBits);
-        if (srcIsStorage) {
-          // Raw right-shifted field bits from the storage reader AND to field
-          // width without sign-extending.
-          val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
-        } else {
-          // Memory/calldata source: bytesN is left-aligned.
-          unsigned alignShift = 0;
-          if (sol::isBytesLikeType(dstMemberTy))
-            alignShift = (32 - sol::getNumBytes(dstMemberTy)) * 8;
-
-          if (isa<sol::ExtFuncRefType>(dstMemberTy)) {
-            val = genExtFuncConversion(val, srcStructTy.getDataLocation(),
-                                       dstDataLoc, loc);
-          } else if (alignShift > 0) {
-            if (srcIsCallData)
-              val = genCleanup(dstMemberTy, val, loc, /*shouldRevert=*/true);
-            val = b.create<yul::ArithShrOp>(loc, val,
-                                            bExt.genI256Const(alignShift));
-          } else if (srcIsCallData) {
-            val = genCleanup(dstMemberTy, val, loc, /*shouldRevert=*/true);
-            // genCleanup for signed integers returns signextend(), which leaves
-            // sign bits set in bits [255..storageBits] for negative values.
-            // Mask to field width so the writer receives field-masked bits.
-            if (auto intTy = dyn_cast<IntegerType>(dstMemberTy);
-                intTy && intTy.isSigned() && intTy.getWidth() < 256)
-              val =
-                  b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
-          } else {
-            // Memory source: AND to field width without sign-extending.
-            val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
-          }
-        }
-      }
-      dstWriter->write(i, val, srcMemberTypes[i]);
-      if (i + 1 < e) {
-        srcReader->advance(i);
-        dstWriter->advance(i);
-      }
+    // For recursive structures out-of-line the per-struct copy into a helper
+    // that recurses at runtime (nested struct members/elements call back into
+    // genCopy, which dispatches to the same helper).
+    if (dstStructTy.isIdentified()) {
+      auto i256Ty = b.getIntegerType(256);
+      sol::FuncOp fn = getOrCreateHelperFn(
+          HelperKind::Copy,
+          {dataLocationName(srcDataLoc),
+           dataLocationName(sol::DataLocation::Storage), dstStructTy.getName()},
+          {i256Ty, i256Ty}, {},
+          [&](ValueRange args) {
+            genStructToStorageCopyInline(srcStructTy, dstStructTy, args[0],
+                                         args[1], srcDataLoc, loc);
+            b.create<sol::ReturnOp>(loc);
+          },
+          loc);
+      b.create<sol::CallOp>(loc, fn, ValueRange{srcAddr, dstAddr});
+    } else {
+      genStructToStorageCopyInline(srcStructTy, dstStructTy, srcAddr, dstAddr,
+                                   srcDataLoc, loc);
     }
   } else {
-    llvm_unreachable("NYI");
+    llvm_unreachable("Unexpected type to copy");
+  }
+}
+
+void evm::Builder::genStructToStorageCopyInline(sol::StructType srcStructTy,
+                                                sol::StructType dstStructTy,
+                                                Value srcAddr, Value dstAddr,
+                                                sol::DataLocation srcDataLoc,
+                                                Location loc) {
+  mlir::solgen::BuilderExt bExt(b, loc);
+  bool srcIsStorage = srcDataLoc == sol::DataLocation::Storage;
+
+  ArrayRef<Type> memberTypes = dstStructTy.getMemberTypes();
+  ArrayRef<Type> srcMemberTypes = srcStructTy.getMemberTypes();
+  assert(memberTypes.size() == srcMemberTypes.size());
+
+  std::unique_ptr<StructEncodeMemberReader> srcReader =
+      makeStructMemberReader(srcStructTy, b, loc, srcAddr);
+  std::unique_ptr<StructMemberWriter> dstWriter =
+      makeStructMemberWriter(dstStructTy, b, loc, dstAddr);
+
+  bool srcIsCallData =
+      srcStructTy.getDataLocation() == sol::DataLocation::CallData;
+
+  for (uint64_t i = 0, e = memberTypes.size(); i < e; ++i) {
+    Type dstMemberTy = memberTypes[i];
+    bool packedDstMember = sol::canBePacked(dstMemberTy);
+    // For storage→storage packed members, skip canonical-form conversion in
+    // the reader and apply AND(fieldMask) here. This avoids the
+    // signextend+AND and shl+shr round-trips that
+    // genCleanupPackedStorageValue introduces for signed integers, bytesN,
+    // and ExtFuncRef types.
+    Value val =
+        srcReader->read(i, /*skipCleanup=*/packedDstMember && srcIsStorage);
+    if (packedDstMember) {
+      unsigned storageBits = sol::getNumBytes(dstMemberTy) * 8;
+      APInt fieldMask = APInt::getLowBitsSet(256, storageBits);
+      if (srcIsStorage) {
+        // Raw right-shifted field bits from the storage reader AND to field
+        // width without sign-extending.
+        val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
+      } else {
+        // Memory/calldata source: bytesN is left-aligned.
+        unsigned alignShift = 0;
+        if (sol::isBytesLikeType(dstMemberTy))
+          alignShift = (32 - sol::getNumBytes(dstMemberTy)) * 8;
+
+        if (isa<sol::ExtFuncRefType>(dstMemberTy)) {
+          val = genExtFuncConversion(val, srcStructTy.getDataLocation(),
+                                     sol::DataLocation::Storage, loc);
+        } else if (alignShift > 0) {
+          if (srcIsCallData)
+            val = genCleanup(dstMemberTy, val, loc, /*shouldRevert=*/true);
+          val = b.create<yul::ArithShrOp>(loc, val,
+                                          bExt.genI256Const(alignShift));
+        } else if (srcIsCallData) {
+          val = genCleanup(dstMemberTy, val, loc, /*shouldRevert=*/true);
+          // genCleanup for signed integers returns signextend(), which leaves
+          // sign bits set in bits [255..storageBits] for negative values.
+          // Mask to field width so the writer receives field-masked bits.
+          if (auto intTy = dyn_cast<IntegerType>(dstMemberTy);
+              intTy && intTy.isSigned() && intTy.getWidth() < 256)
+            val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
+        } else {
+          // Memory source: AND to field width without sign-extending.
+          val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
+        }
+      }
+    }
+    dstWriter->write(i, val, srcMemberTypes[i]);
+    if (i + 1 < e) {
+      srcReader->advance(i);
+      dstWriter->advance(i);
+    }
   }
 }
 
