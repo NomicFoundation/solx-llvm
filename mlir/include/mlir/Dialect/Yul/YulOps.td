@@ -62,10 +62,12 @@ def Yul_FuncOp : Yul_Op<"func", [AutomaticAllocationScope,
   let assemblyFormat = "$sym_name `:` $function_type $body attr-dict";
 }
 
-def Yul_FuncCallOp : Yul_Op<"func_call"> {
+def Yul_FuncCallOp : Yul_Op<"func_call", [CallOpInterface]> {
   let summary = "Represents a Yul function call";
   let arguments = (ins FlatSymbolRefAttr:$callee,
-                       Variadic<I256OrI256LLVMStruct>:$operands);
+                       Variadic<I256OrI256LLVMStruct>:$operands,
+                       OptionalAttr<DictArrayAttr>:$arg_attrs,
+                       OptionalAttr<DictArrayAttr>:$res_attrs);
   let results = (outs Variadic<I256OrI256LLVMStruct>:$outs);
 
   let builders = [
@@ -74,8 +76,32 @@ def Yul_FuncCallOp : Yul_Op<"func_call"> {
       $_state.addAttribute(getCalleeAttrName($_state.name),
                            SymbolRefAttr::get(callee));
       $_state.addTypes(callee.getFunctionType().getResults());
+    }]>,
+    OpBuilder<(ins "TypeRange":$resultTypes, "FlatSymbolRefAttr":$callee,
+      CArg<"ValueRange", "{}">:$operands), [{
+      $_state.addTypes(resultTypes);
+      $_state.addAttribute(getCalleeAttrName($_state.name), callee);
+      $_state.addOperands(operands);
     }]>
   ];
+
+  let extraClassDeclaration = [{
+    //===------------------------------------------------------------------===//
+    // CallOpInterface
+    //===------------------------------------------------------------------===//
+    operand_range getArgOperands() {
+      return {operand_begin(), operand_end()};
+    }
+    MutableOperandRange getArgOperandsMutable() {
+      return getOperandsMutable();
+    }
+    CallInterfaceCallable getCallableForCallee() {
+      return (*this)->getAttrOfType<SymbolRefAttr>("callee");
+    }
+    void setCalleeFromCallable(CallInterfaceCallable callee) {
+      (*this)->setAttr("callee", cast<SymbolRefAttr>(callee));
+    }
+  }];
 
   let assemblyFormat = [{
     $callee `(` $operands `)` attr-dict `:` functional-type($operands, results)
