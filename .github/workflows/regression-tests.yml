@@ -61,7 +61,7 @@ jobs:
           echo "base_ref=${{ github.base_ref || github.event.repository.default_branch }}" | tee -a "${GITHUB_OUTPUT}"
           echo "fetch_depth=$(( ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test }} + 1 ))" | tee -a "${GITHUB_OUTPUT}"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.extract_branch.outputs.head_ref }}
           fetch-depth: ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test }}
@@ -91,7 +91,7 @@ jobs:
       matrix: ${{ fromJson(needs.prepare-test-matrix.outputs.matrix-formatting) }}
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ matrix.commit }}
           fetch-depth: 0
@@ -106,7 +106,7 @@ jobs:
 
       - name: Get changed files
         id: changed-files
-        uses: tj-actions/changed-files@2f7c5bfce28377bc069a65ba478de0a74aa0ca32 # v46.0.1
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         with:
           separator: ","
           sha: ${{ matrix.commit }}
@@ -140,7 +140,7 @@ jobs:
       max-parallel: 3
       matrix: ${{ fromJson(needs.prepare-test-matrix.outputs.matrix-tests) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: NomicFoundation/solx
           ref: 'main'
@@ -148,7 +148,7 @@ jobs:
       - name: Clean up LLVM directory
         run: rm -rf solx-llvm
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ matrix.commit }}
           path: "solx-llvm"
