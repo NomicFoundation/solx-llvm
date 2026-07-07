@@ -216,6 +216,24 @@ jobs:
           sanitizer: ${{ inputs.llvm-sanitizer }}
           enable-valgrind: ${{ inputs.enable-valgrind }}
 
+      # The shared action only saves ccache on non-PR events, so PR reruns
+      # would rebuild cold (~2 h). Save under its restore-keys prefix:
+      # ccache-action prepends `ccache-` to every restore-key, so the leading
+      # `ccache-` below is required for the restore to prefix-match this
+      # entry, and the `-utils-tests` suffix must track what the action
+      # derives from the build-llvm inputs above. Placed before the lit step
+      # (which can still take down the runner) and on `always()` so even a
+      # failed build banks its partial ccache. Restores pick the newest
+      # matching entry, so only job 0 saves; more entries per run would be
+      # pure quota churn.
+      - name: Save PR-scoped ccache
+        if: always() && github.event_name == 'pull_request' && strategy.job-index == 0
+        continue-on-error: true
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/ccache-llvm
+          key: ccache-llvm-${{ runner.os }}-${{ runner.arch }}-utils-tests-end-pr${{ github.run_id }}-${{ github.run_attempt }}
+
       # `verify-llvm` is a special target that runs all the regression tests
       # it includes `check-llvm` and special codegen tests
       # called via `verify-llvm-codegen-opt` and `verify-llvm-codegen-llc` targets
