@@ -157,8 +157,16 @@ jobs:
 
   regression-tests:
     runs-on: ubuntu-24.04
+    # Backstop: a thrashed VM hangs its job indefinitely — the starved
+    # runner agent can't even act on cancellation.
+    timeout-minutes: 240
     container:
       image: ghcr.io/nomicfoundation/solx-ci-runner@sha256:62359ae7b2951ba6ffcec61057341a432868826ce6d42d697412ca0cef37781b
+      # Cap container memory below the 16 GB VM (and disallow swap) so a
+      # memory-hungry test gets OOM-killed inside the container — lit records
+      # it as a named crash and continues — instead of starving the runner
+      # agent on the host, which kills the whole job as "lost communication".
+      options: --memory 13g --memory-swap 13g
       # Host tooling bind-mounted so the free-disk-space action can reclaim
       # ~24 GB before the LLVM build fills the runner's ~14 GB free budget.
       # Keep in sync with solx's test.yaml / cache-warmup.yaml.
@@ -239,6 +247,25 @@ jobs:
       # called via `verify-llvm-codegen-opt` and `verify-llvm-codegen-llc` targets
       - name: Running Lit tests
         run: |
+          # Crash tests (`not --crash`, gtest death tests, lit self-tests) pipe
+          # cores to the HOST's systemd-coredump — outside this container's
+          # cgroup and memory cap — which OOMed the 16 GB VM. Piped patterns
+          # ignore RLIMIT_CORE except the magic value of exactly 1 byte, which
+          # aborts the pipe handler (fs/coredump.c; the same trick LLVM's
+          # Process::PreventCoreFiles uses). `ulimit -c` scales its argument
+          # by 1024, so it cannot express that byte.
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
+          prlimit --core=1:1 --pid $$ || echo "::warning::prlimit failed; piped core dumps remain enabled"
+          prlimit --core --pid $$
+
+          # Per-test timeout needs psutil, which older images lack; without it
+          # lit only loses timeout support, so don't fail the run over it.
+          if python3 -c 'import psutil' 2>/dev/null; then
+            export LIT_OPTS='--timeout=600'
+          else
+            echo "psutil unavailable; running without per-test timeouts"
+          fi
+
           ninja -C './target-llvm/build-final' verify-llvm -v
           ninja -C './target-llvm/build-final' check-lld-unit -v
 
