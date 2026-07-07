@@ -2,6 +2,15 @@ name: Regression Tests
 
 on:
   pull_request:
+  # The shared build-llvm action only saves ccache on non-pull_request events:
+  # push-to-main runs warm the cache that PR runs restore, and double as
+  # post-merge regression signal.
+  push:
+    branches: [main]
+  schedule:
+    # Keepalive: GitHub evicts caches untouched for 7 days; a weekly warmup
+    # covers quiet weeks so PR builds don't go cold.
+    - cron: '0 4 * * 1'
   workflow_dispatch:
     inputs:
       commits-to-test:
@@ -25,14 +34,20 @@ defaults:
   run:
     shell: bash
 
+permissions:
+  contents: read
+  packages: read # pull the private ghcr.io/nomicfoundation/solx-ci-runner image
+
 concurrency:
   group: ${{ github.repository_id }}-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Never cancel main-branch runs: their ccache save at the end of the job is
+  # what keeps PR builds warm.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
 
   target-machine:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       default: ${{ steps.default.outputs.machine }}
     steps:
@@ -46,7 +61,7 @@ jobs:
 
   prepare-test-matrix:
     needs: target-machine
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       matrix-formatting: ${{ steps.prepare.outputs.matrix-formatting }}
       matrix-tests: ${{ steps.prepare.outputs.matrix-tests }}
@@ -54,18 +69,20 @@ jobs:
 
     steps:
 
+      # On push/schedule events there is neither a PR commit count nor a
+      # dispatch input; default to testing the single HEAD commit.
       - name: Extract branch name
         id: extract_branch
         run: |
           echo "head_ref=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" | tee -a "${GITHUB_OUTPUT}"
           echo "base_ref=${{ github.base_ref || github.event.repository.default_branch }}" | tee -a "${GITHUB_OUTPUT}"
-          echo "fetch_depth=$(( ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test }} + 1 ))" | tee -a "${GITHUB_OUTPUT}"
+          echo "fetch_depth=$(( ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test || 1 }} + 1 ))" | tee -a "${GITHUB_OUTPUT}"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ steps.extract_branch.outputs.head_ref }}
-          fetch-depth: ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          fetch-depth: ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test || 1 }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
       - name: Prepare commits
         id: prepare
@@ -73,17 +90,20 @@ jobs:
         env:
           TEST_COMMITS_LIMIT: 25 # Limit the number of commits to test
         run: |
-          COMMITS_TO_TEST=$(git log -n ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test }} --pretty='"%H"' | head -n ${TEST_COMMITS_LIMIT})
+          COMMITS_TO_TEST=$(git log -n ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test || 1 }} --pretty='"%H"' | head -n ${TEST_COMMITS_LIMIT})
           echo "matrix-formatting={ \"commit\": [${COMMITS_TO_TEST//$'\n'/, }] }" | tee -a "${GITHUB_OUTPUT}"
           TARGETS=$(echo '${{ toJSON(needs.target-machine.outputs) }}' | jq '.[]')
           echo "matrix-tests={ \"commit\": [${COMMITS_TO_TEST//$'\n'/, }], \"target\": [${TARGETS//$'\n'/, }] }" | tee -a "${GITHUB_OUTPUT}"
 
   check-formatting:
     if: github.event_name == 'pull_request'
-    runs-on: matterlabs-ci-runner-high-performance
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: write # code-format-helper posts review comments on the PR
     container:
-      image: ghcr.io/matter-labs/zksync-llvm-runner:latest
-      options: -m 110g
+      image: ghcr.io/nomicfoundation/solx-ci-runner@sha256:62359ae7b2951ba6ffcec61057341a432868826ce6d42d697412ca0cef37781b
     needs: prepare-test-matrix
     strategy:
       fail-fast: false
@@ -91,11 +111,11 @@ jobs:
       matrix: ${{ fromJson(needs.prepare-test-matrix.outputs.matrix-formatting) }}
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ matrix.commit }}
           fetch-depth: 0
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
       - name: Mark everything as safe for Git
         run: git config --global --add safe.directory '*'
@@ -112,8 +132,14 @@ jobs:
           sha: ${{ matrix.commit }}
           base_sha: ${{ steps.previous-commit.outputs.sha }}
 
+      # Job-local venv: the image's system interpreter is Debian-managed (its
+      # packages collide with these pins) and ships no pip. GITHUB_PATH makes
+      # the venv's python3/darker win in the formatter step below.
       - name: Install formatting requirements
-        run: python3 -m pip install -r ./llvm/utils/git/requirements_formatting_solx_llvm.txt
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv-format"
+          "${RUNNER_TEMP}/venv-format/bin/pip" install -r ./llvm/utils/git/requirements_formatting_solx_llvm.txt
+          echo "${RUNNER_TEMP}/venv-format/bin" >> "${GITHUB_PATH}"
 
       - name: Run code formatter
         run: |
@@ -130,30 +156,43 @@ jobs:
             --changed-files ${{ steps.changed-files.outputs.all_changed_files }}
 
   regression-tests:
-    runs-on: matterlabs-ci-runner-high-performance
+    runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/matter-labs/zksync-llvm-runner:latest
-      options: -m 110g
+      image: ghcr.io/nomicfoundation/solx-ci-runner@sha256:62359ae7b2951ba6ffcec61057341a432868826ce6d42d697412ca0cef37781b
+      # Host tooling bind-mounted so the free-disk-space action can reclaim
+      # ~24 GB before the LLVM build fills the runner's ~14 GB free budget.
+      # Keep in sync with solx's test.yaml / cache-warmup.yaml.
+      volumes:
+        - /usr/share/dotnet:/mnt/free-disk-space/dotnet
+        - /usr/local/lib/android:/mnt/free-disk-space/android
+        - /opt/ghc:/mnt/free-disk-space/ghc
+        - /usr/local/.ghcup:/mnt/free-disk-space/ghcup
+        - /opt/hostedtoolcache/CodeQL:/mnt/free-disk-space/codeql
     needs: prepare-test-matrix
     strategy:
       fail-fast: false
       max-parallel: 3
       matrix: ${{ fromJson(needs.prepare-test-matrix.outputs.matrix-tests) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: NomicFoundation/solx
           ref: 'main'
 
+      # Local ref into the solx checkout above (like build-llvm below), so the
+      # action version always matches the checked-out solx-dev sources.
+      - name: Free disk space
+        uses: ./.github/actions/free-disk-space
+
       - name: Clean up LLVM directory
         run: rm -rf solx-llvm
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ matrix.commit }}
           path: "solx-llvm"
           fetch-depth: ${{ needs.prepare-test-matrix.outputs.fetch_depth }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
       - name: Mark everything as safe for Git
         run: git config --global --add safe.directory '*'
@@ -165,11 +204,15 @@ jobs:
         run: echo "sha=$(git rev-parse -q '${{ matrix.commit }}^' 2>/dev/null || echo '${{ github.event.pull_request.base.sha }}')" >> "$GITHUB_OUTPUT"
 
       - name: Build LLVM
-        uses: NomicFoundation/solx/.github/actions/build-llvm@main
+        uses: ./.github/actions/build-llvm
         with:
           enable-tests: true
           enable-assertions: true
-          ccache-key-type: 'static' # rotate ccache key every month
+          # This tree changes every PR, so the whole-artifact cache never hits
+          # usefully — and a hit would skip the build, leaving no build-final
+          # directory for the lit and clang-tidy steps below. ccache (inside
+          # the action) is the only useful cache layer here.
+          enable-artifact-cache: 'false'
           sanitizer: ${{ inputs.llvm-sanitizer }}
           enable-valgrind: ${{ inputs.enable-valgrind }}
 
@@ -180,6 +223,13 @@ jobs:
         run: |
           ninja -C './target-llvm/build-final' verify-llvm -v
           ninja -C './target-llvm/build-final' check-lld-unit -v
+
+      # build-llvm configures with -DCMAKE_EXPORT_COMPILE_COMMANDS=Off;
+      # re-running cmake on the configured build dir flips it back On without
+      # touching any build rule, so ninja rebuilds nothing.
+      - name: Export compile commands
+        if: github.event_name == 'pull_request'
+        run: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=On './target-llvm/build-final'
 
       - name: clang-tidy
         if: github.event_name == 'pull_request'
