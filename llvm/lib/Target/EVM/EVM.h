@@ -65,6 +65,7 @@ FunctionPass *createEVMSplitCriticalEdges();
 FunctionPass *createEVMBPStackification();
 FunctionPass *createEVMLowerJumpUnless();
 FunctionPass *createEVMPeepholePass();
+FunctionPass *createEVMBranchFolder();
 FunctionPass *createEVMFixIrreducibleControlFlow();
 ModulePass *createEVMFinalizeStackFrames();
 ModulePass *createEVMMarkRecursiveFunctionsPass();
@@ -88,6 +89,7 @@ void initializeEVMFinalizeStackFramesPass(PassRegistry &);
 void initializeEVMMarkRecursiveFunctionsPass(PassRegistry &);
 void initializeEVMConstantUnfoldingPass(PassRegistry &);
 void initializeEVMPeepholePass(PassRegistry &);
+void initializeEVMBranchFolderPass(PassRegistry &);
 void initializeEVMVerifierPass(PassRegistry &);
 void initializeEVMFixIrreducibleControlFlowPass(PassRegistry &);
 

@@ -163,7 +163,7 @@ target triple = "evm"
 ; CHECK-NEXT:       MachineDominator Tree Construction
 ; CHECK-NEXT:       Machine Natural Loop Construction
 ; CHECK-NEXT:       Machine Block Frequency Analysis
-; CHECK-NEXT:       Control Flow Optimizer
+; CHECK-NEXT:       EVM branch folder
 ; CHECK-NEXT:       Lazy Machine Block Frequency Analysis
 ; CHECK-NEXT:       Tail Duplication
 ; CHECK-NEXT:       Machine Sanitizer Binary Metadata

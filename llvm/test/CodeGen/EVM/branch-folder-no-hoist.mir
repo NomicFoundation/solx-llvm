@@ -1,0 +1,205 @@
+# RUN: llc -x mir -run-pass=evm-branch-folder < %s | FileCheck %s
+# RUN: llc -x mir -run-pass=branch-folder   < %s | FileCheck %s --check-prefix=GENERIC
+
+# BranchFolder's common-code hoisting moves instructions common to both successors of
+# a conditional branch up into the predecessor, before the branch which breaks the condition
+# code calculation. Added EVMBranchFolder pass runs BranchFolder with
+# /*CommonHoist=*/false, so those instructions must stay in the successors.
+
+--- |
+  target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
+  target triple = "evm"
+  define void @common_single() { unreachable }
+  define void @common_multiple() { unreachable }
+  define void @common_prefix_then_differ() { unreachable }
+  define void @shared_successor_not_hoisted() { unreachable }
+...
+
+# ------------------------------------------------------------------------------
+# Simplest case: a block with two successors whose first instruction is
+# identical. It must not be hoisted above the branch.
+# ------------------------------------------------------------------------------
+---
+name:            common_single
+machineFunctionInfo:
+  isStackified:    true
+  numberOfParameters: 0
+  hasPushDeployAddress: false
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    PUSH0_S
+    CALLDATALOAD_S
+    PseudoJUMPI %bb.2
+
+  bb.1:
+    successors: %bb.3(0x80000000)
+    DATASIZE_S &Foo
+    PUSH1_S i256 0
+    REVERT_S
+
+  bb.2:
+    successors: %bb.3(0x80000000)
+    DATASIZE_S &Foo
+    PUSH1_S i256 32
+    REVERT_S
+
+  bb.3:
+    PUSH0_S
+    PUSH0_S
+    REVERT_S
+...
+# CHECK-LABEL: name: common_single
+# CHECK:      CALLDATALOAD_S
+# CHECK-NEXT: PseudoJUMPI %bb.2
+# CHECK-LABEL: bb.1:
+# CHECK:      DATASIZE_S &Foo
+# CHECK-LABEL: bb.2:
+# CHECK:      DATASIZE_S &Foo
+#
+# GENERIC-LABEL: name: common_single
+# GENERIC:      CALLDATALOAD_S
+# GENERIC-NEXT: DATASIZE_S &Foo
+# GENERIC-NEXT: PseudoJUMPI %bb.2
+
+# ------------------------------------------------------------------------------
+# Several identical leading instructions: none of them may be hoisted.
+# ------------------------------------------------------------------------------
+---
+name:            common_multiple
+machineFunctionInfo:
+  isStackified:    true
+  numberOfParameters: 0
+  hasPushDeployAddress: false
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    PUSH0_S
+    CALLDATALOAD_S
+    PseudoJUMPI %bb.2
+
+  bb.1:
+    successors: %bb.3(0x80000000)
+    DATASIZE_S &Foo
+    DATASIZE_S &Bar
+    PUSH1_S i256 0
+    REVERT_S
+
+  bb.2:
+    successors: %bb.3(0x80000000)
+    DATASIZE_S &Foo
+    DATASIZE_S &Bar
+    PUSH1_S i256 32
+    REVERT_S
+
+  bb.3:
+    PUSH0_S
+    PUSH0_S
+    REVERT_S
+...
+# CHECK-LABEL: name: common_multiple
+# CHECK:      CALLDATALOAD_S
+# CHECK-NEXT: PseudoJUMPI %bb.2
+# CHECK-LABEL: bb.1:
+# CHECK:      DATASIZE_S &Foo
+# CHECK-NEXT: DATASIZE_S &Bar
+# CHECK-LABEL: bb.2:
+# CHECK:      DATASIZE_S &Foo
+# CHECK-NEXT: DATASIZE_S &Bar
+#
+# The stock pass hoists both common instructions above the branch:
+# GENERIC-LABEL: name: common_multiple
+# GENERIC:      CALLDATALOAD_S
+# GENERIC-NEXT: DATASIZE_S &Foo
+# GENERIC-NEXT: DATASIZE_S &Bar
+# GENERIC-NEXT: PseudoJUMPI %bb.2
+
+# ------------------------------------------------------------------------------
+# Common first instruction, then the successors diverge. The generic pass would
+# hoist just the shared prefix. EVMBranchFolder hoists nothing.
+# ------------------------------------------------------------------------------
+---
+name:            common_prefix_then_differ
+machineFunctionInfo:
+  isStackified:    true
+  numberOfParameters: 0
+  hasPushDeployAddress: false
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    PUSH0_S
+    CALLDATALOAD_S
+    PseudoJUMPI %bb.2
+
+  bb.1:
+    successors: %bb.3(0x80000000)
+    DATASIZE_S &Foo
+    PUSH1_S i256 1
+    REVERT_S
+
+  bb.2:
+    successors: %bb.3(0x80000000)
+    DATASIZE_S &Foo
+    PUSH1_S i256 2
+    REVERT_S
+
+  bb.3:
+    PUSH0_S
+    PUSH0_S
+    REVERT_S
+...
+# CHECK-LABEL: name: common_prefix_then_differ
+# CHECK:      CALLDATALOAD_S
+# CHECK-NEXT: PseudoJUMPI %bb.2
+# CHECK-LABEL: bb.1:
+# CHECK:      DATASIZE_S &Foo
+# CHECK-LABEL: bb.2:
+# CHECK:      DATASIZE_S &Foo
+#
+# The stock pass hoists only the shared prefix (DATASIZE_S &Foo):
+# GENERIC-LABEL: name: common_prefix_then_differ
+# GENERIC:      CALLDATALOAD_S
+# GENERIC-NEXT: DATASIZE_S &Foo
+# GENERIC-NEXT: PseudoJUMPI %bb.2
+
+# ------------------------------------------------------------------------------
+# A successor with more than one predecessor is not eligible for hoisting even
+# for the generic pass (its pred_size() > 1 guard). Nothing should move.
+# ------------------------------------------------------------------------------
+---
+name:            shared_successor_not_hoisted
+machineFunctionInfo:
+  isStackified:    true
+  numberOfParameters: 0
+  hasPushDeployAddress: false
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    PUSH0_S
+    CALLDATALOAD_S
+    PseudoJUMPI %bb.2
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    DATASIZE_S &Foo
+    PseudoJUMP %bb.2
+
+  bb.2:
+    successors: %bb.3(0x80000000)
+    DATASIZE_S &Foo
+    PUSH1_S i256 32
+    REVERT_S
+
+  bb.3:
+    PUSH0_S
+    PUSH0_S
+    REVERT_S
+...
+# CHECK-LABEL: name: shared_successor_not_hoisted
+# CHECK:      CALLDATALOAD_S
+# CHECK-NEXT: PseudoJUMPI %bb.2
+# CHECK-LABEL: bb.1:
+# CHECK:      DATASIZE_S &Foo
+# GENERIC-LABEL: name: shared_successor_not_hoisted
+# GENERIC:      CALLDATALOAD_S
+# GENERIC-NEXT: PseudoJUMPI %bb.2
