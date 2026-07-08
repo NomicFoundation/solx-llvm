@@ -111,10 +111,13 @@ jobs:
       matrix: ${{ fromJson(needs.prepare-test-matrix.outputs.matrix-formatting) }}
     steps:
 
+      # Shallow like the regression job: the diff below only needs
+      # `matrix.commit` and its parent, and a full LLVM-history clone
+      # (fetch-depth: 0) took ~9 minutes per matrix job.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ matrix.commit }}
-          fetch-depth: 0
+          fetch-depth: ${{ needs.prepare-test-matrix.outputs.fetch_depth }}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
       - name: Mark everything as safe for Git
