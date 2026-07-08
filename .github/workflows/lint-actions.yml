@@ -1,0 +1,50 @@
+# actionlint + zizmor: lint and security-audit the GitHub Actions workflows
+# on every PR that touches them. Standalone (not a job in regression-tests.yml)
+# so these cheap checks never wait on the heavy LLVM build.
+
+name: Lint GitHub Actions
+
+on:
+  pull_request:
+    paths:
+      - .github/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: Lint workflows (actionlint)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # Official image bundles shellcheck + pyflakes, so `run:` linting needs no runner deps.
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+        env:
+          # Gate on shellcheck warnings/errors; info-level style nits are noise.
+          SHELLCHECK_OPTS: --severity=warning
+        with:
+          args: -color
+
+  zizmor:
+    name: Audit workflows (zizmor)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6 # v2.82.6
+        with:
+          tool: zizmor@1.26.1
+      # GH_TOKEN enables the online audits (known-vulnerabilities, tag->SHA resolution).
+      - name: Run zizmor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: zizmor --format github .github
