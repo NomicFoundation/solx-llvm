@@ -64,6 +64,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeEVMTarget() {
   initializeEVMExternalAAWrapperPass(PR);
   initializeEVMAlwaysInlinePass(PR);
   initializeEVMLowerJumpUnlessPass(PR);
+  initializeEVMBranchFolderPass(PR);
   initializeEVMFinalizeStackFramesPass(PR);
   initializeEVMMarkRecursiveFunctionsPass(PR);
   initializeEVMConstantUnfoldingPass(PR);
@@ -346,11 +347,13 @@ void EVMPassConfig::addPreEmitPass() {
     addPass(&StackSlotColoringID);
     addPass(createEVMFinalizeStackFrames());
 
-    // Optimize branch instructions after stackification. This is done again
-    // here, since EVMSplitCriticalEdges may introduce new BBs that could
-    // contain only branches after stackification.
+    // Use the EVM-specific branch folder rather than the generic
+    // BranchFolderPass: the code is stackified, so the generic pass's
+    // common-code hoisting would move instructions across the implicit-operand
+    // branch and corrupt the value stack. EVMBranchFolder runs BranchFolder
+    // with hoisting disabled.
     if (getOptLevel() > CodeGenOptLevel::Less) {
-      addPass(&BranchFolderPassID);
+      addPass(createEVMBranchFolder());
       addPass(&TailDuplicateLegacyID);
     }
   }
