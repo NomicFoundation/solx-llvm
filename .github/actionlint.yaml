@@ -1,0 +1,9 @@
+paths:
+  .github/workflows/regression-tests.yml:
+    ignore:
+      # The target-machine job's `join(steps.*.outputs.*)` is a deliberate
+      # extensibility hook: it defaults the target to "default" unless a future
+      # target-detection step sets an output. actionlint's type checker rejects
+      # object-filtering the (currently empty) steps context, but the
+      # expression evaluates correctly at runtime.
+      - 'object type "\{\}" cannot be filtered by object filtering'
