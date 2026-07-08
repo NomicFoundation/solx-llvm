@@ -78,7 +78,7 @@ jobs:
           echo "base_ref=${{ github.base_ref || github.event.repository.default_branch }}" | tee -a "${GITHUB_OUTPUT}"
           echo "fetch_depth=$(( ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test || 1 }} + 1 ))" | tee -a "${GITHUB_OUTPUT}"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ steps.extract_branch.outputs.head_ref }}
           fetch-depth: ${{ github.event.pull_request.commits || github.event.inputs.commits-to-test || 1 }}
@@ -114,7 +114,7 @@ jobs:
       # Shallow like the regression job: the diff below only needs
       # `matrix.commit` and its parent, and a full LLVM-history clone
       # (fetch-depth: 0) took ~9 minutes per matrix job.
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ matrix.commit }}
           fetch-depth: ${{ needs.prepare-test-matrix.outputs.fetch_depth }}
@@ -129,7 +129,7 @@ jobs:
 
       - name: Get changed files
         id: changed-files
-        uses: tj-actions/changed-files@2f7c5bfce28377bc069a65ba478de0a74aa0ca32 # v46.0.1
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
         with:
           separator: ","
           sha: ${{ matrix.commit }}
@@ -186,7 +186,7 @@ jobs:
       max-parallel: 3
       matrix: ${{ fromJson(needs.prepare-test-matrix.outputs.matrix-tests) }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: NomicFoundation/solx
           ref: 'main'
@@ -199,7 +199,7 @@ jobs:
       - name: Clean up LLVM directory
         run: rm -rf solx-llvm
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ matrix.commit }}
           path: "solx-llvm"
@@ -245,7 +245,7 @@ jobs:
       - name: Save PR-scoped ccache
         if: always() && github.event_name == 'pull_request' && strategy.job-index == 0
         continue-on-error: true
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ccache-llvm
           key: ccache-llvm-${{ runner.os }}-${{ runner.arch }}-mlir-utils-tests-end-pr${{ github.run_id }}-${{ github.run_attempt }}
