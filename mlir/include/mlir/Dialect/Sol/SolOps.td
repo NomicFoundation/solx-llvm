@@ -579,7 +579,8 @@ def Sol_ConditionOp : Sol_Op<"condition", [
 }
 
 def Sol_YieldOp : Sol_Op<"yield", [ReturnLike, Terminator,
-  ParentOneOf<["IfOp", "SwitchOp", "TryOp", "WhileOp", "DoWhileOp", "ForOp"]>]
+  ParentOneOf<["IfOp", "SwitchOp", "TryOp", "WhileOp", "DoWhileOp", "ForOp",
+               "ScopeOp", "ModifierInvocationOp"]>]
 > {
   let arguments = (ins Variadic<AnyType>:$ins);
 
@@ -668,17 +669,44 @@ def Sol_PlaceholderOp : Sol_Op<"placeholder"> {
   let assemblyFormat = "attr-dict";
 }
 
-def Sol_ModifierCallBlkOp : Sol_Op<"modifier_call_blk",
-                                   [SingleBlock, NoTerminator,
-                                    IsolatedFromAbove]> {
-  let regions = (region SizedRegion<1>:$bodyRegion);
+// TODO: Verifier should check that the terminating sol.yield's operand types
+// match the callee's parameter types.
+def Sol_ModifierInvocationOp : Sol_Op<"modifier_invocation", [SingleBlock]> {
+  let summary = "A modifier invocation in a function's modifier list";
+  let description = [{
+    Holds the argument evaluation code of one modifier invocation; the
+    terminating sol.yield carries the evaluated arguments. The region is
+    deliberately not isolated: argument expressions reference the enclosing
+    function's SSA values (parameter and named-return allocas)
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$callee);
+  let regions = (region SizedRegion<1>:$argsRegion);
 
   let builders = [
-    OpBuilder<(ins), [{ $_state.addRegion()->emplaceBlock(); }]>
+    OpBuilder<(ins "FlatSymbolRefAttr":$callee), [{
+      $_state.addAttribute(getCalleeAttrName($_state.name), callee);
+      $_state.addRegion()->emplaceBlock();
+    }]>
   ];
   let skipDefaultBuilders = 1;
 
+  let assemblyFormat = "$callee $argsRegion attr-dict";
+}
+
+def Sol_ScopeOp : Sol_Op<"scope",
+  [DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+   AutomaticAllocationScope, NoRegionArguments]
+> {
+  let summary = "A block that sol.leave exits";
+  let regions = (region MinSizedRegion<1>:$bodyRegion);
+
   let assemblyFormat = "$bodyRegion attr-dict";
+}
+
+// TODO: Verifier should check if a sol.scope is an ancestor.
+def Sol_LeaveOp : Sol_Op<"leave", [Terminator]> {
+  let summary = "Exit the nearest enclosing sol.scope";
+  let assemblyFormat = "attr-dict";
 }
 
 // TODO: Modifiers doesn't return anything and it can't be external. Should we
