@@ -16,7 +16,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "BranchFolding.h"
+// EVM local begin
+#include "llvm/CodeGen/BranchFolding.h"
+// EVM local end
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
