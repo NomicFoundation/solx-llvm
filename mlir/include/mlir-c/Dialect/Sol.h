@@ -39,6 +39,13 @@ MLIR_CAPI_EXPORTED MlirType mlirSolGetEltType(MlirType ty,
 MLIR_CAPI_EXPORTED MlirType mlirSolGepGetResultType(MlirType baseAddrTy,
                                                     MlirType elementType);
 
+/// Materialises the Solidity default value for `ty`, inserting before
+/// `insertBefore`, or at the end of `block` if `insertBefore` is null.
+MLIR_CAPI_EXPORTED MlirValue mlirSolGenDefaultVal(MlirBlock block,
+                                                  MlirOperation insertBefore,
+                                                  MlirType ty,
+                                                  MlirLocation loc);
+
 #ifdef __cplusplus
 }
 #endif
