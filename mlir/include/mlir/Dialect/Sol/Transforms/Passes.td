@@ -11,8 +11,8 @@
 
 include "mlir/Pass/PassBase.td"
 
-def ModifierOpLoweringPass : Pass<"sol-lower-modifier", "ModuleOp"> {
-  let summary = "Lower modifier-related ops in the Sol dialect";
+def ModifierInliningPass : Pass<"sol-inline-modifiers", "ModuleOp"> {
+  let summary = "Inline modifier bodies around modified function bodies";
 }
 
 def LoopInvariantCodeMotionPass : Pass<"sol-licm"> {

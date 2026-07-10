@@ -3759,6 +3759,30 @@ static void lowerSolRegionTerminatorsToYul(Region &region,
   }
 }
 
+struct ScopeOpLowering : public OpConversionPattern<sol::ScopeOp> {
+  using OpConversionPattern<sol::ScopeOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::ScopeOp op, OpAdaptor,
+                                ConversionPatternRewriter &r) const override {
+    auto yulScopeOp = r.create<yul::ScopeOp>(op.getLoc());
+    r.inlineRegionBefore(op.getBodyRegion(), yulScopeOp.getBodyRegion(),
+                         yulScopeOp.getBodyRegion().end());
+    lowerSolRegionTerminatorsToYul(yulScopeOp.getBodyRegion(), r);
+    r.eraseOp(op);
+    return success();
+  }
+};
+
+struct LeaveOpLowering : public OpConversionPattern<sol::LeaveOp> {
+  using OpConversionPattern<sol::LeaveOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::LeaveOp op, OpAdaptor,
+                                ConversionPatternRewriter &r) const override {
+    r.replaceOpWithNewOp<yul::LeaveScopeOp>(op);
+    return success();
+  }
+};
+
 struct IfOpLowering : public OpConversionPattern<sol::IfOp> {
   using OpConversionPattern<sol::IfOp>::OpConversionPattern;
 
@@ -4438,8 +4462,8 @@ void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv) {
 
 void evm::populateControlFlowPats(RewritePatternSet &pats,
                                   TypeConverter &tyConv) {
-  pats.add<IfOpLowering, SwitchOpLowering, LoopOpInterfaceLowering>(
-      tyConv, pats.getContext());
+  pats.add<IfOpLowering, SwitchOpLowering, LoopOpInterfaceLowering,
+           ScopeOpLowering, LeaveOpLowering>(tyConv, pats.getContext());
 }
 
 void evm::populateFuncBoundaryPats(RewritePatternSet &pats,

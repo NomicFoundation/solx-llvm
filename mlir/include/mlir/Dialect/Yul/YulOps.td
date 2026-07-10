@@ -231,6 +231,21 @@ def Yul_ContinueOp : Yul_Op<"continue", [Terminator]> {
   let assemblyFormat = "attr-dict";
 }
 
+def Yul_ScopeOp : Yul_Op<"scope",
+  [AutomaticAllocationScope, NoRegionArguments,
+   DeclareOpInterfaceMethods<RegionBranchOpInterface>]
+> {
+  let summary = "A block that yul.leave_scope exits";
+  let regions = (region MinSizedRegion<1>:$bodyRegion);
+
+  let assemblyFormat = "$bodyRegion attr-dict";
+}
+
+def Yul_LeaveScopeOp : Yul_Op<"leave_scope", [Terminator]> {
+  let summary = "Exit the nearest enclosing yul.scope";
+  let assemblyFormat = "attr-dict";
+}
+
 def Yul_ConditionOp : Yul_Op<"condition", [Terminator]> {
   let arguments = (ins I256:$condition, Variadic<I256OrI256LLVMStruct>:$args);
 
@@ -246,7 +261,8 @@ def Yul_ConditionOp : Yul_Op<"condition", [Terminator]> {
 }
 
 def Yul_YieldOp : Yul_Op<"yield", [ReturnLike, Terminator,
-  ParentOneOf<["IfOp", "SwitchOp", "WhileOp", "DoWhileOp", "ForOp"]>]
+  ParentOneOf<["IfOp", "SwitchOp", "WhileOp", "DoWhileOp", "ForOp",
+               "ScopeOp"]>]
 > {
   let arguments = (ins Variadic<I256OrI256LLVMStruct>:$operands);
 
