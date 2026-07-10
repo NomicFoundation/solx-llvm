@@ -25,7 +25,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CodeGen/MachineBlockPlacement.h"
-#include "BranchFolding.h"
+// EVM local begin
+#include "llvm/CodeGen/BranchFolding.h"
+// EVM local end
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
