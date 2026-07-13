@@ -2180,10 +2180,20 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
   // Zero every storage slot that \p ty occupies at \p slot.
   auto genZeroStorageSlots = [&](Type ty, Value slot) {
     unsigned slotCount = sol::getStorageSlotCount(ty);
-    for (unsigned i = 0; i < slotCount; ++i) {
-      Value slotAddr = b.create<yul::AddOp>(loc, slot, bExt.genI256Const(i));
-      b.create<yul::SStoreOp>(loc, slotAddr, bExt.genI256Const(0, loc));
-    }
+    Value zero = bExt.genI256Const(0, loc);
+    bExt.createCountedLoop(
+        bExt.genI256Const(0), bExt.genI256Const(slotCount),
+        bExt.genI256Const(1), ValueRange{},
+        [&](OpBuilder &b, Location loc, Value indVar, ValueRange) {
+          Value slotAddr = b.create<yul::AddOp>(loc, slot, indVar);
+          b.create<yul::SStoreOp>(loc, slotAddr, zero);
+          return SmallVector<Value>{};
+        },
+        // Only plain values reach this point, so unrolling a few sstores
+        // keeps the code straight line without growing it much.
+        // TODO: #59, tune the loop unroll threshold for storage clearing
+        // loops.
+        /*fullUnroll=*/slotCount <= 8);
   };
 
   if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
@@ -2200,15 +2210,19 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
       return;
     } else if (sol::hasDynamicallySizedElt(arrTy.getEltType())) {
       // Fixed-size array with complex element type (dyn array, string,
-      // struct): iterate each element and recurse.
+      // struct): clear each element in a runtime loop. No full unroll here,
+      // the elements are aggregates and their clearing code is not small.
       Type eltTy = arrTy.getEltType();
       unsigned size = arrTy.getSize();
       unsigned slotsPerElt = sol::getStorageSlotCount(eltTy);
-      for (unsigned i = 0; i < size; ++i) {
-        Value eltSlot =
-            b.create<yul::AddOp>(loc, slot, bExt.genI256Const(i * slotsPerElt));
-        genClearStorageValue(eltTy, eltSlot, loc);
-      }
+      bExt.createCountedLoop(
+          bExt.genI256Const(0), bExt.genI256Const(size * slotsPerElt),
+          bExt.genI256Const(slotsPerElt), ValueRange{},
+          [&](OpBuilder &b, Location loc, Value slotOff, ValueRange) {
+            Value eltSlot = b.create<yul::AddOp>(loc, slot, slotOff);
+            genClearStorageValue(eltTy, eltSlot, loc);
+            return SmallVector<Value>{};
+          });
     } else {
       // Scalar/packed fixed-size array (e.g. uint72[2]).
       genZeroStorageSlots(ty, slot);
