@@ -38,6 +38,12 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ghcr.io/nomicfoundation/solx-ci-runner"],
       "enabled": false
+    },
+    {
+      "description": "Formatting venv (black/darker/PyGithub): security-only. requirements_formatting.txt.in is an upstream LLVM file, so routine version bumps here are a fork divergence that the next full LLVM rebase resets or conflicts — near-zero value for one formatting job (see PR #111, where darker 1.7.3 broke against the pinned black). vulnerabilityAlerts/osvVulnerabilityAlerts override enabled:false, so CVE fixes still open PRs.",
+      "matchManagers": ["pip-compile"],
+      "matchUpdateTypes": ["patch", "minor", "major"],
+      "enabled": false
     }
   ]
 }
