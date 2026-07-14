@@ -2849,4 +2849,8 @@ int LLVMPrintCommitIDTo(char* Buf) {
   return snprintf(Buf, sizeof(EVM_LLVM_COMMIT_ID), "%s",
                   EVM_LLVM_COMMIT_ID);
 }
+
+void LLVMResetAllOptionOccurrences(void) {
+  llvm::cl::ResetAllOptionOccurrences();
+}
 // EVM local end
