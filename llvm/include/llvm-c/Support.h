@@ -70,6 +70,14 @@ LLVM_C_ABI void LLVMAddSymbol(const char *symbolName, void *symbolValue);
  * Return sprintf exit code.
  */
 int LLVMPrintCommitIDTo(char* Buf);
+
+/**
+ * Reset every registered command line option to its default value and zero its
+ * occurrence count, so a following LLVMParseCommandLineOptions starts clean.
+ *
+ * @see llvm::cl::ResetAllOptionOccurrences()
+ */
+LLVM_C_ABI void LLVMResetAllOptionOccurrences(void);
 // EVM local end
 
 /**
