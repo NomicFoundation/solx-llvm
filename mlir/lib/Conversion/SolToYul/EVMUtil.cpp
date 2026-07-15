@@ -1844,9 +1844,24 @@ void evm::Builder::genClearStringStorageTail(Value dstAddr, Value oldLength,
                                              Value newLength,
                                              std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
+  auto i256Ty = b.getIntegerType(256);
+  sol::FuncOp fn = getOrCreateHelperFn(
+      HelperKind::ClearStringTail, {}, {i256Ty, i256Ty, i256Ty}, {},
+      [&](ValueRange args) {
+        genClearStringStorageTailInline(args[0], args[1], args[2], loc);
+        b.create<sol::ReturnOp>(loc);
+      },
+      loc);
+  b.create<sol::CallOp>(loc, fn, ValueRange{dstAddr, oldLength, newLength});
+}
+
+void evm::Builder::genClearStringStorageTailInline(Value dstAddr,
+                                                   Value oldLength,
+                                                   Value newLength,
+                                                   Location loc) {
   mlir::solgen::BuilderExt bExt(b, loc);
 
-  // Only the out-of-place (long) form uses extra data slots; short strings
+  // Only the out-of-place (long) form uses extra data slots. Short strings
   // (≤31 bytes) are fully self-contained in the length slot.
   Value cleanCond =
       bExt.genCmp(yul::CmpPredicate::ugt, oldLength, bExt.genI256Const(31));
@@ -1880,6 +1895,47 @@ void evm::Builder::genClearStringStorageTail(Value dstAddr, Value oldLength,
 
 void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
                                           std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  sol::DataLocation srcDataLoc = sol::getDataLocation(ty);
+  auto i256Ty = b.getIntegerType(256);
+
+  // Calldata string references are fat pointers, which do not fit the plain
+  // i256 helper signature. Unpack the raw data address and the length here
+  // and pass them to a helper with a three argument signature.
+  if (srcDataLoc == sol::DataLocation::CallData) {
+    Value dataAddr = genDataAddrPtr(src, srcDataLoc, loc);
+    Value length = genDynSize(src, ty, loc);
+    sol::FuncOp fn = getOrCreateHelperFn(
+        HelperKind::Copy,
+        {dataLocationName(srcDataLoc),
+         dataLocationName(sol::DataLocation::Storage), "string"},
+        {i256Ty, i256Ty, i256Ty}, {},
+        [&](ValueRange args) {
+          genCopyStringToStorageInline(args[0], ty, args[2], loc,
+                                       /*srcLength=*/args[1]);
+          b.create<sol::ReturnOp>(loc);
+        },
+        loc);
+    b.create<sol::CallOp>(loc, fn, ValueRange{dataAddr, length, dstAddr});
+    return;
+  }
+
+  sol::FuncOp fn = getOrCreateHelperFn(
+      HelperKind::Copy,
+      {dataLocationName(srcDataLoc),
+       dataLocationName(sol::DataLocation::Storage), "string"},
+      {i256Ty, i256Ty}, {},
+      [&](ValueRange args) {
+        genCopyStringToStorageInline(args[0], ty, args[1], loc);
+        b.create<sol::ReturnOp>(loc);
+      },
+      loc);
+  b.create<sol::CallOp>(loc, fn, ValueRange{src, dstAddr});
+}
+
+void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
+                                                Value dstAddr, Location loc,
+                                                Value srcLength) {
   // Storage layout for `bytes` / `string` in Solidity:
   //
   // - These types use two different encodings depending on their length.
@@ -1903,14 +1959,17 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
   //    slot[keccak256(p)+1]  = bytes[32..63]
   //    ...
   //
-  Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
   Value lengthSlot = nullptr;
   Value length = nullptr;
   sol::DataLocation srcDataLoc = sol::getDataLocation(ty);
-  if (srcDataLoc == sol::DataLocation::CallData ||
-      srcDataLoc == sol::DataLocation::Memory) {
+  if (srcDataLoc == sol::DataLocation::CallData) {
+    // The caller pre decodes the fat pointer: src is the raw data address and
+    // srcLength is the length.
+    assert(srcLength && "calldata source needs a pre decoded length");
+    length = srcLength;
+  } else if (srcDataLoc == sol::DataLocation::Memory) {
     length = genDynSize(src, ty, loc);
   } else {
     assert(srcDataLoc == sol::DataLocation::Storage);
@@ -1931,7 +1990,9 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
   b.setInsertionPointToStart(&ifOutOfPlace.getThenRegion().front());
 
   Value dstDataArea = genDataAddrPtr(dstAddr, sol::DataLocation::Storage, loc);
-  Value srcDataAddr = genDataAddrPtr(src, srcDataLoc, loc);
+  Value srcDataAddr = srcDataLoc == sol::DataLocation::CallData
+                          ? src
+                          : genDataAddrPtr(src, srcDataLoc, loc);
   Value loopEnd = b.create<yul::AndOp>(
       loc, length, bExt.genI256Const(~APInt(256, 0x1F), loc));
 
@@ -1995,13 +2056,17 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
     // so its data occupies the high 31 bytes of `lengthSlot` and `length*2`
     // sits in the low byte. getI256MSBMaskedValue keeps exactly the top
     // `length` bytes and discards the rest, which correctly strips that low
-    // byte. For non-storage sources we load the raw data word directly.
+    // byte. For non-storage sources we load the raw data word directly (for
+    // calldata sources src already is the raw data address).
     // isNotEmptyCond above ensures length > 0, satisfying the maskLen > 0
     // precondition of getI256MSBMaskedValue.
-    Value val =
-        srcDataLoc == sol::DataLocation::Storage
-            ? lengthSlot
-            : genLoad(genDataAddrPtr(src, srcDataLoc, loc), srcDataLoc, loc);
+    Value val;
+    if (srcDataLoc == sol::DataLocation::Storage)
+      val = lengthSlot;
+    else if (srcDataLoc == sol::DataLocation::CallData)
+      val = genLoad(src, srcDataLoc, loc);
+    else
+      val = genLoad(genDataAddrPtr(src, srcDataLoc, loc), srcDataLoc, loc);
     Value maskedVal = getI256MSBMaskedValue(b, val, length, loc);
     Value doubleLength =
         b.create<yul::MulOp>(loc, length, bExt.genI256Const(2, loc));
@@ -2075,6 +2140,10 @@ static llvm::StringRef getHelperKindSpelling(evm::Builder::HelperKind kind) {
     return "clear_storage";
   case evm::Builder::HelperKind::Copy:
     return "copy";
+  case evm::Builder::HelperKind::ClearStringTail:
+    return "clear_string_tail";
+  case evm::Builder::HelperKind::CopyStringData:
+    return "copy_string_data";
   }
   llvm_unreachable("Unexpected helper kind");
 }
@@ -2113,13 +2182,26 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
     HelperKind kind, ArrayRef<StringRef> fields, TypeRange argTys,
     TypeRange resTys, llvm::function_ref<void(ValueRange)> genBody,
     Location loc) {
-  // The helper lives in the enclosing contract: stage-2 contract lowering then
-  // relocates it into the creation/runtime objects and clones it where needed,
-  // and the regular sol.func -> yul.func lowering handles the rest, so a
-  // recursive helper behaves exactly like a user-written recursive function.
+  // The helper normally lives in the enclosing contract: stage-2 contract
+  // lowering then relocates it into the creation/runtime objects and clones
+  // it where needed, and the regular sol.func -> yul.func lowering handles
+  // the rest, so a recursive helper behaves exactly like a user-written
+  // recursive function.
+  //
+  // Free functions that no contract references are lowered standalone at
+  // module level (referenced ones are cloned into each referencing contract
+  // by the frontend). Their helpers are hosted by the module itself. Nothing
+  // relocates module level helpers, which is fine because no contract object
+  // can reach that code.
+  // TODO: The module level hosting exists only to keep standalone free
+  // functions compilable and is a subject of future removal. The pipeline
+  // should stop lowering free functions that no contract references, matching
+  // the upstream solc pipeline, which generates no code for them.
   auto contract =
       b.getInsertionBlock()->getParentOp()->getParentOfType<sol::ContractOp>();
-  assert(contract && "helper must be created within a contract");
+  Operation *host = contract ? contract.getOperation() : mod.getOperation();
+  Block *hostBlock =
+      contract ? &contract.getBodyRegion().front() : mod.getBody();
 
   std::string name = getHelperSymbol(kind, fields);
   auto fnTy = FunctionType::get(b.getContext(), argTys, resTys);
@@ -2130,7 +2212,8 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
   // (kind, fields) combinations can never produce the same symbol, so if the
   // key or signature of the found function does not match, the symbol scheme
   // is broken.
-  if (auto fn = contract.lookupSymbol<sol::FuncOp>(name)) {
+  if (auto fn = dyn_cast_or_null<sol::FuncOp>(
+          SymbolTable::lookupSymbolIn(host, name))) {
     assert(fn->getAttr(kHelperKeyAttrName) == keyAttr &&
            "helper symbol collision");
     assert(fn.getFunctionType() == fnTy && "helper signature mismatch");
@@ -2138,7 +2221,7 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
   }
 
   OpBuilder::InsertionGuard guard(b);
-  b.setInsertionPointToEnd(&contract.getBodyRegion().front());
+  b.setInsertionPointToEnd(hostBlock);
 
   auto fn = b.create<sol::FuncOp>(loc, name, fnTy);
   fn->setAttr(kHelperKeyAttrName, keyAttr);
@@ -2180,10 +2263,20 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
   // Zero every storage slot that \p ty occupies at \p slot.
   auto genZeroStorageSlots = [&](Type ty, Value slot) {
     unsigned slotCount = sol::getStorageSlotCount(ty);
-    for (unsigned i = 0; i < slotCount; ++i) {
-      Value slotAddr = b.create<yul::AddOp>(loc, slot, bExt.genI256Const(i));
-      b.create<yul::SStoreOp>(loc, slotAddr, bExt.genI256Const(0, loc));
-    }
+    Value zero = bExt.genI256Const(0, loc);
+    bExt.createCountedLoop(
+        bExt.genI256Const(0), bExt.genI256Const(slotCount),
+        bExt.genI256Const(1), ValueRange{},
+        [&](OpBuilder &b, Location loc, Value indVar, ValueRange) {
+          Value slotAddr = b.create<yul::AddOp>(loc, slot, indVar);
+          b.create<yul::SStoreOp>(loc, slotAddr, zero);
+          return SmallVector<Value>{};
+        },
+        // Only plain values reach this point, so unrolling a few sstores
+        // keeps the code straight line without growing it much.
+        // TODO: #59, tune the loop unroll threshold for storage clearing
+        // loops.
+        /*fullUnroll=*/slotCount <= 8);
   };
 
   if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
@@ -2200,15 +2293,19 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
       return;
     } else if (sol::hasDynamicallySizedElt(arrTy.getEltType())) {
       // Fixed-size array with complex element type (dyn array, string,
-      // struct): iterate each element and recurse.
+      // struct): clear each element in a runtime loop. No full unroll here,
+      // the elements are aggregates and their clearing code is not small.
       Type eltTy = arrTy.getEltType();
       unsigned size = arrTy.getSize();
       unsigned slotsPerElt = sol::getStorageSlotCount(eltTy);
-      for (unsigned i = 0; i < size; ++i) {
-        Value eltSlot =
-            b.create<yul::AddOp>(loc, slot, bExt.genI256Const(i * slotsPerElt));
-        genClearStorageValue(eltTy, eltSlot, loc);
-      }
+      bExt.createCountedLoop(
+          bExt.genI256Const(0), bExt.genI256Const(size * slotsPerElt),
+          bExt.genI256Const(slotsPerElt), ValueRange{},
+          [&](OpBuilder &b, Location loc, Value slotOff, ValueRange) {
+            Value eltSlot = b.create<yul::AddOp>(loc, slot, slotOff);
+            genClearStorageValue(eltTy, eltSlot, loc);
+            return SmallVector<Value>{};
+          });
     } else {
       // Scalar/packed fixed-size array (e.g. uint72[2]).
       genZeroStorageSlots(ty, slot);
@@ -2428,10 +2525,31 @@ Value evm::Builder::genCopyStringDataToMemory(Value src, Type ty,
 void evm::Builder::genCopyStringDataFromStorageToMemory(
     Value src, Value lengthSlot, Value length, Value dstDataAddr,
     std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  auto i256Ty = b.getIntegerType(256);
+  sol::FuncOp fn = getOrCreateHelperFn(
+      HelperKind::CopyStringData,
+      {dataLocationName(sol::DataLocation::Storage),
+       dataLocationName(sol::DataLocation::Memory)},
+      {i256Ty, i256Ty, i256Ty, i256Ty}, {},
+      [&](ValueRange args) {
+        genCopyStringDataFromStorageToMemoryInline(args[0], args[1], args[2],
+                                                   args[3], loc);
+        b.create<sol::ReturnOp>(loc);
+      },
+      loc);
+  b.create<sol::CallOp>(loc, fn,
+                        ValueRange{src, lengthSlot, length, dstDataAddr});
+}
+
+void evm::Builder::genCopyStringDataFromStorageToMemoryInline(Value src,
+                                                              Value lengthSlot,
+                                                              Value length,
+                                                              Value dstDataAddr,
+                                                              Location loc) {
   // See 'genCopyStringToStorage' regarding the storage layout for
   // `bytes` / `string` in Solidity.
 
-  Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
   Value one = bExt.genI256Const(1, loc);

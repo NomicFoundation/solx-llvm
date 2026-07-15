@@ -197,9 +197,31 @@ private:
   /// string/bytes at \p dstAddr that are no longer needed when the content
   /// changes from \p oldLength to \p newLength bytes.  Called only when
   /// \p oldLength > 31 (i.e. the old value used out-of-place storage).
+  /// Emitted as a call to a per-contract __sol.clear_string_tail helper.
   void genClearStringStorageTail(
       mlir::Value dstAddr, mlir::Value oldLength, mlir::Value newLength,
       std::optional<mlir::Location> locArg = std::nullopt);
+
+  /// Inline expansion behind genClearStringStorageTail.
+  void genClearStringStorageTailInline(mlir::Value dstAddr,
+                                       mlir::Value oldLength,
+                                       mlir::Value newLength,
+                                       mlir::Location loc);
+
+  /// Inline expansion behind genCopyStringToStorage. For calldata sources the
+  /// caller pre decodes the fat pointer: \p src is the raw data address and
+  /// \p srcLength is the length. For other sources \p src is the string
+  /// reference and \p srcLength must be null.
+  void genCopyStringToStorageInline(mlir::Value src, mlir::Type ty,
+                                    mlir::Value dstAddr, mlir::Location loc,
+                                    mlir::Value srcLength = nullptr);
+
+  /// Inline expansion behind genCopyStringDataFromStorageToMemory.
+  void genCopyStringDataFromStorageToMemoryInline(mlir::Value src,
+                                                  mlir::Value lengthSlot,
+                                                  mlir::Value length,
+                                                  mlir::Value dstDataAddr,
+                                                  mlir::Location loc);
 
   /// Returns the number of storage slots occupied by \p len elements of type
   /// \p eltTy: ceil(len / elemsPerSlot) for packable types, len * slotsPerElt
@@ -369,6 +391,7 @@ public:
   /// for the string's raw bytes. For length-prefixed encodings in memory,
   /// this is typically the address immediately past the length word. Uses the
   /// pre-decoded \p lengthSlot and \p length. Does not write the length word.
+  /// Emitted as a call to a per-contract __sol.copy_string_data helper.
   void genCopyStringDataFromStorageToMemory(
       mlir::Value src, mlir::Value lengthSlot, mlir::Value length,
       mlir::Value dstDataAddr,
@@ -426,7 +449,8 @@ public:
 
   /// Copies a string from \p src (any data location encoded in \p ty) to the
   /// storage slot \p dstAddr, handling in-place / out-of-place encoding and
-  /// zeroing storage slots no longer needed by the new value.
+  /// zeroing storage slots no longer needed by the new value. Emitted as a
+  /// call to a per-contract __sol.copy helper (one per source data location).
   void
   genCopyStringToStorage(mlir::Value src, mlir::Type ty, mlir::Value dstAddr,
                          std::optional<mlir::Location> locArg = std::nullopt);
@@ -452,8 +476,14 @@ public:
   enum class HelperKind {
     /// Zeroes a value in storage. Fields: {struct name}.
     ClearStorage,
-    /// Deep copy between data locations. Fields: {src, dst, struct name}.
+    /// Deep copy between data locations. Fields: {src, dst, type name}.
     Copy,
+    /// Zeroes the no longer needed out-of-place data slots of a storage
+    /// string. No fields.
+    ClearStringTail,
+    /// Copies the raw bytes of a string between data locations, without
+    /// writing the length word. Fields: {src, dst}.
+    CopyStringData,
   };
 
   /// Returns the helper symbol for \p kind and \p fields: the kind spelling
@@ -477,6 +507,13 @@ public:
   /// cloned and lowered by the existing contract/object machinery. The helper
   /// carries its structured key as a `sol.helper_key` attribute, which is
   /// verified on reuse together with the signature.
+  ///
+  /// When the insertion point is not inside a contract (a free function that
+  /// no contract references, lowered standalone at module level), the helper
+  /// is hosted by the module instead. Nothing relocates module level helpers,
+  /// which is fine because no contract object can reach that code. This
+  /// support exists only for standalone free functions and is a subject of
+  /// future removal, see the comment in the implementation.
   mlir::sol::FuncOp getOrCreateHelperFn(
       HelperKind kind, llvm::ArrayRef<llvm::StringRef> fields,
       mlir::TypeRange argTys, mlir::TypeRange resTys,
