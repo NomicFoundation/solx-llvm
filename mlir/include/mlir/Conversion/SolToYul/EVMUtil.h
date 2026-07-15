@@ -96,6 +96,29 @@ struct ABIEncodingOptions {
   bool dynamicInplace = false;
 };
 
+/// Typed generators for out-of-line helper symbols. Every helper symbol is
+/// produced by one of these. A symbol is the helper's fixed spelling and its
+/// '.'-joined fields after the reserved "__sol." prefix. Two different
+/// helpers can never produce the same symbol: each generator uses a distinct
+/// spelling, the parts are separated by '.', and no field may contain '.'
+/// (asserted). Solidity identifiers cannot contain '.' either, so no user
+/// symbol can collide with a helper symbol.
+namespace helpersym {
+/// Deep copy between data locations: `__sol.copy.<src>.<dst>.<type name>`.
+std::string copy(mlir::sol::DataLocation src, mlir::sol::DataLocation dst,
+                 llvm::StringRef tyName);
+/// Zeroes an identified struct in storage:
+/// `__sol.clear_storage.<struct name>`.
+std::string clearStorage(mlir::sol::StructType ty);
+/// Zeroes the no longer needed out-of-place data slots of a storage string:
+/// `__sol.clear_string_tail`.
+std::string clearStringTail();
+/// Copies the raw bytes of a string between data locations, without writing
+/// the length word: `__sol.copy_string_data.<src>.<dst>`.
+std::string copyStringData(mlir::sol::DataLocation src,
+                           mlir::sol::DataLocation dst);
+} // namespace helpersym
+
 /// IR Builder for EVM specific lowering.
 class Builder {
   // It's possible to provide a mlirgen::BuilderHelper member with same default
@@ -200,6 +223,27 @@ private:
   void genClearStringStorageTail(
       mlir::Value dstAddr, mlir::Value oldLength, mlir::Value newLength,
       std::optional<mlir::Location> locArg = std::nullopt);
+
+  /// Inline expansion behind genClearStringStorageTail.
+  void genClearStringStorageTailInline(mlir::Value dstAddr,
+                                       mlir::Value oldLength,
+                                       mlir::Value newLength,
+                                       mlir::Location loc);
+
+  /// Inline expansion behind genCopyStringToStorage. For calldata sources the
+  /// caller pre decodes the fat pointer: \p src is the raw data address and
+  /// \p srcLength is the length. For other sources \p src is the string
+  /// reference and \p srcLength must be null.
+  void genCopyStringToStorageInline(mlir::Value src, mlir::Type ty,
+                                    mlir::Value dstAddr, mlir::Location loc,
+                                    mlir::Value srcLength = nullptr);
+
+  /// Inline expansion behind genCopyStringDataFromStorageToMemory.
+  void genCopyStringDataFromStorageToMemoryInline(mlir::Value src,
+                                                  mlir::Value lengthSlot,
+                                                  mlir::Value length,
+                                                  mlir::Value dstDataAddr,
+                                                  mlir::Location loc);
 
   /// Returns the number of storage slots occupied by \p len elements of type
   /// \p eltTy: ceil(len / elemsPerSlot) for packable types, len * slotsPerElt
@@ -436,42 +480,28 @@ public:
                mlir::sol::DataLocation dstDataLoc,
                std::optional<mlir::Location> locArg = std::nullopt);
 
-  /// Kinds of out-of-line helper functions. Every helper symbol is built by
-  /// getHelperSymbol from its kind and fields, so a new helper must add a
-  /// kind here (and its spelling in getHelperKindSpelling).
-  enum class HelperKind {
-    /// Zeroes a value in storage. Fields: {struct name}.
-    ClearStorage,
-    /// Deep copy between data locations. Fields: {src, dst, struct name}.
-    Copy,
-  };
-
-  /// Returns the helper symbol for \p kind and \p fields: the kind spelling
-  /// and the fields joined with '.' after the reserved "__sol." prefix.
-  /// Two different (kind, fields) combinations can never produce the same
-  /// symbol, because the parts are separated by '.' and no field may contain
-  /// '.' (asserted). Solidity identifiers cannot contain '.' either, so no
-  /// user symbol can collide with a helper symbol.
-  static std::string getHelperSymbol(HelperKind kind,
-                                     llvm::ArrayRef<llvm::StringRef> fields);
-
-  /// Returns the helper function of \p kind for \p fields in the enclosing
-  /// contract, creating it on first request: a `sol.func` with signature
+  /// Returns the helper function named \p symbol in the enclosing contract,
+  /// creating it on first request: a `sol.func` with signature
   /// `argTys -> resTys` whose body is emitted by \p genBody (which receives the
   /// entry-block arguments and must emit the terminating `sol.return`). The
-  /// symbol is registered before \p genBody runs, so a self-reference reached
-  /// while building the body resolves to a recursive call instead of recursing
-  /// in the compiler. Used to out-of-line recursive storage operations (clear,
-  /// deep copy) over self-referential structs, mirroring upstream solc's named
-  /// Yul copy/convert functions. As a `sol.func` the helper is relocated,
-  /// cloned and lowered by the existing contract/object machinery. The helper
-  /// carries its structured key as a `sol.helper_key` attribute, which is
-  /// verified on reuse together with the signature.
-  mlir::sol::FuncOp
-  getOrCreateHelperFn(HelperKind kind, llvm::ArrayRef<llvm::StringRef> fields,
-                      mlir::TypeRange argTys, mlir::TypeRange resTys,
-                      llvm::function_ref<void(mlir::ValueRange)> genBody,
-                      mlir::Location loc);
+  /// symbol must come from a `helpersym` generator, which guarantees it is
+  /// unique to one helper. The signature is verified when an existing helper
+  /// is reused. The symbol is registered before \p genBody runs, so a
+  /// self-reference reached while building the body resolves to a recursive
+  /// call instead of recursing in the compiler. Used to out-of-line recursive
+  /// storage operations (clear, deep copy) over self-referential structs,
+  /// mirroring upstream solc's named Yul copy/convert functions. As a
+  /// `sol.func` the helper is relocated, cloned and lowered by the existing
+  /// contract/object machinery.
+  /// When the insertion point is not inside a contract (a free function that
+  /// no contract references, lowered standalone at module level), the helper
+  /// is hosted by the module instead. Nothing relocates module level helpers,
+  /// which is fine because no contract object can reach that code. This
+  /// support exists only for standalone free functions and is a subject of
+  /// future removal, see the comment in the implementation.
+  mlir::sol::FuncOp getOrCreateHelperFn(
+      llvm::StringRef symbol, mlir::TypeRange argTys, mlir::TypeRange resTys,
+      llvm::function_ref<void(mlir::ValueRange)> genBody, mlir::Location loc);
 
   /// Generates the 'push' of a value to string.
   void genPushToString(mlir::Value srcAddr, mlir::Value value,
