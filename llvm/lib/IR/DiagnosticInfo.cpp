@@ -138,6 +138,13 @@ void DiagnosticInfoPGOProfile::print(DiagnosticPrinter &DP) const {
   DP << getMsg();
 }
 
+// EVM local begin
+void DiagnosticInfoEVMStackRegionOverflow::print(DiagnosticPrinter &DP) const {
+  DP << "total stack size (" << TotalStackSize
+     << ") exceeds the allocated stack region size (" << StackRegionSize << ")";
+}
+// EVM local end
+
 void DiagnosticInfo::anchor() {}
 void DiagnosticInfoStackSize::anchor() {}
 void DiagnosticInfoWithLocationBase::anchor() {}
@@ -201,8 +208,7 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key,
   if (auto *F = dyn_cast<Function>(V)) {
     if (DISubprogram *SP = F->getSubprogram())
       Loc = SP;
-  }
-  else if (auto *I = dyn_cast<Instruction>(V))
+  } else if (auto *I = dyn_cast<Instruction>(V))
     Loc = I->getDebugLoc();
 
   // Only include names that correspond to user variables.  FIXME: We should use
@@ -273,7 +279,8 @@ DiagnosticInfoOptimizationBase::Argument::Argument(StringRef Key, DebugLoc Loc)
     : Key(std::string(Key)), Loc(Loc) {
   if (Loc) {
     Val = (Loc->getFilename() + ":" + Twine(Loc.getLine()) + ":" +
-           Twine(Loc.getCol())).str();
+           Twine(Loc.getCol()))
+              .str();
   } else {
     Val = "<UNKNOWN LOCATION>";
   }
