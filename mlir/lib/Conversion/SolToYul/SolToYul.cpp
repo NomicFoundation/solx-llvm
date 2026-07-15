@@ -2383,10 +2383,8 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       if (structTy.isIdentified()) {
         auto i256Ty = r.getIntegerType(256);
         sol::FuncOp fn = evmB.getOrCreateHelperFn(
-            evm::Builder::HelperKind::Copy,
-            {sol::stringifyDataLocation(srcDataLoc).lower(),
-             sol::stringifyDataLocation(sol::DataLocation::Memory).lower(),
-             structTy.getName()},
+            evm::helpersym::copy(srcDataLoc, sol::DataLocation::Memory,
+                                 structTy.getName()),
             {i256Ty}, {i256Ty},
             [&](ValueRange args) {
               Value memPtr = genStructToMemoryInline(mod, args[0], structTy,

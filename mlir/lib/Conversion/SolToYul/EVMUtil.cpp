@@ -1848,9 +1848,24 @@ void evm::Builder::genClearStringStorageTail(Value dstAddr, Value oldLength,
                                              Value newLength,
                                              std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
+  auto i256Ty = b.getIntegerType(256);
+  sol::FuncOp fn = getOrCreateHelperFn(
+      helpersym::clearStringTail(), {i256Ty, i256Ty, i256Ty}, {},
+      [&](ValueRange args) {
+        genClearStringStorageTailInline(args[0], args[1], args[2], loc);
+        b.create<sol::ReturnOp>(loc);
+      },
+      loc);
+  b.create<sol::CallOp>(loc, fn, ValueRange{dstAddr, oldLength, newLength});
+}
+
+void evm::Builder::genClearStringStorageTailInline(Value dstAddr,
+                                                   Value oldLength,
+                                                   Value newLength,
+                                                   Location loc) {
   mlir::solgen::BuilderExt bExt(b, loc);
 
-  // Only the out-of-place (long) form uses extra data slots; short strings
+  // Only the out-of-place (long) form uses extra data slots. Short strings
   // (≤31 bytes) are fully self-contained in the length slot.
   Value cleanCond =
       bExt.genCmp(yul::CmpPredicate::ugt, oldLength, bExt.genI256Const(31));
@@ -1884,6 +1899,43 @@ void evm::Builder::genClearStringStorageTail(Value dstAddr, Value oldLength,
 
 void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
                                           std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  sol::DataLocation srcDataLoc = sol::getDataLocation(ty);
+  auto i256Ty = b.getIntegerType(256);
+
+  // Calldata string references are fat pointers, which do not fit the plain
+  // i256 helper signature. Unpack the raw data address and the length here
+  // and pass them to a helper with a three argument signature.
+  if (srcDataLoc == sol::DataLocation::CallData) {
+    Value dataAddr = genDataAddrPtr(src, srcDataLoc, loc);
+    Value length = genDynSize(src, ty, loc);
+    sol::FuncOp fn = getOrCreateHelperFn(
+        helpersym::copy(srcDataLoc, sol::DataLocation::Storage, "string"),
+        {i256Ty, i256Ty, i256Ty}, {},
+        [&](ValueRange args) {
+          genCopyStringToStorageInline(args[0], ty, args[2], loc,
+                                       /*srcLength=*/args[1]);
+          b.create<sol::ReturnOp>(loc);
+        },
+        loc);
+    b.create<sol::CallOp>(loc, fn, ValueRange{dataAddr, length, dstAddr});
+    return;
+  }
+
+  sol::FuncOp fn = getOrCreateHelperFn(
+      helpersym::copy(srcDataLoc, sol::DataLocation::Storage, "string"),
+      {i256Ty, i256Ty}, {},
+      [&](ValueRange args) {
+        genCopyStringToStorageInline(args[0], ty, args[1], loc);
+        b.create<sol::ReturnOp>(loc);
+      },
+      loc);
+  b.create<sol::CallOp>(loc, fn, ValueRange{src, dstAddr});
+}
+
+void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
+                                                Value dstAddr, Location loc,
+                                                Value srcLength) {
   // Storage layout for `bytes` / `string` in Solidity:
   //
   // - These types use two different encodings depending on their length.
@@ -1907,14 +1959,17 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
   //    slot[keccak256(p)+1]  = bytes[32..63]
   //    ...
   //
-  Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
   Value lengthSlot = nullptr;
   Value length = nullptr;
   sol::DataLocation srcDataLoc = sol::getDataLocation(ty);
-  if (srcDataLoc == sol::DataLocation::CallData ||
-      srcDataLoc == sol::DataLocation::Memory) {
+  if (srcDataLoc == sol::DataLocation::CallData) {
+    // The caller pre-decodes the fat pointer: src is the raw data address and
+    // srcLength is the length.
+    assert(srcLength && "calldata source needs a pre-decoded length");
+    length = srcLength;
+  } else if (srcDataLoc == sol::DataLocation::Memory) {
     length = genDynSize(src, ty, loc);
   } else {
     assert(srcDataLoc == sol::DataLocation::Storage);
@@ -1935,7 +1990,9 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
   b.setInsertionPointToStart(&ifOutOfPlace.getThenRegion().front());
 
   Value dstDataArea = genDataAddrPtr(dstAddr, sol::DataLocation::Storage, loc);
-  Value srcDataAddr = genDataAddrPtr(src, srcDataLoc, loc);
+  Value srcDataAddr = srcDataLoc == sol::DataLocation::CallData
+                          ? src
+                          : genDataAddrPtr(src, srcDataLoc, loc);
   Value loopEnd = b.create<yul::AndOp>(
       loc, length, bExt.genI256Const(~APInt(256, 0x1F), loc));
 
@@ -1999,13 +2056,17 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
     // so its data occupies the high 31 bytes of `lengthSlot` and `length*2`
     // sits in the low byte. getI256MSBMaskedValue keeps exactly the top
     // `length` bytes and discards the rest, which correctly strips that low
-    // byte. For non-storage sources we load the raw data word directly.
+    // byte. For non-storage sources we load the raw data word directly (for
+    // calldata sources src already is the raw data address).
     // isNotEmptyCond above ensures length > 0, satisfying the maskLen > 0
     // precondition of getI256MSBMaskedValue.
-    Value val =
-        srcDataLoc == sol::DataLocation::Storage
-            ? lengthSlot
-            : genLoad(genDataAddrPtr(src, srcDataLoc, loc), srcDataLoc, loc);
+    Value val;
+    if (srcDataLoc == sol::DataLocation::Storage)
+      val = lengthSlot;
+    else if (srcDataLoc == sol::DataLocation::CallData)
+      val = genLoad(src, srcDataLoc, loc);
+    else
+      val = genLoad(genDataAddrPtr(src, srcDataLoc, loc), srcDataLoc, loc);
     Value maskedVal = getI256MSBMaskedValue(b, val, length, loc);
     Value doubleLength =
         b.create<yul::MulOp>(loc, length, bExt.genI256Const(2, loc));
@@ -2058,7 +2119,7 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
     // forever here.
     auto i256Ty = b.getIntegerType(256);
     sol::FuncOp fn = getOrCreateHelperFn(
-        HelperKind::ClearStorage, {structTy.getName()}, {i256Ty}, {},
+        helpersym::clearStorage(structTy), {i256Ty}, {},
         [&](ValueRange args) {
           genClearStorageValueInline(structTy, args[0], loc);
           b.create<sol::ReturnOp>(loc);
@@ -2070,40 +2131,13 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
   genClearStorageValueInline(ty, slot, loc);
 }
 
-/// Fixed spelling of a helper kind used in helper symbols.
-static llvm::StringRef getHelperKindSpelling(evm::Builder::HelperKind kind) {
-  switch (kind) {
-  case evm::Builder::HelperKind::ClearStorage:
-    return "clear_storage";
-  case evm::Builder::HelperKind::Copy:
-    return "copy";
-  }
-  llvm_unreachable("Unexpected helper kind");
-}
-
-/// Attribute holding a helper's structured key (kind spelling followed by the
-/// fields, as an array of strings). It is checked when a helper is reused: if
-/// the symbol scheme ever maps two different helpers to the same name, the
-/// check fails with an assert instead of silently reusing the wrong helper
-/// body.
-static constexpr llvm::StringLiteral kHelperKeyAttrName = "sol.helper_key";
-
-/// Builds the key attribute for \p kind and \p fields.
-static ArrayAttr getHelperKeyAttr(MLIRContext *ctx,
-                                  evm::Builder::HelperKind kind,
-                                  ArrayRef<StringRef> fields) {
-  SmallVector<Attribute> key;
-  key.push_back(StringAttr::get(ctx, getHelperKindSpelling(kind)));
-  for (StringRef field : fields)
-    key.push_back(StringAttr::get(ctx, field));
-  return ArrayAttr::get(ctx, key);
-}
-
-std::string evm::Builder::getHelperSymbol(HelperKind kind,
-                                          ArrayRef<StringRef> fields) {
+/// Builds "__sol.<spelling>.<field>..." (see the helpersym doc in EVMUtil.h
+/// for the uniqueness argument).
+static std::string makeHelperSymbol(StringRef spelling,
+                                    ArrayRef<StringRef> fields) {
   std::string sym;
   llvm::raw_string_ostream os(sym);
-  os << "__sol." << getHelperKindSpelling(kind);
+  os << "__sol." << spelling;
   for (StringRef field : fields) {
     assert(!field.contains('.') && "helper symbol field must not contain '.'");
     os << '.' << field;
@@ -2111,41 +2145,70 @@ std::string evm::Builder::getHelperSymbol(HelperKind kind,
   return sym;
 }
 
-sol::FuncOp
-evm::Builder::getOrCreateHelperFn(HelperKind kind, ArrayRef<StringRef> fields,
-                                  TypeRange argTys, TypeRange resTys,
-                                  llvm::function_ref<void(ValueRange)> genBody,
-                                  Location loc) {
-  // The helper lives in the enclosing contract: stage-2 contract lowering then
-  // relocates it into the creation/runtime objects and clones it where needed,
-  // and the regular sol.func -> yul.func lowering handles the rest, so a
-  // recursive helper behaves exactly like a user-written recursive function.
+std::string evm::helpersym::copy(sol::DataLocation src, sol::DataLocation dst,
+                                 StringRef tyName) {
+  return makeHelperSymbol("copy",
+                          {sol::stringifyDataLocation(src).lower(),
+                           sol::stringifyDataLocation(dst).lower(), tyName});
+}
+
+std::string evm::helpersym::clearStorage(sol::StructType ty) {
+  assert(ty.isIdentified() && "storage clear helpers are per identified "
+                              "struct");
+  return makeHelperSymbol("clear_storage", {ty.getName()});
+}
+
+std::string evm::helpersym::clearStringTail() {
+  return makeHelperSymbol("clear_string_tail", {});
+}
+
+std::string evm::helpersym::copyStringData(sol::DataLocation src,
+                                           sol::DataLocation dst) {
+  return makeHelperSymbol("copy_string_data",
+                          {sol::stringifyDataLocation(src).lower(),
+                           sol::stringifyDataLocation(dst).lower()});
+}
+
+sol::FuncOp evm::Builder::getOrCreateHelperFn(
+    StringRef symbol, TypeRange argTys, TypeRange resTys,
+    llvm::function_ref<void(ValueRange)> genBody, Location loc) {
+  // The helper normally lives in the enclosing contract: stage-2 contract
+  // lowering then relocates it into the creation/runtime objects and clones
+  // it where needed, and the regular sol.func -> yul.func lowering handles
+  // the rest, so a recursive helper behaves exactly like a user-written
+  // recursive function.
+  //
+  // Free functions that no contract references are lowered standalone at
+  // module level (referenced ones are cloned into each referencing contract
+  // by the frontend). Their helpers are hosted by the module itself. Nothing
+  // relocates module level helpers, which is fine because no contract object
+  // can reach that code.
+  // TODO: The module level hosting exists only to keep standalone free
+  // functions compilable and is a subject of future removal. The pipeline
+  // should stop lowering free functions that no contract references, matching
+  // the upstream solc pipeline, which generates no code for them.
   auto contract =
       b.getInsertionBlock()->getParentOp()->getParentOfType<sol::ContractOp>();
-  assert(contract && "helper must be created within a contract");
+  Operation *host = contract ? contract.getOperation() : mod.getOperation();
+  Block *hostBlock =
+      contract ? &contract.getBodyRegion().front() : mod.getBody();
 
-  std::string name = getHelperSymbol(kind, fields);
   auto fnTy = FunctionType::get(b.getContext(), argTys, resTys);
-  ArrayAttr keyAttr = getHelperKeyAttr(b.getContext(), kind, fields);
 
   // A helper may already exist (created by an earlier site, or by the
-  // self-reference emitted while building the body below). Two different
-  // (kind, fields) combinations can never produce the same symbol, so if the
-  // key or signature of the found function does not match, the symbol scheme
-  // is broken.
-  if (auto fn = contract.lookupSymbol<sol::FuncOp>(name)) {
-    assert(fn->getAttr(kHelperKeyAttrName) == keyAttr &&
-           "helper symbol collision");
+  // self-reference emitted while building the body below). The helpersym
+  // generators guarantee a symbol belongs to exactly one helper, so a found
+  // function with a mismatched signature means a broken caller.
+  if (auto fn = dyn_cast_or_null<sol::FuncOp>(
+          SymbolTable::lookupSymbolIn(host, symbol))) {
     assert(fn.getFunctionType() == fnTy && "helper signature mismatch");
     return fn;
   }
 
   OpBuilder::InsertionGuard guard(b);
-  b.setInsertionPointToEnd(&contract.getBodyRegion().front());
+  b.setInsertionPointToEnd(hostBlock);
 
-  auto fn = b.create<sol::FuncOp>(loc, name, fnTy);
-  fn->setAttr(kHelperKeyAttrName, keyAttr);
-
+  auto fn = b.create<sol::FuncOp>(loc, symbol, fnTy);
   Block *entry = &fn.getBody().emplaceBlock();
   SmallVector<Location> argLocs(argTys.size(), loc);
   entry->addArguments(argTys, argLocs);
@@ -2168,6 +2231,10 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
   auto genZeroStorageSlots = [&](Type ty, Value slot) {
     unsigned slotCount = sol::getStorageSlotCount(ty);
     Value zero = bExt.genI256Const(0, loc);
+    if (slotCount == 1) {
+      b.create<yul::SStoreOp>(loc, slot, zero);
+      return;
+    }
     bExt.createCountedLoop(
         bExt.genI256Const(0), bExt.genI256Const(slotCount),
         bExt.genI256Const(1), ValueRange{},
@@ -2429,10 +2496,30 @@ Value evm::Builder::genCopyStringDataToMemory(Value src, Type ty,
 void evm::Builder::genCopyStringDataFromStorageToMemory(
     Value src, Value lengthSlot, Value length, Value dstDataAddr,
     std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  auto i256Ty = b.getIntegerType(256);
+  sol::FuncOp fn = getOrCreateHelperFn(
+      helpersym::copyStringData(sol::DataLocation::Storage,
+                                sol::DataLocation::Memory),
+      {i256Ty, i256Ty, i256Ty, i256Ty}, {},
+      [&](ValueRange args) {
+        genCopyStringDataFromStorageToMemoryInline(args[0], args[1], args[2],
+                                                   args[3], loc);
+        b.create<sol::ReturnOp>(loc);
+      },
+      loc);
+  b.create<sol::CallOp>(loc, fn,
+                        ValueRange{src, lengthSlot, length, dstDataAddr});
+}
+
+void evm::Builder::genCopyStringDataFromStorageToMemoryInline(Value src,
+                                                              Value lengthSlot,
+                                                              Value length,
+                                                              Value dstDataAddr,
+                                                              Location loc) {
   // See 'genCopyStringToStorage' regarding the storage layout for
   // `bytes` / `string` in Solidity.
 
-  Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
   Value one = bExt.genI256Const(1, loc);
@@ -3096,10 +3183,8 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
     if (dstStructTy.isIdentified()) {
       auto i256Ty = b.getIntegerType(256);
       sol::FuncOp fn = getOrCreateHelperFn(
-          HelperKind::Copy,
-          {sol::stringifyDataLocation(srcDataLoc).lower(),
-           sol::stringifyDataLocation(sol::DataLocation::Storage).lower(),
-           dstStructTy.getName()},
+          helpersym::copy(srcDataLoc, sol::DataLocation::Storage,
+                          dstStructTy.getName()),
           {i256Ty, i256Ty}, {},
           [&](ValueRange args) {
             genStructToStorageCopyInline(srcStructTy, dstStructTy, args[0],
