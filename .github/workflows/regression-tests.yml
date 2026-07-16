@@ -113,7 +113,7 @@ jobs:
       packages: read
       pull-requests: write # code-format-helper posts review comments on the PR
     container:
-      image: ghcr.io/nomicfoundation/solx-ci-runner@sha256:62359ae7b2951ba6ffcec61057341a432868826ce6d42d697412ca0cef37781b
+      image: ghcr.io/nomicfoundation/solx-ci-runner@sha256:cd5a37f2630fdf1898ddb2ca11f8c2ecc4d572c60011fe923b27b1625f92ba15
     needs: prepare-test-matrix
     strategy:
       fail-fast: false
@@ -178,7 +178,7 @@ jobs:
     # ccache-less build with MLIR enabled, which approaches the limit.
     timeout-minutes: 360
     container:
-      image: ghcr.io/nomicfoundation/solx-ci-runner@sha256:62359ae7b2951ba6ffcec61057341a432868826ce6d42d697412ca0cef37781b
+      image: ghcr.io/nomicfoundation/solx-ci-runner@sha256:cd5a37f2630fdf1898ddb2ca11f8c2ecc4d572c60011fe923b27b1625f92ba15
       # Cap container memory below the 16 GB VM (and disallow swap) so a
       # memory-hungry test gets OOM-killed inside the container — lit records
       # it as a named crash and continues — instead of starving the runner
