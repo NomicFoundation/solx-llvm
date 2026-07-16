@@ -208,7 +208,7 @@ jobs:
       # Local ref into the solx checkout above (like build-llvm below), so the
       # action version always matches the checked-out solx-dev sources.
       - name: Free disk space
-        uses: ./.github/actions/free-disk-space
+        uses: ./.github/actions/free-disk-space-linux
 
       - name: Clean up LLVM directory
         run: rm -rf solx-llvm
