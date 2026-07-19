@@ -72,6 +72,10 @@ Value mlir::sol::genDefaultVal(OpBuilder &b, Type ty, Location loc) {
     return b.create<EnumCastOp>(loc, enumTy, zero);
   }
 
+  if (isa<MappingType>(ty)) {
+    return b.create<DefaultStorageOp>(loc, ty);
+  }
+
   if (isa<ArrayType, StructType, StringType>(ty)) {
     DataLocation dataLoc = getDataLocation(ty);
     if (dataLoc == DataLocation::CallData)
