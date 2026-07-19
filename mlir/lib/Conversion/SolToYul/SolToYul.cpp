@@ -4383,8 +4383,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 // debug builds?)
 
 void evm::populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv) {
-  pats.add<ConstantOpLowering, FuncConstantOpLowering,
-           DefaultFuncConstantOpLowering>(pats.getContext());
+  pats.add<ConstantOpLowering, DefaultFuncConstantOpLowering>(
+      pats.getContext());
   pats.add<CastOpLowering, AddressCastOpLowering, ContractCastOpLowering,
            EnumCastOpLowering, BytesCastOpLowering,
            DynBytesToFixedBytesOpLowering, FixedBytesIndexOpLowering,
@@ -4449,6 +4449,7 @@ void evm::populateLateSolToYulPats(RewritePatternSet &pats,
                                    TypeConverter &tyConv) {
   pats.add<ICallOpLowering, LoadImmutableToYulLowering>(tyConv,
                                                         pats.getContext());
+  pats.add<FuncConstantOpLowering>(pats.getContext());
 }
 
 void evm::populateAddrPat(RewritePatternSet &pats, TypeConverter &tyConv) {
