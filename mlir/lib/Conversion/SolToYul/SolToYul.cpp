@@ -4063,7 +4063,9 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
         assert(stateMutability != sol::StateMutability::Payable);
         if (stateMutability > sol::StateMutability::View) {
           assert(notDelegateCallCond);
-          evmB.genRevert(notDelegateCallCond);
+          evmB.genDebugRevertWithMsg(
+              notDelegateCallCond,
+              "Non-view function of library called without DELEGATECALL", loc);
         }
       }
 
