@@ -799,6 +799,8 @@ def Sol_DefaultFuncConstantOp : Sol_Op<"default_func_constant", [Pure]> {
 }
 
 def Sol_FuncConstantOp : Sol_Op<"func_constant", [Pure]> {
+  // TODO: SymbolUserOpInterface verifier: $sym must resolve to a sol.func with
+  // an assigned id.
   let arguments = (ins FlatSymbolRefAttr:$sym);
   let results = (outs AnyType:$addr);
 

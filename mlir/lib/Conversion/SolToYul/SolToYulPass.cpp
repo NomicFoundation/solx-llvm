@@ -89,7 +89,6 @@ struct ConvertSolToYulPass
     convTgt.addIllegalOp<
         // clang-format off
         sol::ConstantOp,
-        sol::FuncConstantOp,
         sol::DefaultFuncConstantOp,
         sol::ExtFuncConstantOp,
         sol::ExtFuncAddrOp,
@@ -209,8 +208,11 @@ struct ConvertSolToYulPass
     convTgt.addDynamicallyLegalOp<sol::FuncOp>([&](sol::FuncOp op) {
       return tyConv.isSignatureLegal(op.getFunctionType());
     });
+    // sol.func_constant is only type-legalized here: ContractOpLowering's
+    // ctor-reachability walk needs the symbol reference intact so functions
+    // referenced as values get cloned into the creation object.
     convTgt.addDynamicallyLegalOp<sol::CallOp, sol::ICallOp, sol::ReturnOp,
-                                  sol::LoadImmutableOp>(
+                                  sol::LoadImmutableOp, sol::FuncConstantOp>(
         [&](Operation *op) { return tyConv.isLegal(op); });
 
     RewritePatternSet pats(&getContext());
@@ -218,7 +220,8 @@ struct ConvertSolToYulPass
     populateAnyFunctionOpInterfaceTypeConversionPattern(pats, tyConv);
     pats.add<GenericTypeConversion<sol::CallOp>,
              GenericTypeConversion<sol::ICallOp>,
-             GenericTypeConversion<sol::ReturnOp>>(tyConv, &getContext());
+             GenericTypeConversion<sol::ReturnOp>,
+             GenericTypeConversion<sol::FuncConstantOp>>(tyConv, &getContext());
 
     evm::populateStage1Pats(pats, tyConv);
 
@@ -246,7 +249,8 @@ struct ConvertSolToYulPass
     convTgt.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
     convTgt
         .addLegalDialect<sol::SolDialect, yul::YulDialect, LLVM::LLVMDialect>();
-    convTgt.addIllegalOp<sol::ContractOp, sol::ICallOp, sol::LoadImmutableOp>();
+    convTgt.addIllegalOp<sol::ContractOp, sol::ICallOp, sol::LoadImmutableOp,
+                         sol::FuncConstantOp>();
 
     RewritePatternSet pats(&getContext());
     evm::populateStage2Pats(pats, tyConv);
