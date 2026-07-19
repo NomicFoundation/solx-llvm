@@ -809,6 +809,13 @@ def Yul_SarOp : Yul_Op<"sar", [Pure]> {
   let assemblyFormat = "$shift `,` $val attr-dict";
 }
 
+def Yul_ClzOp : Yul_Op<"clz", [Pure]> {
+  let summary = "Represents the `clz` call in yul (Osaka count-leading-zeros)";
+  let arguments = (ins I256:$val);
+  let results = (outs I256:$out);
+  let assemblyFormat = "$val attr-dict";
+}
+
 def Yul_ExpOp : Yul_Op<"exp", [Pure]> {
   let summary = "Represents the `exp` call in yul";
   let arguments = (ins I256:$base, I256:$exp);

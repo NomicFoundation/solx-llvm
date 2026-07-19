@@ -406,6 +406,19 @@ struct SarOpLowering : public OpRewritePattern<yul::SarOp> {
   }
 };
 
+struct ClzOpLowering : public OpRewritePattern<yul::ClzOp> {
+  using OpRewritePattern<yul::ClzOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(yul::ClzOp op,
+                                PatternRewriter &r) const override {
+    // clz(0) == 256, so the result is well-defined for a zero input; the EVM
+    // backend selects ctlz i256 to the Osaka CLZ opcode.
+    r.replaceOpWithNewOp<LLVM::CountLeadingZerosOp>(
+        op, r.getIntegerType(256), op.getVal(), /*is_zero_poison=*/false);
+    return success();
+  }
+};
+
 struct ExpOpLowering : public OpRewritePattern<yul::ExpOp> {
   using OpRewritePattern<yul::ExpOp>::OpRewritePattern;
 
@@ -1669,6 +1682,7 @@ void evm::populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv) {
       ShlOpLowering,
       ShrOpLowering,
       SarOpLowering,
+      ClzOpLowering,
       ExpOpLowering,
       SignExtendOpLowering,
       LogOpLowering,
