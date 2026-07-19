@@ -819,6 +819,7 @@ unsigned evm::getAlignment(Value ptr) {
 unsigned evm::getCallDataHeadSize(Type ty) {
   if (isa<IntegerType>(ty) || isa<sol::EnumType>(ty) ||
       isa<sol::FixedBytesType>(ty) || isa<sol::ExtFuncRefType>(ty) ||
+      isa<sol::FuncRefType>(ty) || isa<sol::ByteType>(ty) ||
       sol::hasDynamicallySizedElt(ty) || sol::isAddressLikeType(ty))
     return 32;
 
@@ -1138,7 +1139,10 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
       // Dynamic allocation is only performed for the outermost dimension.
       if (sizeVar && recDepth == 0) {
         sizeInBytes = b.create<yul::MulOp>(loc, sizeVar, bExt.genI256Const(32));
-        memPtr = genMemAllocForDynArray(sizeVar, sizeInBytes, loc);
+        // `new T[](n)` panics (0x41) when n exceeds what memory can hold, like
+        // Yul; sizeInBytes wraps mod 2^256 for huge n, so guard on the length.
+        memPtr = genMemAllocForDynArray(sizeVar, sizeInBytes, loc,
+                                        /*genLengthPanicGuard=*/true);
         dataPtr = b.create<yul::AddOp>(loc, memPtr, bExt.genI256Const(32));
       } else {
         return bExt.genI256Const(mlir::evm::MemoryLayout::zeroPointer);
