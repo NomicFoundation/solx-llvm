@@ -3315,6 +3315,18 @@ struct CodeOpLowering
 };
 // old codegen end
 
+struct CodeSizeOpLowering
+    : public CleanedOperandsLowering<sol::CodeSizeOp, CodeSizeOpLowering> {
+  using Base = CleanedOperandsLowering<sol::CodeSizeOp, CodeSizeOpLowering>;
+  using Base::Base;
+
+  LogicalResult rewriteCleaned(sol::CodeSizeOp op, ConversionPatternRewriter &r,
+                               Value addr) const {
+    r.replaceOpWithNewOp<yul::ExtCodeSizeOp>(op, addr);
+    return success();
+  }
+};
+
 struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
   using OpConversionPattern<sol::TryOp>::OpConversionPattern;
 
@@ -4475,8 +4487,9 @@ void evm::populateAbiPats(mlir::RewritePatternSet &pats,
 void evm::populateExtCallPat(RewritePatternSet &pats, TypeConverter &tyConv) {
   pats.add<ExtCallOpLowering, ExtICallOpLowering, BareCallOpLowering,
            BareDelegateCallOpLowering, BareStaticCallOpLowering, TryOpLowering,
-           NewOpLowering, CodeOpLowering, ObjectCodeOpLowering, SendOpLowering,
-           TransferOpLowering>(tyConv, pats.getContext());
+           NewOpLowering, CodeOpLowering, CodeSizeOpLowering,
+           ObjectCodeOpLowering, SendOpLowering, TransferOpLowering>(
+      tyConv, pats.getContext());
 }
 
 void evm::populateEmitPat(RewritePatternSet &pats, TypeConverter &tyConv) {

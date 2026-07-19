@@ -161,6 +161,7 @@ struct ConvertSolToYulPass
         sol::NewOp,
         sol::ObjectCodeOp,
         sol::CodeOp,
+        sol::CodeSizeOp,
         sol::OriginOp,
         sol::GasPriceOp,
         sol::CallValueOp,
