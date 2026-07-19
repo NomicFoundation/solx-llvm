@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "EVM.h"
 #include "EVMISelLowering.h"
+#include "EVM.h"
 #include "EVMMachineFunctionInfo.h"
 #include "EVMSelectionDAGInfo.h"
 #include "EVMTargetMachine.h"
@@ -20,6 +20,7 @@
 #include "llvm/IR/IntrinsicsEVM.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Transforms/Utils/SizeOpts.h"
 
 using namespace llvm;
 
@@ -97,7 +98,22 @@ EVMTargetLowering::EVMTargetLowering(const TargetMachine &TM,
   setTargetDAGCombine(ISD::SELECT);
 
   setJumpIsExpensive(true);
-  setMaximumJumpTableSize(0);
+}
+
+// Computed JUMPs are gas-expensive, so jump tables only pay off when
+// optimizing for size. Answering here instead of narrowing
+// MaximumJumpTableSize keeps the process-global cl::opt untouched -
+// TargetLowering is constructed per function on every compiling thread, and
+// writing the option there races.
+bool EVMTargetLowering::isSuitableForJumpTable(const SwitchInst *SI,
+                                               uint64_t NumCases,
+                                               uint64_t Range,
+                                               ProfileSummaryInfo *PSI,
+                                               BlockFrequencyInfo *BFI) const {
+  if (!llvm::shouldOptimizeForSize(SI->getParent(), PSI, BFI))
+    return false;
+  return TargetLoweringBase::isSuitableForJumpTable(SI, NumCases, Range, PSI,
+                                                    BFI);
 }
 
 bool EVMTargetLowering::isLegalAddressingMode(const DataLayout &DL,
