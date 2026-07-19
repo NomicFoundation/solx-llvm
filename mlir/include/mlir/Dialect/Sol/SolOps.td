@@ -774,7 +774,7 @@ def Sol_DefaultCallDataOp : Sol_Op<"default_calldata", [Pure]> {
 
 def Sol_DefaultStorageOp : Sol_Op<"default_storage", [Pure]> {
   let summary = "Default value for a storage or transient aggregate type";
-  let results = (outs Sol_AggType:$result);
+  let results = (outs AnyTypeOf<[Sol_AggType, Sol_MappingType]>:$result);
 
   let builders = [OpBuilder<(ins "::mlir::Type":$type), [{
       $_state.addTypes(type);
