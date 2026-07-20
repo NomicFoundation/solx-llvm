@@ -2885,9 +2885,12 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     SmallVector<Type> abiInputTys =
         getABITypes(r, op.getIns().getTypes(), op.getCalleeType().getInputs(),
                     op.getLibraryCall());
+    // Decode into the types the caller holds (op results; the leading i1 is
+    // the status flag), not the declared callee results - calldata-typed
+    // returns land in memory on the caller side.
+    SmallVector<Type> callerResultTys(llvm::drop_begin(op.getResultTypes()));
     SmallVector<Type> abiResultTys =
-        getABITypes(r, op.getCalleeType().getResults(),
-                    op.getCalleeType().getResults(), op.getLibraryCall());
+        getABITypes(r, callerResultTys, callerResultTys, op.getLibraryCall());
 
     // Check if we need to generate the extcodesize check.
     unsigned totHeadSize = 0;
@@ -2932,7 +2935,10 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     unsigned staticRetSizeVal = 0;
     bool isRetSizeDynamic = false;
     for (Type ty : abiResultTys) {
-      if (sol::isDynamicallySized(ty)) {
+      // A struct/array with a dynamically-sized element encodes as a tail
+      // whose size isn't static, even though the type itself isn't
+      // "dynamically sized" in ABI terms.
+      if (sol::hasDynamicallySizedElt(ty)) {
         isRetSizeDynamic = true;
         staticRetSizeVal = 0;
         break;
@@ -2972,7 +2978,7 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     // Get the types of the results from the decoding, which should be the same
     // as the corsp legal types.
     SmallVector<Type> decodedResultTys;
-    if (failed(getTypeConverter()->convertTypes(op.getCalleeType().getResults(),
+    if (failed(getTypeConverter()->convertTypes(callerResultTys,
                                                 decodedResultTys)))
       return failure();
 
