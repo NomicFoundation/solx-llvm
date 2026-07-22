@@ -116,7 +116,20 @@ ModRefInfo EVMAAResult::getModRefInfo(const CallBase *Call,
       return ModRefInfo::NoModRef;
     return ModRefInfo::ModRef;
   case Intrinsic::evm_return:
+    // RETURN commits the current call frame's state, so any prior store to
+    // (transient) storage is observable and must be kept alive. Reporting Ref
+    // on those address spaces makes such stores appear read by the RETURN and
+    // prevents DSE from eliminating them. REVERT is deliberately handled
+    // differently (it falls through to the default AA handling and does not
+    // reference storage): it discards all state changes, so stores to storage
+    // preceding a REVERT are dead and may be eliminated.
+    if (AS == EVMAS::AS_STORAGE || AS == EVMAS::AS_TSTORAGE)
+      return ModRefInfo::Ref;
+    break;
   case Intrinsic::evm_staticcall:
+    // A static call can overwrite return-data buffer.
+    if (AS == EVMAS::AS_RETURN_DATA)
+      return ModRefInfo::Mod;
     if (AS == EVMAS::AS_STORAGE || AS == EVMAS::AS_TSTORAGE)
       return ModRefInfo::Ref;
     break;
@@ -125,6 +138,9 @@ ModRefInfo EVMAAResult::getModRefInfo(const CallBase *Call,
   case Intrinsic::evm_call:
   case Intrinsic::evm_callcode:
   case Intrinsic::evm_delegatecall:
+    // These calls can overwrite the return-data buffer.
+    if (AS == EVMAS::AS_RETURN_DATA)
+      return ModRefInfo::Mod;
     if (AS == EVMAS::AS_STORAGE || AS == EVMAS::AS_TSTORAGE)
       return ModRefInfo::ModRef;
     break;
