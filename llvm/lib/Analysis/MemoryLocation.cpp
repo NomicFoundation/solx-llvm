@@ -211,6 +211,27 @@ MemoryLocation MemoryLocation::getForArgument(const CallBase *Call,
         assert((ArgIdx == 0) && "Invalid argument index for revert");
         return GetMemLocation(ArgIdx + 1);
       }
+      case Intrinsic::evm_return: {
+        assert((ArgIdx == 0) && "Invalid argument index for return");
+        return GetMemLocation(ArgIdx + 1);
+      }
+      case Intrinsic::evm_create:
+      case Intrinsic::evm_create2: {
+        assert((ArgIdx == 1) && "Invalid argument index for create/create2");
+        return GetMemLocation(ArgIdx + 1);
+      }
+      case Intrinsic::evm_call:
+      case Intrinsic::evm_callcode: {
+        assert((ArgIdx == 3 || ArgIdx == 5) &&
+               "Invalid argument index for call/callcode");
+        return GetMemLocation(ArgIdx + 1);
+      }
+      case Intrinsic::evm_delegatecall:
+      case Intrinsic::evm_staticcall: {
+        assert((ArgIdx == 2 || ArgIdx == 4) &&
+               "Invalid argument index for delegatecall/staticcall");
+        return GetMemLocation(ArgIdx + 1);
+      }
       case Intrinsic::evm_extcodecopy: {
         assert((ArgIdx == 1 || ArgIdx == 2) &&
                "Invalid argument index for extcodecopy");
