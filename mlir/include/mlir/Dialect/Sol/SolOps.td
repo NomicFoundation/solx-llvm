@@ -1185,6 +1185,16 @@ def Sol_ObjectCodeOp : Sol_Op<"object_code"> {
   }];
 }
 
+def Sol_CodeSizeOp : Sol_Op<"code_size"> {
+  let summary = "Code size of the account at the given address";
+  let arguments = (ins Sol_AddressType:$contAddr);
+  let results = (outs UI256:$out);
+
+  let assemblyFormat = [{
+    $contAddr attr-dict `:` qualified(type($contAddr)) `->` type($out)
+  }];
+}
+
 def Sol_CodeOp : Sol_Op<"code"> {
   let arguments = (ins Sol_AddressType:$contAddr);
   // FIXME: AnyType -> Sol_StringType causes the asm printer to miss the prefix!
