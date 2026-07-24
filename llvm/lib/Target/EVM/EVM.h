@@ -14,9 +14,13 @@
 #ifndef LLVM_LIB_TARGET_EVM_EVM_H
 #define LLVM_LIB_TARGET_EVM_EVM_H
 
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Pass.h"
+
+#include <optional>
 
 namespace llvm {
 class EVMTargetMachine;
@@ -45,6 +49,19 @@ unsigned constexpr POP = 2;
 unsigned constexpr PUSH = 3;
 unsigned constexpr MLOAD = 3;
 } // namespace EVMCOST
+
+namespace EVM {
+/// Reads the unsigned integer module flag \p Key - the per-module channel for
+/// front-end codegen parameters, taking precedence over the cl::opt of the
+/// same name.
+inline std::optional<uint64_t> getModuleFlagU64(const Module &M,
+                                                StringRef Key) {
+  if (const auto *Flag =
+          mdconst::extract_or_null<ConstantInt>(M.getModuleFlag(Key)))
+    return Flag->getZExtValue();
+  return std::nullopt;
+}
+} // namespace EVM
 
 // LLVM IR passes.
 FunctionPass *createEVMCodegenPreparePass();

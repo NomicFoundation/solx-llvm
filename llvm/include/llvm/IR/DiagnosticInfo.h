@@ -92,6 +92,9 @@ enum DiagnosticKind {
   DK_SrcMgr,
   DK_DontCall,
   DK_MisExpect,
+  // EVM local begin
+  DK_EVMStackRegionOverflow,
+  // EVM local end
   DK_FirstPluginKind // Must be last value to work with
                      // getNextAvailablePluginDiagnosticKind
 };
@@ -119,6 +122,7 @@ private:
   const DiagnosticSeverity Severity;
 
   virtual void anchor();
+
 public:
   DiagnosticInfo(/* DiagnosticKind */ int Kind, DiagnosticSeverity Severity)
       : Kind(Kind), Severity(Severity) {}
@@ -347,6 +351,7 @@ public:
 /// Common features for diagnostics with an associated location.
 class LLVM_ABI DiagnosticInfoWithLocationBase : public DiagnosticInfo {
   void anchor() override;
+
 public:
   /// \p Fn is the function where the diagnostic is being emitted. \p Loc is
   /// the location information to use in the diagnostic.
@@ -491,6 +496,33 @@ public:
     return DI->getKind() == DK_StackSize;
   }
 };
+
+// EVM local begin
+/// Diagnostic reporting that a module's total stack size exceeds the
+/// allocated stack region, carrying the size the front-end needs to re-run
+/// codegen with a large enough region.
+class LLVM_ABI DiagnosticInfoEVMStackRegionOverflow : public DiagnosticInfo {
+  uint64_t TotalStackSize;
+  uint64_t StackRegionSize;
+
+public:
+  DiagnosticInfoEVMStackRegionOverflow(uint64_t TotalStackSize,
+                                       uint64_t StackRegionSize,
+                                       DiagnosticSeverity Severity = DS_Error)
+      : DiagnosticInfo(DK_EVMStackRegionOverflow, Severity),
+        TotalStackSize(TotalStackSize), StackRegionSize(StackRegionSize) {}
+
+  uint64_t getTotalStackSize() const { return TotalStackSize; }
+  uint64_t getStackRegionSize() const { return StackRegionSize; }
+
+  /// \see DiagnosticInfo::print.
+  void print(DiagnosticPrinter &DP) const override;
+
+  static bool classof(const DiagnosticInfo *DI) {
+    return DI->getKind() == DK_EVMStackRegionOverflow;
+  }
+};
+// EVM local end
 
 /// Common features for diagnostics dealing with optimization remarks
 /// that are used by both IR and MIR passes.
@@ -672,6 +704,7 @@ operator<<(RemarkT &&R,
 class LLVM_ABI DiagnosticInfoIROptimization
     : public DiagnosticInfoOptimizationBase {
   void anchor() override;
+
 public:
   /// \p PassName is the name of the pass emitting this diagnostic. \p
   /// RemarkName is a textual identifier for the remark (single-word,
@@ -902,6 +935,7 @@ private:
 class LLVM_ABI OptimizationRemarkAnalysisFPCommute
     : public OptimizationRemarkAnalysis {
   void anchor() override;
+
 public:
   /// \p PassName is the name of the pass emitting this diagnostic. If this name
   /// matches the regular expression given in -Rpass-analysis=, then the
@@ -945,6 +979,7 @@ private:
 class LLVM_ABI OptimizationRemarkAnalysisAliasing
     : public OptimizationRemarkAnalysis {
   void anchor() override;
+
 public:
   /// \p PassName is the name of the pass emitting this diagnostic. If this name
   /// matches the regular expression given in -Rpass-analysis=, then the

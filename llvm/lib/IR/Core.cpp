@@ -271,6 +271,22 @@ LLVMDiagnosticSeverity LLVMGetDiagInfoSeverity(LLVMDiagnosticInfoRef DI) {
     return severity;
 }
 
+// EVM local begin
+LLVMBool LLVMGetDiagInfoEVMStackRegionOverflow(LLVMDiagnosticInfoRef DI,
+                                               uint64_t *TotalStackSize,
+                                               uint64_t *StackRegionSize) {
+  const auto *Overflow =
+      dyn_cast<DiagnosticInfoEVMStackRegionOverflow>(unwrap(DI));
+  if (!Overflow)
+    return 0;
+  if (TotalStackSize)
+    *TotalStackSize = Overflow->getTotalStackSize();
+  if (StackRegionSize)
+    *StackRegionSize = Overflow->getStackRegionSize();
+  return 1;
+}
+// EVM local end
+
 /*===-- Operations on modules ---------------------------------------------===*/
 
 LLVMModuleRef LLVMModuleCreateWithName(const char *ModuleID) {
