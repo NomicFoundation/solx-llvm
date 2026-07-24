@@ -474,6 +474,8 @@ public:
   /// should be emitted, otherwise generates a revert without message.
   void genDebugRevertWithMsg(Value cond, std::string const &msg,
                              std::optional<Location> locArg = std::nullopt);
+  void genDebugRevertWithMsg(std::string const &msg,
+                             std::optional<Location> locArg = std::nullopt);
 
   /// Generates a revert with message if user-supplied revert strings should be
   /// preserved, otherwise generates a revert without message.

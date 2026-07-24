@@ -3994,7 +3994,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     auto callVal = r.create<yul::CallValOp>(loc);
     auto callValChk =
         bExt.genCmp(yul::CmpPredicate::ne, callVal, bExt.genI256Const(0));
-    evmB.genRevert(callValChk);
+    evmB.genDebugRevertWithMsg(callValChk, "Ether sent to non-payable function",
+                               loc);
   };
 
   /// Generate the free pointer initialization.
@@ -4357,8 +4358,10 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       }
 
     } else {
-      // TODO: Generate error message.
-      evmB.genRevert(loc);
+      evmB.genDebugRevertWithMsg(
+          receiveFn ? "Unknown signature and no fallback defined"
+                    : "Contract does not have fallback nor receive functions",
+          loc);
     }
 
     // StringLitOpLowering puts __data_in_code_* globals at module scope with

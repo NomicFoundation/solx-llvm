@@ -3777,6 +3777,14 @@ void evm::Builder::genDebugRevertWithMsg(Value cond, std::string const &msg,
     genRevert(cond, locArg);
 }
 
+void evm::Builder::genDebugRevertWithMsg(std::string const &msg,
+                                         std::optional<mlir::Location> locArg) {
+  if (sol::shouldEmitDebugRevertStrings(mod) && !msg.empty())
+    genRevertWithMsg(msg, locArg);
+  else
+    genRevert(locArg);
+}
+
 void evm::Builder::genUserRevertWithMsg(std::string const &msg,
                                         std::optional<mlir::Location> locArg) {
   if (sol::shouldKeepUserRevertStrings(mod))
