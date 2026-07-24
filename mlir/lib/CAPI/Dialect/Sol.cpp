@@ -12,6 +12,7 @@
 #include "mlir/CAPI/Wrap.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Sol/Transforms/SolImmutables.h"
+#include "mlir/Dialect/Sol/Utils.h"
 
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Sol, sol, mlir::sol::SolDialect)
 
@@ -34,4 +35,14 @@ MlirType mlirSolGetEltType(MlirType ty, uint64_t structFieldIdx) {
 MlirType mlirSolGepGetResultType(MlirType baseAddrTy, MlirType elementType) {
   return wrap(
       mlir::sol::GepOp::getResultType(unwrap(baseAddrTy), unwrap(elementType)));
+}
+
+MlirValue mlirSolGenDefaultVal(MlirBlock block, MlirOperation insertBefore,
+                               MlirType ty, MlirLocation loc) {
+  mlir::OpBuilder b(unwrap(ty).getContext());
+  if (!mlirOperationIsNull(insertBefore))
+    b.setInsertionPoint(unwrap(insertBefore));
+  else
+    b.setInsertionPointToEnd(unwrap(block));
+  return wrap(mlir::sol::genDefaultVal(b, unwrap(ty), unwrap(loc)));
 }

@@ -191,6 +191,8 @@ struct ConvertSolToYulPass
         sol::DoWhileOp,
         sol::ForOp,
         sol::TryOp,
+        sol::ScopeOp,
+        sol::LeaveOp,
         sol::InlineAsmOp,
         sol::YulPtrCastOp,
         sol::YulValCastOp,

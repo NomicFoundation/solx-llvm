@@ -1517,6 +1517,48 @@ struct LoopOpInterfaceLowering
   }
 };
 
+struct ScopeOpLowering : public OpRewritePattern<yul::ScopeOp> {
+  using OpRewritePattern<yul::ScopeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(yul::ScopeOp op,
+                                PatternRewriter &r) const override {
+    Block *entry = r.getInsertionBlock();
+    Block *exit = r.splitBlock(entry, r.getInsertionPoint());
+    Block *body = &op.getBodyRegion().front();
+
+    r.setInsertionPointToEnd(entry);
+    r.create<cf::BranchOp>(op.getLoc(), body);
+
+    // Lower the leave_scopes bound to this scope; ones under a nested scope
+    // belong to it.
+    op.getBodyRegion().walk<WalkOrder::PreOrder>([&](Operation *nested) {
+      if (isa<yul::ScopeOp>(nested))
+        return WalkResult::skip();
+      if (!isa<yul::LeaveScopeOp>(nested))
+        return WalkResult::advance();
+
+      OpBuilder::InsertionGuard guard(r);
+      r.setInsertionPoint(nested);
+      r.replaceOpWithNewOp<cf::BranchOp>(nested, exit);
+      return WalkResult::skip();
+    });
+
+    // Lower the fall-through yields directly in the scope's region.
+    for (Block &blk : op.getBodyRegion()) {
+      auto yield = dyn_cast<yul::YieldOp>(blk.getTerminator());
+      if (!yield)
+        continue;
+      OpBuilder::InsertionGuard guard(r);
+      r.setInsertionPoint(yield);
+      r.replaceOpWithNewOp<cf::BranchOp>(yield, exit);
+    }
+
+    r.inlineRegionBefore(op.getBodyRegion(), exit);
+    r.eraseOp(op);
+    return success();
+  }
+};
+
 struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
   using OpRewritePattern<yul::ObjectOp>::OpRewritePattern;
 
@@ -1615,6 +1657,7 @@ void evm::populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv) {
       IfOpLowering,
       SwitchOpLowering,
       LoopOpInterfaceLowering,
+      ScopeOpLowering,
       AddModOpLowering,
       MulModOpLowering,
       UpdFreePtrOpLowering,
