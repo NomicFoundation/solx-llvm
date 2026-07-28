@@ -3737,12 +3737,12 @@ struct RevertOpLowering : public OpConversionPattern<sol::RevertOp> {
     evm::Builder evmB(getModule(op), r, op.getLoc());
     if (op.getCall()) {
       // revert ErrorName(...)
-      assert(!op.getSignature().empty());
+      assert(op.getSignature() && !op.getSignature()->empty());
       evmB.genRevert(op.getArgs().getTypes(), adaptor.getArgs(),
-                     op.getSignature());
-    } else if (!op.getSignature().empty()) {
-      // revert("reason")
-      evmB.genUserRevertWithMsg(op.getSignature().str());
+                     *op.getSignature());
+    } else if (op.getSignature()) {
+      // revert("reason"). An empty reason still ABI-encodes Error("").
+      evmB.genUserRevertWithMsg(op.getSignature()->str());
     } else {
       // revert()
       evmB.genRevert(op.getLoc());
