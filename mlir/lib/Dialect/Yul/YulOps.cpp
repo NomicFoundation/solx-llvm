@@ -272,7 +272,10 @@ void SwitchOp::print(OpAsmPrinter &p) {
 
   for (auto [val, region] : llvm::zip(getCases(), getCaseRegions())) {
     p.printNewline();
-    p << "case " << val << ' ';
+    p << "case ";
+    // Yul integers are unsigned words.
+    val.print(p.getStream(), /*isSigned=*/false);
+    p << ' ';
     p.printRegion(region, /*printEntryBlockArgs=*/false);
   }
 
@@ -291,11 +294,23 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
 
   SmallVector<APInt> caseVals;
   while (succeeded(p.parseOptionalKeyword("case"))) {
+    llvm::SMLoc caseLoc = p.getCurrentLocation();
     APInt value(argTy.getWidth(), 0);
     Region *region = result.addRegion();
     if (p.parseInteger(value) || p.parseRegion(*region))
       return failure();
-    caseVals.push_back(value);
+    // parseInteger yields an APInt sized to the literal, with the sign bit
+    // set only for negative input. Yul integers are unsigned words with no
+    // negative literals, so reject a minus outright (like the Yul parser
+    // does) instead of granting it a two's-complement reading, and reject
+    // values that do not fit the switch argument instead of truncating.
+    // The elements attr requires every value to match the argument's width.
+    if (value.isNegative())
+      return p.emitError(caseLoc, "negative case values are not allowed");
+    if (value.getActiveBits() > argTy.getWidth())
+      return p.emitError(caseLoc,
+                         "case value does not fit the switch argument type");
+    caseVals.push_back(value.zextOrTrunc(argTy.getWidth()));
   }
   auto caseValsAttr = DenseIntElementsAttr::get(
       RankedTensorType::get({static_cast<int64_t>(caseVals.size())}, argTy),

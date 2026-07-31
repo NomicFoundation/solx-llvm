@@ -525,10 +525,18 @@ static ParseResult parseSwitchOpCases(
   SmallVector<APInt> values;
   unsigned bitWidth = flagType.getIntOrFloatBitWidth();
   while (succeeded(parser.parseOptionalComma())) {
-    int64_t value = 0;
+    // EVM local begin
+    // Parse case values wider than 64 bits.
+    llvm::SMLoc caseLoc = parser.getCurrentLocation();
+    APInt value(bitWidth, 0);
     if (failed(parser.parseInteger(value)))
       return failure();
-    values.push_back(APInt(bitWidth, value, /*isSigned=*/true));
+    unsigned neededBits =
+        value.isNegative() ? value.getSignificantBits() : value.getActiveBits();
+    if (neededBits > bitWidth)
+      return parser.emitError(caseLoc, "case value does not fit the flag type");
+    values.push_back(value.sextOrTrunc(bitWidth));
+    // EVM local end
 
     Block *destination;
     SmallVector<OpAsmParser::UnresolvedOperand> operands;
@@ -571,7 +579,10 @@ static void printSwitchOpCases(
     p << ',';
     p.printNewline();
     p << "  ";
-    p << it.value().getLimitedValue();
+    // EVM local begin
+    // Print the full-width value.
+    it.value().print(p.getStream(), /*isSigned=*/false);
+    // EVM local end
     p << ": ";
     p.printSuccessorAndUseList(caseDestinations[it.index()],
                                caseOperands[it.index()]);

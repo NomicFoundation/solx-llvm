@@ -623,7 +623,12 @@ convertOperationImpl(Operation &opInst, llvm::IRBuilderBase &builder,
          llvm::zip(llvm::cast<DenseIntElementsAttr>(*switchOp.getCaseValues()),
                    switchOp.getCaseDestinations()))
       switchInst->addCase(
-          llvm::ConstantInt::get(ty, std::get<0>(i).getLimitedValue()),
+          // EVM local begin
+          // getLimitedValue() saturates case values wider than 64 bits to
+          // UINT64_MAX, producing duplicate cases for i256 switches.
+          llvm::ConstantInt::get(ty->getContext(),
+                                 std::get<0>(i).zextOrTrunc(ty->getBitWidth())),
+          // EVM local end
           moduleTranslation.lookupBlock(std::get<1>(i)));
 
     moduleTranslation.mapBranch(&opInst, switchInst);
