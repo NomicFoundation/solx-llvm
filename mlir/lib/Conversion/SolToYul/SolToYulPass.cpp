@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/ADT/SetVector.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTSOLTOYULPASS
@@ -295,9 +296,49 @@ struct ConvertSolToYulPass
     return success();
   }
 
+  /// Sets the candidates attribute of every sol.icall.
+  void annotateICallCandidates(ModuleOp mod) {
+    Builder b(mod.getContext());
+    DenseMap<std::pair<Operation *, sol::FuncRefType>, SetVector<int64_t>>
+        buckets;
+    SmallVector<sol::ICallOp> icalls;
+    mod.walk([&](Operation *op) {
+      if (auto icall = dyn_cast<sol::ICallOp>(op)) {
+        icalls.push_back(icall);
+        return;
+      }
+      auto fnConst = dyn_cast<sol::FuncConstantOp>(op);
+      if (!fnConst)
+        return;
+      auto fn = SymbolTable::lookupNearestSymbolFrom<sol::FuncOp>(
+          fnConst, fnConst.getSymAttr());
+      assert(fn && fn.getId() && "unresolvable sol.func_constant");
+      buckets[{fnConst->getParentOfType<ModuleOp>().getOperation(),
+               cast<sol::FuncRefType>(fnConst.getType())}]
+          .insert(*fn.getId());
+    });
+
+    DenseMap<std::pair<Operation *, sol::FuncRefType>, DenseI64ArrayAttr>
+        bucketAttrs;
+    for (auto &[key, idSet] : buckets) {
+      SmallVector<int64_t> ids = idSet.takeVector();
+      llvm::sort(ids);
+      bucketAttrs[key] = b.getDenseI64ArrayAttr(ids);
+    }
+
+    DenseI64ArrayAttr emptyAttr = b.getDenseI64ArrayAttr({});
+    for (sol::ICallOp icall : icalls) {
+      auto it = bucketAttrs.find(
+          {icall->getParentOfType<ModuleOp>().getOperation(),
+           cast<sol::FuncRefType>(icall.getCallee().getType())});
+      icall.setCandidatesAttr(it != bucketAttrs.end() ? it->second : emptyAttr);
+    }
+  }
+
   void runOnOperation() override {
     ModuleOp mod = getOperation();
     evm::SolTypeConverter tyConv;
+    annotateICallCandidates(mod);
     if (failed(runStage1Conversion(mod, tyConv))) {
       signalPassFailure();
       return;
