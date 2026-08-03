@@ -118,6 +118,10 @@ std::string clearStringTail();
 /// the length word: `__sol.copy_string_data.<src>.<dst>`.
 std::string copyStringData(mlir::sol::DataLocation src,
                            mlir::sol::DataLocation dst);
+/// Dispatches an internal function pointer call over its candidate set:
+/// `__sol.internal_dispatch.<rt|cr>.<id>...`.
+std::string internalDispatch(bool runtime,
+                             llvm::ArrayRef<int64_t> candidateIds);
 } // namespace helpersym
 
 /// IR Builder for EVM specific lowering.

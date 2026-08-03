@@ -788,7 +788,7 @@ def Sol_DefaultStorageOp : Sol_Op<"default_storage", [Pure]> {
 }
 
 def Sol_DefaultFuncConstantOp : Sol_Op<"default_func_constant", [Pure]> {
-  let results = (outs AnyType:$addr);
+  let results = (outs Sol_FuncRefType:$addr);
 
   let builders = [
     OpBuilder<(ins), [{
@@ -804,7 +804,7 @@ def Sol_FuncConstantOp : Sol_Op<"func_constant", [Pure]> {
   // TODO: SymbolUserOpInterface verifier: $sym must resolve to a sol.func with
   // an assigned id.
   let arguments = (ins FlatSymbolRefAttr:$sym);
-  let results = (outs AnyType:$addr);
+  let results = (outs Sol_FuncRefLike:$addr);
 
   let assemblyFormat = "$sym attr-dict `:` type($addr)";
 }
@@ -831,10 +831,10 @@ def Sol_ExtFuncSelectorOp : Sol_Op<"ext_func_selector", [Pure]> {
 }
 
 // Base class for indirect call ops (internal and external function pointers).
-class Sol_ICallOpBase<string mnemonic, dag extraArgs = (ins),
-                      string extraAsmFmt = "">
+class Sol_ICallOpBase<string mnemonic, TypeConstraint calleeTy,
+                      dag extraArgs = (ins), string extraAsmFmt = "">
     : Sol_Op<mnemonic, [CallOpInterface]> {
-  let arguments = !con((ins AnyType:$callee, Variadic<AnyType>:$callee_operands),
+  let arguments = !con((ins calleeTy:$callee, Variadic<AnyType>:$callee_operands),
                        extraArgs,
                        (ins OptionalAttr<DictArrayAttr>:$arg_attrs,
                             OptionalAttr<DictArrayAttr>:$res_attrs));
@@ -865,11 +865,13 @@ class Sol_ICallOpBase<string mnemonic, dag extraArgs = (ins),
     "attr-dict `:` type($callee) `,` functional-type($callee_operands, results)");
 }
 
-// Indirect call for internal function pointers.
-def ICallOp : Sol_ICallOpBase<"icall">;
+// Indirect call for internal function pointers. $candidates holds the ids of
+// the functions referenced by a sol.func_constant of the callee type
+def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefLike,
+    (ins OptionalAttr<DenseI64ArrayAttr>:$candidates)>;
 
 // Indirect call for external function pointers.
-def ExtICallOp : Sol_ICallOpBase<"ext_icall",
+def ExtICallOp : Sol_ICallOpBase<"ext_icall", Sol_ExtFuncRefType,
     (ins UI256:$gas, UI256:$value, UnitAttr:$static_call, UnitAttr:$try_call),
     "`gas` $gas `value` $value ">;
 

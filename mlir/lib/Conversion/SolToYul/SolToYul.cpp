@@ -3952,39 +3952,67 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
   // is lowered, so the dispatch table can still inspect the Sol symbol table.
   using OpConversionPattern<sol::ICallOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(sol::ICallOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &r) const override {
+  /// Generates undef values of the given types.
+  static SmallVector<Value> genUndefs(TypeRange tys, Location loc,
+                                      ConversionPatternRewriter &r) {
+    SmallVector<Value> undefs;
+    undefs.reserve(tys.size());
+    for (Type ty : tys)
+      undefs.push_back(r.create<LLVM::UndefOp>(loc, ty));
+    return undefs;
+  }
+
+  /// Generates the dispatch function that switches over the candidate
+  /// functions of the caller's phase. Outlining this reduces the caller's
+  /// stack pressure.
+  yul::FuncOp genDispatchFn(StringRef name, ArrayRef<int64_t> candidateIds,
+                            FunctionType calleeTy, FunctionType dispatchFnTy,
+                            bool callerRuntime, sol::ICallOp op,
+                            ConversionPatternRewriter &r) const {
     Location loc = op.getLoc();
+    Operation *symTab = SymbolTable::getNearestSymbolTable(op);
     evm::Builder evmB(getModule(op), r, loc);
 
-    auto calleeArgs = adaptor.getOperands().drop_front();
-    SmallVector<Type> convertedResTys;
-    if (failed(getTypeConverter()->convertTypes(op.getResultTypes(),
-                                                convertedResTys)))
-      return failure();
-
-    auto calleeTy = mlir::FunctionType::get(
-        r.getContext(), calleeArgs.getTypes(), convertedResTys);
-
-    // Collect functions with matching signature.
-    Operation *symTab = SymbolTable::getNearestSymbolTable(op);
-    bool callerRuntime = op->getParentOfType<sol::FuncOp>().getRuntime();
+    // Resolve the candidate ids in the caller's phase.
+    DenseSet<int64_t> candidateIdSet(candidateIds.begin(), candidateIds.end());
     SmallVector<int64_t> caseIds;
     SmallVector<sol::FuncOp> caseFns;
     symTab->walk([&](sol::FuncOp fn) {
       // At this stage the nearest Sol symbol table can still contain both
       // creation and runtime functions. Internal function pointers are only
       // valid within the caller's phase, so do not dispatch across that
-      // boundary just because the id and signature match.
+      // boundary just because the id matches.
       if (fn.getRuntime() != callerRuntime)
         return;
-      if (fn.getId() && fn.getFunctionType() == calleeTy) {
+      if (fn.getId() && candidateIdSet.contains(*fn.getId())) {
+        assert(fn.getFunctionType() == calleeTy &&
+               "candidate signature mismatch");
         caseFns.push_back(fn);
         caseIds.push_back(*fn.getId());
       }
     });
 
-    auto calleeIntTy = cast<IntegerType>(adaptor.getCallee().getType());
+    OpBuilder::InsertionGuard insertGuard(r);
+    r.setInsertionPointAfter(op->getParentOfType<sol::FuncOp>());
+
+    auto fn = r.create<yul::FuncOp>(loc, name, dispatchFnTy);
+
+    SmallVector<Location> argLocs(dispatchFnTy.getNumInputs(), loc);
+    Block *entry = r.createBlock(&fn.getBody(), fn.getBody().end(),
+                                 dispatchFnTy.getInputs(), argLocs);
+    r.setInsertionPointToStart(entry);
+    ValueRange calleeArgs = entry->getArguments().drop_front();
+
+    // Candidates exist, but none in the caller's phase: no valid id can reach
+    // this call, so unconditionally panic.
+    if (caseFns.empty()) {
+      evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
+      r.create<yul::FuncReturnOp>(loc,
+                                  genUndefs(calleeTy.getResults(), loc, r));
+      return fn;
+    }
+
+    auto calleeIntTy = cast<IntegerType>(dispatchFnTy.getInput(0));
     SmallVector<APInt> caseVals;
     caseVals.reserve(caseIds.size());
     for (int64_t caseId : caseIds)
@@ -3993,24 +4021,82 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
         RankedTensorType::get(static_cast<int64_t>(caseVals.size()),
                               calleeIntTy),
         caseVals);
-    auto switchOp = r.create<yul::SwitchOp>(
-        loc, convertedResTys, adaptor.getCallee(), caseIdsAttr, caseIds.size());
+    auto switchOp = r.create<yul::SwitchOp>(loc, calleeTy.getResults(),
+                                            entry->getArgument(0), caseIdsAttr,
+                                            caseIds.size());
     for (size_t i = 0; i < caseFns.size(); ++i) {
       r.setInsertionPointToStart(&switchOp.getCaseRegions()[i].emplaceBlock());
-      auto call = r.create<yul::FuncCallOp>(
-          loc, convertedResTys, FlatSymbolRefAttr::get(caseFns[i]), calleeArgs);
+      auto call = r.create<yul::FuncCallOp>(loc, calleeTy.getResults(),
+                                            FlatSymbolRefAttr::get(caseFns[i]),
+                                            calleeArgs);
       r.create<yul::YieldOp>(loc, call.getResults());
     }
 
     r.setInsertionPointToStart(&switchOp.getDefaultRegion().emplaceBlock());
     evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
-    SmallVector<Value> undefs;
-    undefs.reserve(op.getNumResults());
-    for (Type ty : convertedResTys)
-      undefs.push_back(r.create<LLVM::UndefOp>(loc, ty));
-    r.create<yul::YieldOp>(loc, undefs);
+    r.create<yul::YieldOp>(loc, genUndefs(calleeTy.getResults(), loc, r));
 
-    r.replaceOp(op, switchOp.getResults());
+    r.setInsertionPointToEnd(entry);
+    r.create<yul::FuncReturnOp>(loc, switchOp.getResults());
+    return fn;
+  }
+
+  LogicalResult matchAndRewrite(sol::ICallOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    Location loc = op.getLoc();
+    auto calleeArgs = adaptor.getOperands().drop_front();
+    SmallVector<Type> convertedResTys;
+    if (failed(getTypeConverter()->convertTypes(op.getResultTypes(),
+                                                convertedResTys)))
+      return failure();
+
+    // Set at pass entry, before the sol signatures are legalized.
+    // TODO: Consider a separate op with a required $candidates so the
+    // annotated state is encoded in the dialect instead of this assert.
+    std::optional<ArrayRef<int64_t>> candidateIds = op.getCandidates();
+    assert(candidateIds && "sol.icall without candidate annotation");
+
+    // No valid id can reach this call: panic inline. Cannot outline: the
+    // symbol is keyed by the ids alone, so empty sets of different signatures
+    // would collide on `__sol.internal_dispatch.<rt|cr>`.
+    if (candidateIds->empty()) {
+      evm::Builder evmB(getModule(op), r, loc);
+      evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
+      r.replaceOp(op, genUndefs(convertedResTys, loc, r));
+      return success();
+    }
+
+    auto calleeTy = mlir::FunctionType::get(
+        r.getContext(), calleeArgs.getTypes(), convertedResTys);
+    SmallVector<Type> dispatchInputTys{adaptor.getCallee().getType()};
+    llvm::append_range(dispatchInputTys, calleeTy.getInputs());
+    auto dispatchFnTy = mlir::FunctionType::get(
+        r.getContext(), dispatchInputTys, calleeTy.getResults());
+
+    // Contract lowering has already relocated the caller into a
+    // creation/runtime object; standalone free functions stay hosted at
+    // module level.
+    Operation *symTab = SymbolTable::getNearestSymbolTable(op);
+    assert((isa<yul::ObjectOp, ModuleOp>(symTab)) &&
+           "expected an object or module scoped caller");
+    bool callerRuntime = op->getParentOfType<sol::FuncOp>().getRuntime();
+    std::string dispatchFnName =
+        evm::helpersym::internalDispatch(callerRuntime, *candidateIds);
+    Operation *found = SymbolTable::lookupSymbolIn(symTab, dispatchFnName);
+    auto dispatchFn = dyn_cast_or_null<yul::FuncOp>(found);
+    if (!dispatchFn) {
+      assert(!found && "dispatch symbol clashes with a non-function");
+      dispatchFn = genDispatchFn(dispatchFnName, *candidateIds, calleeTy,
+                                 dispatchFnTy, callerRuntime, op, r);
+    } else {
+      assert(dispatchFn.getFunctionType() == dispatchFnTy &&
+             "dispatch symbol clashes with an incompatible function");
+    }
+
+    SmallVector<Value> callArgs{adaptor.getCallee()};
+    llvm::append_range(callArgs, calleeArgs);
+    r.replaceOpWithNewOp<yul::FuncCallOp>(
+        op, convertedResTys, FlatSymbolRefAttr::get(dispatchFn), callArgs);
     return success();
   }
 };
