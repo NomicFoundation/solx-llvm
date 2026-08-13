@@ -1121,7 +1121,8 @@ Value evm::Builder::genMemAllocForDynArray(Value sizeVar, Value sizeInBytes,
   return memPtr;
 }
 
-/// Generates the memory allocation and optionally the zero initializer code.
+/// Recursively generates the memory allocation and initialization code for
+/// the memory-located aggregate type \p ty.
 Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
                                 Value sizeVar, int64_t recDepth,
                                 std::optional<Location> locArg) {
@@ -1136,13 +1137,16 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
     assert(arrayTy.getDataLocation() == sol::DataLocation::Memory);
 
     Value sizeInBytes, dataPtr;
-    // FIXME: Round up size for byte arays.
+    // No size rounding is needed here: sol.array elements always occupy full
+    // 32-byte words in memory (byte arrays are sol.string, whose sizes are
+    // rounded up below), and every allocation span is word-rounded centrally
+    // in genFreePtrUpd.
     if (arrayTy.isDynSized()) {
       // Dynamic allocation is only performed for the outermost dimension.
       if (sizeVar && recDepth == 0) {
         sizeInBytes = b.create<yul::MulOp>(loc, sizeVar, bExt.genI256Const(32));
         // `new T[](n)` panics (0x41) when n exceeds what memory can hold, like
-        // Yul; sizeInBytes wraps mod 2^256 for huge n, so guard on the length.
+        // Yul. sizeInBytes wraps mod 2^256 for huge n, so guard on the length.
         memPtr = genMemAllocForDynArray(sizeVar, sizeInBytes, loc,
                                         /*genLengthPanicGuard=*/true);
         dataPtr = b.create<yul::AddOp>(loc, memPtr, bExt.genI256Const(32));
@@ -1158,12 +1162,15 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
 
     Type eltTy = arrayTy.getEltType();
 
-    // Multi-dimensional array / array of structs.
-    if (isa<sol::StructType>(eltTy) || isa<sol::ArrayType>(eltTy)) {
+    // Reference-type elements: multi-dimensional arrays, arrays of structs
+    // and arrays of strings. Each element slot holds a pointer to a separate
+    // allocation. The recursive call yields the address.
+    if (isa<sol::StructType>(eltTy) || isa<sol::ArrayType>(eltTy) ||
+        isa<sol::StringType>(eltTy)) {
       if (!initVals.empty()) {
-        // This is probably a multi-dimensional array literal op. The inner
-        // allocation should be done by another array literal op. So we only
-        // store the offsets.
+        // Array literal of reference-type elements: the inner allocations are
+        // done by other literal ops, so the values are their addresses and
+        // are stored as-is.
         Value addr = dataPtr;
         for (auto val : initVals) {
           b.create<yul::MStoreOp>(loc, addr, val);
@@ -1172,31 +1179,33 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
         return memPtr;
       }
 
-      //
-      // Store the offsets to the "inner" allocations.
-      //
-      // Generate the loop for the stores of offsets.
-
-      // `size` should be a multiple of 32.
+      // Each element slot of the outer array holds a pointer to a separately
+      // allocated inner object. Generate a loop that walks the payload one
+      // 32-byte slot at a time (sizeInBytes is always a multiple of 32) and
+      // stores the element's default address: either a freshly allocated inner
+      // object or the zero-pointer sentinel.
       bExt.createCountedLoop(
           bExt.genI256Const(0), sizeInBytes, bExt.genI256Const(32),
           ValueRange{},
           [&](OpBuilder &b, Location loc, Value indVar, ValueRange) {
             Value incrMemPtr = b.create<yul::AddOp>(loc, dataPtr, indVar);
-            b.create<yul::MStoreOp>(
-                loc, incrMemPtr,
-                genMemAlloc(eltTy, zeroInit, initVals, sizeVar, recDepth, loc));
+            // initVals is empty here (the literal case returns early above)
+            // and sizeVar only applies to the outermost dimension, so neither
+            // is propagated to the element allocations.
+            b.create<yul::MStoreOp>(loc, incrMemPtr,
+                                    genMemAlloc(eltTy, zeroInit,
+                                                /*initVals=*/{}, /*sizeVar=*/{},
+                                                recDepth, loc));
             return SmallVector<Value>{};
           });
 
     } else if (zeroInit) {
       Value callDataSz = b.create<yul::CallDataSizeOp>(loc);
       b.create<yul::CallDataCopyOp>(loc, dataPtr, callDataSz, sizeInBytes);
-
     } else {
       Value addr = dataPtr;
       for (auto val : initVals) {
-        // Clean values before storing full memory words; array literals can
+        // Clean values before storing full memory words. Array literals can
         // carry dirty high bits in narrow element values.  Note that
         // genExtFuncPack generates the cleaned value.
         Value stored = isa<sol::ExtFuncRefType>(eltTy)
@@ -1243,8 +1252,8 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
                          : b.create<yul::AddOp>(loc, basePtr,
                                                 bExt.genI256Const(memOffset));
       if (isa<sol::StructType>(memTy) || isa<sol::ArrayType>(memTy)) {
-        Value initVal =
-            genMemAlloc(memTy, zeroInit, {}, sizeVar, recDepth, loc);
+        Value initVal = genMemAlloc(memTy, zeroInit, /*initVals=*/{},
+                                    /*sizeVar=*/{}, recDepth, loc);
         b.create<yul::MStoreOp>(loc, memPtr, initVal);
       } else if (zeroInit) {
         // String/bytes fields must point to the zero-bytes sentinel (0x60) so
@@ -1263,7 +1272,7 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
     return basePtr;
   }
 
-  llvm_unreachable("NYI");
+  llvm_unreachable("unexpected type for memory allocation");
 }
 
 Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
