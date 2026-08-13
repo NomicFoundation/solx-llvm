@@ -190,7 +190,9 @@ public:
                                std::optional<Location> locArg = std::nullopt,
                                bool genLengthPanicGuard = false);
 
-  /// Generates the memory allocation code.
+  /// Generates the memory allocation and initialization code for the
+  /// memory-located aggregate type \p ty. Cleans the dirty high bits
+  /// of \p sizeVar when its Solidity type \p sizeVarTy is provided.
   Value genMemAlloc(Type ty, bool zeroInit, ValueRange initVals, Value sizeVar,
                     Type sizeVarTy,
                     std::optional<Location> locArg = std::nullopt);
@@ -209,6 +211,29 @@ public:
                    std::optional<sol::DataLocation> srcDataLoc);
 
 private:
+  /// Recursively generates the memory allocation and initialization code for
+  /// the memory-located aggregate type \p ty (sol.array, sol.string or
+  /// sol.struct) and returns the allocated address.
+  ///
+  /// \p sizeVar is the runtime element count (byte count for sol.string). It
+  /// applies only to the outermost dimension: inner dynamically sized
+  /// elements and members always start out empty, per Solidity's default
+  /// value semantics.
+  ///
+  /// The data initialization is controlled by:
+  /// - \p zeroInit: zero-fills value-type payloads and scalar struct members
+  ///   (string/bytes members are pointed at the zero-pointer sentinel). When
+  ///   unset, the caller must write every field before any read.
+  /// - \p initVals: literal element values (from sol.array_lit lowering).
+  ///   Value-type elements are cleaned up before the full-word stores, while
+  ///   for arrays of aggregates the values are the addresses of inner
+  ///   allocations made by other literal ops.
+  ///
+  /// \p recDepth tracks the recursion depth to identify the outermost
+  /// dimension; it is pre-incremented on entry, so external callers pass -1
+  /// (the public overload above does this).
+  ///
+  /// The allocation spans are word-rounded centrally in genFreePtrUpd.
   Value genMemAlloc(Type ty, bool zeroInit, ValueRange initVals, Value sizeVar,
                     int64_t recDepth,
                     std::optional<Location> locArg = std::nullopt);
