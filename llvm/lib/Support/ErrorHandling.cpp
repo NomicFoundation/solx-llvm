@@ -299,6 +299,12 @@ void LLVMResetEVMStackErrorHandler(void) {
   EVMStackErrorHandlerUserData = nullptr;
 }
 
+// The installed handler must not return normally: it either terminates the
+// process or throws. Throwing works despite LLVM building with
+// -fno-exceptions: that flag drops cleanup handlers, not unwind tables
+// (emitted by default), so the exception propagates through LLVM's frames;
+// the skipped cleanups leak whatever codegen allocated, which a throwing
+// handler must tolerate (bounded to one codegen run per retry).
 void llvm::report_evm_stack_error(const Twine &Reason,
                                   uint64_t spillRegionSize) {
   llvm::evm_stack_error_handler_t handler = nullptr;
