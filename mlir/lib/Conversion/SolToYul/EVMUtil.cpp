@@ -3687,9 +3687,6 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
   mlir::solgen::BuilderExt bExt(b, loc);
   ABIDecodeGuards guards(*this, b, loc, tupleEnd);
 
-  // TODO: Generate assertions for checking if addresses of reference types is
-  // within the calldata.
-
   auto genLoad = [&](Value addr) -> Value {
     if (fromMem)
       return b.create<yul::MLoadOp>(loc, addr);
@@ -3796,6 +3793,9 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
 
     Value tailAddr = addr;
     Value sizeInBytes = genLoad(tailAddr);
+    // The range check must precede the end check: a near-2^256 length wraps
+    // the end address computation around and slips past the bounds test.
+    guards.requireUint64(sizeInBytes, ABIDecodeGuards::kInvalidByteArrayLength);
     Value thirtyTwo = bExt.genI256Const(32);
     Value srcDataAddr = b.create<yul::AddOp>(loc, tailAddr, thirtyTwo);
     Value endAddr = b.create<yul::AddOp>(loc, srcDataAddr, sizeInBytes);
