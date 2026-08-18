@@ -864,8 +864,8 @@ int64_t evm::getMallocSize(Type ty) {
   }
   // Struct type.
   if (auto structTy = dyn_cast<sol::StructType>(ty)) {
-    // FIXME: Is the memoryHeadSize 32 for all the types (assuming padding is
-    // enabled by default) in StructType::memoryDataSize?
+    // Reference-type members take one pointer word and value-type
+    // members pad to a full word, so every member contributes exactly 32.
     return structTy.getMemberTypes().size() * 32;
   }
 
