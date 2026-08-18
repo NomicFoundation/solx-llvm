@@ -807,7 +807,9 @@ struct ABIDecodeGuards {
 } // namespace
 
 unsigned evm::getAlignment(evm::AddrSpace addrSpace) {
-  // FIXME: Confirm this!
+  // Stack objects are compiler-generated i256 cells, 32-byte aligned per the
+  // data layout (i256:256:256, S256). All other address spaces are byte
+  // addressed with no alignment guarantees.
   return addrSpace == evm::AddrSpace_Stack ? evm::ByteLen_Field
                                            : evm::ByteLen_Byte;
 }
