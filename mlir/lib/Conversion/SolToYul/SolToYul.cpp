@@ -904,10 +904,6 @@ static Value getCryptoHashLowering(OpT op, uint32_t preCompieAddr,
   Value dataSlot = evmB.genDataAddrPtr(adaptor.getData(), dataLoc);
 
   Value gas = r.create<mlir::yul::GasOp>(loc);
-  // TODO: Solc (in YUL mode) copyies the input array one more time,
-  // so we end up having two copys in heap. Also it doesn the following
-  // store: mstore(add(dstAddr, dataLen), 0).
-  // It's not clear why do we need this.
   // Hashing functions store their result in scratch space (0x00–0x3f).
   mlir::Value status =
       r.create<yul::StaticCallOp>(loc, gas,
