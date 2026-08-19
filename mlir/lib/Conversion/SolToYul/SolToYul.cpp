@@ -1288,7 +1288,11 @@ struct EcrecoverOpLowering : public OpConversionPattern<sol::EcrecoverOp> {
 
     // Hashing functions store their result in scratch space (0x00–0x3f).
     Value gas = r.create<mlir::yul::GasOp>(loc);
-    // TODO: It's not clear why do we need this.
+    // The output area must be cleared before the call: a failing ecrecover
+    // cannot be detected from the status (the precompile succeeds with empty
+    // returndata, leaving the output area untouched), so this zero is what
+    // the caller reads back as the documented address(0) failure result.
+    // Scratch is dirty in general, so we need to clean it.
     r.create<yul::MStoreOp>(loc, zero, zero);
     mlir::Value status =
         r.create<yul::StaticCallOp>(loc, gas,
