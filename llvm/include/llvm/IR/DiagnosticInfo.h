@@ -92,6 +92,9 @@ enum DiagnosticKind {
   DK_SrcMgr,
   DK_DontCall,
   DK_MisExpect,
+  // EVM local begin
+  DK_EVMStackRegionOverflow,
+  // EVM local end
   DK_FirstPluginKind // Must be last value to work with
                      // getNextAvailablePluginDiagnosticKind
 };
@@ -491,6 +494,33 @@ public:
     return DI->getKind() == DK_StackSize;
   }
 };
+
+// EVM local begin
+/// Diagnostic reporting that a module's total stack size exceeds the
+/// allocated stack region, carrying the size the front-end needs to re-run
+/// codegen with a large enough region.
+class LLVM_ABI DiagnosticInfoEVMStackRegionOverflow : public DiagnosticInfo {
+  uint64_t TotalStackSize;
+  uint64_t StackRegionSize;
+
+public:
+  DiagnosticInfoEVMStackRegionOverflow(uint64_t TotalStackSize,
+                                       uint64_t StackRegionSize,
+                                       DiagnosticSeverity Severity = DS_Error)
+      : DiagnosticInfo(DK_EVMStackRegionOverflow, Severity),
+        TotalStackSize(TotalStackSize), StackRegionSize(StackRegionSize) {}
+
+  uint64_t getTotalStackSize() const { return TotalStackSize; }
+  uint64_t getStackRegionSize() const { return StackRegionSize; }
+
+  /// \see DiagnosticInfo::print.
+  void print(DiagnosticPrinter &DP) const override;
+
+  static bool classof(const DiagnosticInfo *DI) {
+    return DI->getKind() == DK_EVMStackRegionOverflow;
+  }
+};
+// EVM local end
 
 /// Common features for diagnostics dealing with optimization remarks
 /// that are used by both IR and MIR passes.

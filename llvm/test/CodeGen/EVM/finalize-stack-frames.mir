@@ -1,11 +1,11 @@
 # RUN: llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-offset=128 -evm-stack-region-size=96 < %s | FileCheck %s
 # RUN: llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-offset=128 -evm-stack-region-size=128 < %s 2>&1 | FileCheck --check-prefix=CHECK-MOREALLOC %s
-# RUN: not --crash llc -x mir -run-pass=evm-finalize-stack-frames < %s 2>&1 | FileCheck --check-prefix=CHECK-NOALLOC %s
+# RUN: not llc -x mir -run-pass=evm-finalize-stack-frames < %s 2>&1 | FileCheck --check-prefix=CHECK-NOALLOC %s
 # RUN: not --crash llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-size=96 < %s 2>&1 | FileCheck --check-prefix=CHECK-NOSTART %s
 # RUN: not --crash llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-offset=129 -evm-stack-region-size=96 < %s 2>&1 | FileCheck --check-prefix=CHECK-NOMOD %s
 
 # CHECK-MOREALLOC: warning: allocated stack region size: 128 is larger than the total stack size: 96
-# CHECK-NOALLOC: LLVM ERROR: Total stack size: 96 is larger than the allocated stack region size: 0
+# CHECK-NOALLOC: error: total stack size (96) exceeds the allocated stack region size (0)
 # CHECK-NOSTART: LLVM ERROR: Stack region offset must be set when stack region size is set. Use --evm-stack-region-offset to set the offset.
 # CHECK-NOMOD: LLVM ERROR: Stack region offset must be a multiple of 32 bytes.
 
