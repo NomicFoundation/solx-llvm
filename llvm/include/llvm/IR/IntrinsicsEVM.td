@@ -103,6 +103,13 @@ def int_evm_mstore8
                 [IntrWriteMem, IntrArgMemOnly, NoCapture<ArgIndex<0>>,
                  IntrNoCallback, IntrWillReturn]>;
 
+// Marks the free memory pointer's initializer. The region is described by the
+// "evm-memory-guard" and "evm-stack-region-size" module flags; the
+// evm-fold-memory-guard pass folds this to their sum before optimization. It
+// must not reach ISel.
+def int_evm_memoryguard
+    : Intrinsic<[llvm_i256_ty], [], [IntrNoMem, IntrWillReturn]>;
+
 // Special getters that must not be relocated.
 def int_evm_msize : Intrinsic<[llvm_i256_ty], [], [IntrWillReturn]>;
 

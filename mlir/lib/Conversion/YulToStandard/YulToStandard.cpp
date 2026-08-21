@@ -1148,8 +1148,33 @@ struct MemGuardOpLowering : public OpRewritePattern<yul::MemGuardOp> {
 
   LogicalResult matchAndRewrite(yul::MemGuardOp op,
                                 PatternRewriter &r) const override {
-    auto size = op->getAttrOfType<IntegerAttr>("size");
-    r.replaceOpWithNewOp<arith::ConstantOp>(op, size);
+    auto guard = op->getAttrOfType<IntegerAttr>("size");
+    auto mod = op->getParentOfType<ModuleOp>();
+    if (!mod)
+      return failure();
+
+    // The marker only says which value is the free memory pointer's
+    // initializer; the region itself travels on the module. The size starts at
+    // zero and the driver rewrites it when the backend asks for a spill area.
+    {
+      OpBuilder::InsertionGuard insertGuard(r);
+      r.setInsertionPointToEnd(mod.getBody());
+      auto flag = [&](StringRef name, uint64_t value) {
+        return LLVM::ModuleFlagAttr::get(
+            r.getContext(), LLVM::ModFlagBehavior::Error, r.getStringAttr(name),
+            r.getI64IntegerAttr(value));
+      };
+      r.create<LLVM::ModuleFlagsOp>(
+          op.getLoc(),
+          r.getArrayAttr(
+              {flag("evm-memory-guard", guard.getValue().getZExtValue()),
+               flag("evm-stack-region-size", 0)}));
+    }
+
+    r.replaceOpWithNewOp<LLVM::IntrCallOp>(op, llvm::Intrinsic::evm_memoryguard,
+                                           /*resTy=*/r.getIntegerType(256),
+                                           /*ins=*/ValueRange{},
+                                           "evm.memoryguard");
     return success();
   }
 };
