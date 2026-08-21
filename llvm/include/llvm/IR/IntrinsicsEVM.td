@@ -103,6 +103,9 @@ def int_evm_mstore8
                 [IntrWriteMem, IntrArgMemOnly, NoCapture<ArgIndex<0>>,
                  IntrNoCallback, IntrWillReturn]>;
 
+// Marks the free memory pointer's initializer.
+def int_evm_memoryguard : Intrinsic<[llvm_i256_ty], [], []>;
+
 // Special getters that must not be relocated.
 def int_evm_msize : Intrinsic<[llvm_i256_ty], [], [IntrWillReturn]>;
 
