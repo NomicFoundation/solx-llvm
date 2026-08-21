@@ -1529,6 +1529,13 @@ def ConvertYulToStandardPass : Pass<"convert-yul-to-std", "ModuleOp"> {
     "arith::ArithDialect",
     "LLVM::LLVMDialect",
   ];
+  let options = [
+    // Only the solc integration uses the constant lowering (it has no
+    // stack-too-deep support); drop this option once solc is archived.
+    Option<"symbolicMemGuard", "symbolic-memguard", "bool", "false",
+           "Lower yul.memoryguard to the evm.memoryguard intrinsic instead "
+           "of a constant">,
+  ];
 }
 // EVM local end
 

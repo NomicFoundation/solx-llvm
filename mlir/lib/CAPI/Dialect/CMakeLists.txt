@@ -293,6 +293,7 @@ add_mlir_upstream_c_api_library(MLIRCAPISol
   MLIRPass
   MLIRSolDialect
   MLIRSolTransforms
+  MLIRYulToStandard
 )
 
 add_mlir_upstream_c_api_library(MLIRCAPIYul

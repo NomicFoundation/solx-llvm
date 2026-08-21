@@ -138,9 +138,12 @@ _add_capi_test_executable(mlir-capi-smt-test
 _add_capi_test_executable(mlir-capi-sol-test
   sol.c
   LINK_LIBS PRIVATE
+    MLIRCAPIArith
     MLIRCAPIConversion
+    MLIRCAPIFunc
     MLIRCAPIIR
     MLIRCAPISol
+    MLIRCAPIYul
 )
 
 _add_capi_test_executable(mlir-capi-yul-test

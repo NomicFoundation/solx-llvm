@@ -1144,14 +1144,25 @@ struct MCopyOpLowering : public OpRewritePattern<yul::MCopyOp> {
 };
 
 struct MemGuardOpLowering : public OpRewritePattern<yul::MemGuardOp> {
-  using OpRewritePattern<yul::MemGuardOp>::OpRewritePattern;
+  MemGuardOpLowering(MLIRContext *ctx, bool symbolic)
+      : OpRewritePattern<yul::MemGuardOp>(ctx), symbolic(symbolic) {}
 
   LogicalResult matchAndRewrite(yul::MemGuardOp op,
                                 PatternRewriter &r) const override {
     auto size = op->getAttrOfType<IntegerAttr>("size");
-    r.replaceOpWithNewOp<arith::ConstantOp>(op, size);
+    if (!symbolic) {
+      r.replaceOpWithNewOp<arith::ConstantOp>(op, size);
+      return success();
+    }
+    auto guard = r.create<arith::ConstantOp>(op.getLoc(), size);
+    r.replaceOpWithNewOp<LLVM::IntrCallOp>(op, llvm::Intrinsic::evm_memoryguard,
+                                           /*resTy=*/r.getIntegerType(256),
+                                           /*ins=*/ValueRange{guard},
+                                           "evm.memoryguard");
     return success();
   }
+
+  bool symbolic;
 };
 
 struct RevertOpLowering : public OpRewritePattern<yul::RevertOp> {
@@ -1640,9 +1651,11 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
 
 } // namespace
 
-void evm::populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv) {
+void evm::populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv,
+                          bool symbolicMemGuard) {
   pats.add<AllocaOpLowering, LoadOpLowering, StoreOpLowering>(
       tyConv, pats.getContext());
+  pats.add<MemGuardOpLowering>(pats.getContext(), symbolicMemGuard);
   pats.add<BinaryOpLowering<yul::AddOp, arith::AddIOp>,
            BinaryOpLowering<yul::SubOp, arith::SubIOp>,
            BinaryOpLowering<yul::MulOp, arith::MulIOp>,
@@ -1734,7 +1747,6 @@ void evm::populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv) {
       SetImmutableOpLowering,
       ByteOpLowering,
       MCopyOpLowering,
-      MemGuardOpLowering,
       BuiltinCallOpLowering,
       CallCodeOpLowering,
       StaticCallOpLowering,

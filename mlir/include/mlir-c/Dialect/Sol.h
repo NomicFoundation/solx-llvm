@@ -10,6 +10,7 @@
 #define MLIR_C_DIALECT_SOL_H
 
 #include "mlir-c/IR.h"
+#include "mlir-c/Pass.h"
 #include "mlir-c/Support.h"
 
 #ifdef __cplusplus
@@ -45,6 +46,11 @@ MLIR_CAPI_EXPORTED MlirValue mlirSolGenDefaultVal(MlirBlock block,
                                                   MlirOperation insertBefore,
                                                   MlirType ty,
                                                   MlirLocation loc);
+
+/// Creates a convert-yul-to-std pass. `symbolicMemGuard` lowers
+/// yul.memoryguard to the evm.memoryguard intrinsic instead of a constant.
+MLIR_CAPI_EXPORTED MlirPass
+mlirSolCreateConvertYulToStandardPass(bool symbolicMemGuard);
 
 #ifdef __cplusplus
 }

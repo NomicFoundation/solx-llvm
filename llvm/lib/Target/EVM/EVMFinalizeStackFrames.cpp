@@ -32,6 +32,12 @@ static cl::opt<uint64_t>
     StackRegionSize("evm-stack-region-size", cl::Hidden, cl::init(0),
                     cl::desc("Allocated stack region size"));
 
+uint64_t llvm::getEVMStackRegionSize() { return StackRegionSize; }
+
+// TODO: Remove this option and its fallback in runOnModule once the Yul and
+// EVMLA pipelines are gone, leaving the "evm-memory-guard" module flag as the
+// only region base. Only a front end that folds the guard itself has to name
+// the base on the command line.
 static cl::opt<uint64_t>
     StackRegionOffset("evm-stack-region-offset", cl::Hidden,
                       cl::init(std::numeric_limits<uint64_t>::max()),
@@ -132,15 +138,20 @@ void EVMFinalizeStackFrames::replaceFrameIndices(
 bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   LLVM_DEBUG({ dbgs() << "********** Finalize stack frames **********\n"; });
 
+  std::optional<uint64_t> Guard = getEVMMemoryGuard(M);
+  uint64_t RegionStart = Guard.value_or(StackRegionOffset);
+
   // Check if options for stack region size and offset are set correctly.
   if (StackRegionSize.getNumOccurrences()) {
-    if (!StackRegionOffset.getNumOccurrences())
+    if (!Guard && !StackRegionOffset.getNumOccurrences())
       report_fatal_error("Stack region offset must be set when stack region "
                          "size is set. Use --evm-stack-region-offset to set "
                          "the offset.");
 
-    if (StackRegionOffset % 32 != 0)
-      report_fatal_error("Stack region offset must be a multiple of 32 bytes.");
+    if (RegionStart % 32 != 0)
+      report_fatal_error(Guard ? "Memory guard must be a multiple of 32 bytes."
+                               : "Stack region offset must be a multiple of 32 "
+                                 "bytes.");
   }
 
   uint64_t TotalStackSize = 0;
@@ -157,7 +168,7 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
     if (StackSize == 0)
       continue;
 
-    uint64_t StackRegionStart = StackRegionOffset + TotalStackSize;
+    uint64_t StackRegionStart = RegionStart + TotalStackSize;
     ToReplaceFI.emplace_back(MF, StackRegionStart);
     TotalStackSize += StackSize;
 

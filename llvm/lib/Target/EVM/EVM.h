@@ -18,9 +18,12 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Pass.h"
 
+#include <optional>
+
 namespace llvm {
 class EVMTargetMachine;
 class FunctionPass;
+class Module;
 class ModulePass;
 class PassRegistry;
 
@@ -72,6 +75,13 @@ ModulePass *createEVMMarkRecursiveFunctionsPass();
 ModulePass *createEVMConstantUnfolding();
 ModulePass *createEVMVerifierPass();
 
+/// Returns the spill region size requested via -evm-stack-region-size.
+uint64_t getEVMStackRegionSize();
+
+/// Returns the memory guard EVMFoldMemoryGuard recorded on the module, i.e.
+/// the base of the spill region, if the module carried a memoryguard marker.
+std::optional<uint64_t> getEVMMemoryGuard(const Module &M);
+
 // PassRegistry initialization declarations.
 void initializeEVMCodegenPreparePass(PassRegistry &);
 void initializeEVMAllocaHoistingPass(PassRegistry &);
@@ -121,6 +131,11 @@ struct EVMAlwaysInlinePass : PassInfoMixin<EVMAlwaysInlinePass> {
 
 struct EVMVerifierPass : PassInfoMixin<EVMVerifierPass> {
   EVMVerifierPass() = default;
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+};
+
+struct EVMFoldMemoryGuardPass : PassInfoMixin<EVMFoldMemoryGuardPass> {
+  EVMFoldMemoryGuardPass() = default;
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };
 

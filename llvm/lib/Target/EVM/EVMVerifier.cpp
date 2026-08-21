@@ -16,6 +16,8 @@
 #include "EVM.h"
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsEVM.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/InitializePasses.h"
@@ -98,6 +100,11 @@ void EVMVerifierImpl::visitMemSetInst(MemSetInst &MSI) {
 
 bool EVMVerifierImpl::verify(Module &M) {
   visit(M);
+  if (Function *MemGuard =
+          Intrinsic::getDeclarationIfExists(&M, Intrinsic::evm_memoryguard))
+    CheckFailed("EVM memoryguard must be folded before codegen, run "
+                "evm-fold-memory-guard",
+                *MemGuard);
   return !Broken;
 }
 

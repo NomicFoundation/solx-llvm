@@ -31,6 +31,8 @@ namespace {
 /// Pass for lowering the yul dialect to the standard dialects.
 struct ConvertYulToStandardPass
     : public impl::ConvertYulToStandardPassBase<ConvertYulToStandardPass> {
+  using impl::ConvertYulToStandardPassBase<
+      ConvertYulToStandardPass>::ConvertYulToStandardPassBase;
 
   void runOnOperation() override {
     ModuleOp mod = getOperation();
@@ -54,7 +56,7 @@ struct ConvertYulToStandardPass
     tyConv.addTargetMaterialization(castMaterialization);
 
     RewritePatternSet pats(&getContext());
-    evm::populateYulPats(pats, tyConv);
+    evm::populateYulPats(pats, tyConv, symbolicMemGuard);
 
     if (failed(applyPartialConversion(mod, convTgt, std::move(pats)))) {
       signalPassFailure();

@@ -25,7 +25,8 @@ namespace mlir {
 namespace evm {
 
 /// Adds the conversion patterns of yul ops in the sol dialect.
-void populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv);
+void populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv,
+                     bool symbolicMemGuard = false);
 
 } // namespace evm
 } // namespace mlir

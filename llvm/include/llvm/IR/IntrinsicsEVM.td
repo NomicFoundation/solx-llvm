@@ -103,6 +103,13 @@ def int_evm_mstore8
                 [IntrWriteMem, IntrArgMemOnly, NoCapture<ArgIndex<0>>,
                  IntrNoCallback, IntrWillReturn]>;
 
+// Identity marker for the front end's memoryguard value. The
+// evm-fold-memory-guard pass folds it to `guard + spill-region size` before
+// optimization; it must not reach ISel.
+def int_evm_memoryguard
+    : Intrinsic<[llvm_i256_ty], [llvm_i256_ty],
+                [IntrNoMem, IntrWillReturn, ImmArg<ArgIndex<0>>]>;
+
 // Special getters that must not be relocated.
 def int_evm_msize : Intrinsic<[llvm_i256_ty], [], [IntrWillReturn]>;
 

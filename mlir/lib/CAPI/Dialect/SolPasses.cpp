@@ -6,7 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir-c/Dialect/Sol.h"
 #include "mlir/CAPI/Pass.h"
+#include "mlir/Conversion/YulToStandard/YulToStandard.h"
 #include "mlir/Dialect/Sol/Transforms/Passes.h"
 #include "mlir/Pass/Pass.h"
 
@@ -25,3 +27,9 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
+
+MlirPass mlirSolCreateConvertYulToStandardPass(bool symbolicMemGuard) {
+  ConvertYulToStandardPassOptions opts;
+  opts.symbolicMemGuard = symbolicMemGuard;
+  return wrap(createConvertYulToStandardPass(opts).release());
+}

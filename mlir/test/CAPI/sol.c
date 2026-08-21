@@ -11,6 +11,9 @@
 
 #include "mlir-c/Dialect/Sol.h"
 #include "mlir-c/Conversion.h"
+#include "mlir-c/Dialect/Arith.h"
+#include "mlir-c/Dialect/Func.h"
+#include "mlir-c/Dialect/Yul.h"
 #include "mlir-c/IR.h"
 #include "mlir-c/Pass.h"
 
@@ -20,6 +23,11 @@
 static void dontPrint(MlirStringRef str, void *userData) {
   (void)str;
   (void)userData;
+}
+
+static void printToStderr(MlirStringRef str, void *userData) {
+  (void)userData;
+  fwrite(str.data, 1, str.length, stderr);
 }
 
 // CHECK-LABEL: testSolDialectHandle
@@ -112,11 +120,49 @@ static void testSolPasses(MlirContext ctx) {
   mlirModuleDestroy(module);
 }
 
+// CHECK-LABEL: testSymbolicMemGuard
+static void testSymbolicMemGuard(MlirContext ctx) {
+  fprintf(stderr, "testSymbolicMemGuard\n");
+
+  mlirDialectHandleRegisterDialect(mlirGetDialectHandle__yul__(), ctx);
+  mlirDialectHandleRegisterDialect(mlirGetDialectHandle__func__(), ctx);
+  mlirDialectHandleRegisterDialect(mlirGetDialectHandle__arith__(), ctx);
+
+  MlirModule module = mlirModuleCreateParse(
+      ctx, mlirStringRefCreateFromCString("func.func @free_ptr_init() {\n"
+                                          "  %guard = yul.memoryguard 128\n"
+                                          "  %addr = arith.constant 64 : i256\n"
+                                          "  yul.mstore %addr, %guard\n"
+                                          "  return\n"
+                                          "}\n"));
+  if (mlirModuleIsNull(module)) {
+    fprintf(stderr, "Parsing the memoryguard module failed\n");
+    exit(EXIT_FAILURE);
+  }
+
+  MlirPassManager pm = mlirPassManagerCreate(ctx);
+  mlirPassManagerAddOwnedPass(
+      pm, mlirSolCreateConvertYulToStandardPass(/*symbolicMemGuard=*/true));
+
+  MlirOperation moduleOp = mlirModuleGetOperation(module);
+  if (!mlirLogicalResultIsSuccess(mlirPassManagerRunOnOp(pm, moduleOp))) {
+    fprintf(stderr, "Pass manager run failed\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // CHECK: name = "evm.memoryguard"
+  mlirOperationPrint(moduleOp, printToStderr, NULL);
+
+  mlirPassManagerDestroy(pm);
+  mlirModuleDestroy(module);
+}
+
 int main(void) {
   MlirContext ctx = mlirContextCreate();
   testSolDialectHandle(ctx);
   testSolPassRegistration(ctx);
   testSolPasses(ctx);
+  testSymbolicMemGuard(ctx);
   mlirContextDestroy(ctx);
   return 0;
 }
