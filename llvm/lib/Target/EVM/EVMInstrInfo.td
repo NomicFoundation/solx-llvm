@@ -1219,6 +1219,18 @@ def PUSH32_S : PushBase<(outs), (ins i256imm:$imm), [], true, "PUSH32$imm",
   let DecoderMethod = "decodePUSH<32>";
 }
 
+// The memory guard instruction is a codegen one which is rewritten to
+// a PUSH of `guard + spill size` in EVMFinalizeStackFrames. It is selected
+// manually from int_evm_memoryguard in lowerINTRINSIC_WO_CHAIN.
+let isMoveImm = 1, isAsCheapAsAMove = 1, isReMaterializable = 1,
+    isCodeGenOnly = 1, hasSideEffects = 0 in {
+  let BaseName = "MEMORYGUARD" in {
+    def MEMORYGUARD
+        : NI<(outs GPR:$res), (ins i256imm:$imm), [], false, "", 0, 0>;
+    def MEMORYGUARD_S : NI<(outs), (ins i256imm:$imm), [], true, "", 0, 0>;
+  }
+}
+
 // Pseudo instructions for linkage
 let isAsCheapAsAMove = 1, isReMaterializable = 1, isCodeGenOnly = 1, hasSideEffects = 0 in {
   let  BaseName = "DATASIZE" in {

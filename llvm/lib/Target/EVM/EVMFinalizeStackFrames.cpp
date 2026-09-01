@@ -28,15 +28,6 @@ using namespace llvm;
 #define DEBUG_TYPE "evm-finalize-stack-frames"
 #define PASS_NAME "EVM finalize stack frames"
 
-static cl::opt<uint64_t>
-    StackRegionSize("evm-stack-region-size", cl::Hidden, cl::init(0),
-                    cl::desc("Allocated stack region size"));
-
-static cl::opt<uint64_t>
-    StackRegionOffset("evm-stack-region-offset", cl::Hidden,
-                      cl::init(std::numeric_limits<uint64_t>::max()),
-                      cl::desc("Offset where the stack region starts"));
-
 namespace {
 class EVMFinalizeStackFrames : public ModulePass {
 public:
@@ -132,20 +123,37 @@ void EVMFinalizeStackFrames::replaceFrameIndices(
 bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   LLVM_DEBUG({ dbgs() << "********** Finalize stack frames **********\n"; });
 
-  // Check if options for stack region size and offset are set correctly.
-  if (StackRegionSize.getNumOccurrences()) {
-    if (!StackRegionOffset.getNumOccurrences())
-      report_fatal_error("Stack region offset must be set when stack region "
-                         "size is set. Use --evm-stack-region-offset to set "
-                         "the offset.");
-
-    if (StackRegionOffset % 32 != 0)
-      report_fatal_error("Stack region offset must be a multiple of 32 bytes.");
-  }
-
   uint64_t TotalStackSize = 0;
   MachineModuleInfo &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
   SmallVector<std::pair<MachineFunction *, uint64_t>, 8> ToReplaceFI;
+
+  // Collect memoryguard instructiions in the module.
+  uint64_t MemoryGuard = 128;
+  SmallVector<MachineInstr *> MemoryGuardInsts;
+  for (Function &F : M) {
+    MachineFunction *MF = MMI.getMachineFunction(F);
+    if (!MF)
+      continue;
+
+    for (MachineBasicBlock &MBB : *MF)
+      for (MachineInstr &MI : MBB)
+        if (MI.getOpcode() == EVM::MEMORYGUARD_S) {
+          // Stack form: the immediate is operand 0 (no def register).
+          const APInt &ValImm = MI.getOperand(0).getCImm()->getValue();
+          if (ValImm.getActiveBits() > 64)
+            report_fatal_error("Memory guard value does not fit in 64 bits.");
+          uint64_t Val = ValImm.getZExtValue();
+          if (MemoryGuardInsts.empty())
+            MemoryGuard = Val;
+          else
+            assert(Val == MemoryGuard);
+
+          MemoryGuardInsts.push_back(&MI);
+        }
+  }
+
+  if (MemoryGuard % 32 != 0)
+    report_fatal_error("Stack region offset must be a multiple of 32 bytes.");
 
   // Calculate the stack size for each function.
   for (Function &F : M) {
@@ -157,7 +165,7 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
     if (StackSize == 0)
       continue;
 
-    uint64_t StackRegionStart = StackRegionOffset + TotalStackSize;
+    uint64_t StackRegionStart = MemoryGuard + TotalStackSize;
     ToReplaceFI.emplace_back(MF, StackRegionStart);
     TotalStackSize += StackSize;
 
@@ -169,23 +177,23 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   }
   LLVM_DEBUG({ dbgs() << "Total stack size: " << TotalStackSize << "\n"; });
 
-  // Check if it is valid to replace frame indices.
-  if (TotalStackSize > 0 && TotalStackSize > StackRegionSize) {
-    report_evm_stack_error(
-        "Total stack size: " + Twine(TotalStackSize) +
-            " is larger than the allocated stack region size: " +
-            Twine(StackRegionSize),
-        TotalStackSize);
-  }
-  if (StackRegionSize > TotalStackSize)
-    errs() << "warning: allocated stack region size: " +
-                  Twine(StackRegionSize) +
-                  " is larger than the total stack size: " +
-                  Twine(TotalStackSize) + "\n";
-
   // Replace frame indices with their offsets.
   for (auto &[MF, StackRegionStart] : ToReplaceFI)
     replaceFrameIndices(*MF, StackRegionStart);
+
+  // Rewrite memory guard instructions with updated values.
+  APInt NewMemoryGuard(256, MemoryGuard + TotalStackSize);
+  for (auto *MI : MemoryGuardInsts) {
+    unsigned PushOpc = EVM::getPUSHOpcode(NewMemoryGuard);
+    MachineFunction *MF = MI->getMF();
+    const TargetInstrInfo *TII = MF->getSubtarget().getInstrInfo();
+    auto NewMI = BuildMI(*MI->getParent(), MI, MI->getDebugLoc(),
+                         TII->get(EVM::getStackOpcode(PushOpc)));
+    assert(PushOpc != EVM::PUSH0);
+    NewMI.addCImm(
+        ConstantInt::get(MF->getFunction().getContext(), NewMemoryGuard));
+    MI->eraseFromParent();
+  }
 
   return TotalStackSize > 0;
 }

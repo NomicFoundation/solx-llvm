@@ -46,6 +46,7 @@ private:
     void emitPOP();
     void emitConstant(const APInt &Val);
     void emitConstant(uint64_t Val);
+    void emitMemoryGuard(const APInt &Val);
     void emitSymbol(const MachineInstr *MI, MCSymbol *Symbol);
     void emitFuncCall(const MachineInstr *MI);
     void emitRet(const MachineInstr *MI);

@@ -37,6 +37,7 @@ public:
     SK_Literal,
     SK_Register,
     SK_Symbol,
+    SK_MemoryGuard,
     SK_CallerReturn,
     SK_CalleeReturn,
     SK_Unused,
@@ -124,6 +125,30 @@ public:
 
   static bool classof(const StackSlot *S) {
     return S->getSlotKind() == SK_Symbol;
+  }
+};
+
+/// A slot holding the memory guard: the initial free-memory-pointer value the
+/// front end reserves. It is rematerializable (a known immediate) and, unlike
+/// a literal, stays a distinct MEMORYGUARD instruction until
+/// EVMFinalizeStackFrames rewrites it to `guard + total spill size`.
+class MemoryGuardSlot final : public StackSlot {
+  APInt Value;
+
+public:
+  explicit MemoryGuardSlot(const APInt &V)
+      : StackSlot(SK_MemoryGuard), Value(V) {}
+  const APInt &getValue() const { return Value; }
+
+  bool isRematerializable() const override { return true; }
+  std::string toString() const override {
+    SmallString<64> S;
+    Value.toStringUnsigned(S);
+    return "MemoryGuard(" + std::string(S.str()) + ')';
+  }
+
+  static bool classof(const StackSlot *S) {
+    return S->getSlotKind() == SK_MemoryGuard;
   }
 };
 
@@ -231,6 +256,7 @@ class EVMStackModel {
 
   // Storage for stack slots.
   mutable DenseMap<APInt, std::unique_ptr<LiteralSlot>> LiteralStorage;
+  mutable DenseMap<APInt, std::unique_ptr<MemoryGuardSlot>> MemoryGuardStorage;
   mutable DenseMap<Register, std::unique_ptr<RegisterSlot>> RegStorage;
   mutable DenseMap<std::pair<MCSymbol *, const MachineInstr *>,
                    std::unique_ptr<SymbolSlot>>
@@ -299,6 +325,11 @@ public:
       RegStorage[R] = std::make_unique<RegisterSlot>(R);
     return RegStorage[R].get();
   }
+  MemoryGuardSlot *getMemoryGuardSlot(const APInt &V) const {
+    if (MemoryGuardStorage.count(V) == 0)
+      MemoryGuardStorage[V] = std::make_unique<MemoryGuardSlot>(V);
+    return MemoryGuardStorage[V].get();
+  }
   SymbolSlot *getSymbolSlot(MCSymbol *S, const MachineInstr *MI) const {
     auto Key = std::make_pair(S, MI);
     if (SymbolStorage.count(Key) == 0)
@@ -347,6 +378,11 @@ public:
     // If the virtual register has the only definition, ignore this instruction,
     // as we create literal slots from the immediate value at the register uses.
     if (Opc == EVM::CONST_I256 &&
+        LIS.getInterval(MI.getOperand(0).getReg()).containsOneValue())
+      return true;
+    // Likewise, the memory guard is rematerialized at its uses as a distinct
+    // MEMORYGUARD instruction, so ignore it.
+    if (Opc == EVM::MEMORYGUARD &&
         LIS.getInterval(MI.getOperand(0).getReg()).containsOneValue())
       return true;
     return Opc == EVM::ARGUMENT || Opc == EVM::RET || Opc == EVM::JUMP ||

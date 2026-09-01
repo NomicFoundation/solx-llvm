@@ -24,7 +24,8 @@ bool llvm::isLinkerPseudoMI(const MachineInstr &MI) {
 bool llvm::isPushOrDupLikeMI(const MachineInstr &MI) {
   return isLinkerPseudoMI(MI) || MI.getOpcode() == EVM::CONST_I256 ||
          MI.getOpcode() == EVM::COPY_I256 ||
-         MI.getOpcode() == EVM::IMPLICIT_DEF;
+         MI.getOpcode() == EVM::IMPLICIT_DEF ||
+         MI.getOpcode() == EVM::MEMORYGUARD;
 }
 bool llvm::isNoReturnCallMI(const MachineInstr &MI) {
   assert(MI.getOpcode() == EVM::FCALL && "Unexpected call instruction");
@@ -81,6 +82,8 @@ StackSlot *EVMStackModel::getStackSlot(const MachineOperand &MO) const {
     assert(DefMI && "Dead valno in interval");
     if (DefMI->getOpcode() == EVM::CONST_I256)
       return getLiteralSlot(DefMI->getOperand(1).getCImm()->getValue());
+    if (DefMI->getOpcode() == EVM::MEMORYGUARD)
+      return getMemoryGuardSlot(DefMI->getOperand(1).getCImm()->getValue());
   }
   return getRegisterSlot(MO.getReg());
 }
@@ -132,6 +135,14 @@ void EVMStackModel::processMI(const MachineInstr &MI) {
   if (isLinkerPseudoMI(MI)) {
     MCSymbol *Sym = MI.getOperand(1).getMCSymbol();
     MIInputMap[&MI] = Stack(1, getSymbolSlot(Sym, &MI));
+    return;
+  }
+  if (Opc == EVM::MEMORYGUARD) {
+    // The memeory guard is a rematerializable, but it uses a distinct
+    // MEMORYGUARD instruction so EVMFinalizeStackFrames can rewrite it once
+    // the spill size is known.
+    MIInputMap[&MI] =
+        Stack(1, getMemoryGuardSlot(MI.getOperand(1).getCImm()->getValue()));
     return;
   }
   if (Opc == EVM::IMPLICIT_DEF) {

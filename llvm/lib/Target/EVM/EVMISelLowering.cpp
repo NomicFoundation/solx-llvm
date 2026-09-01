@@ -304,6 +304,19 @@ SDValue EVMTargetLowering::lowerINTRINSIC_WO_CHAIN(SDValue Op,
                                       DAG.getMCSymbol(Sym, MVT::i256)),
                    0);
   } break;
+  case Intrinsic::evm_memoryguard: {
+    // Select MEMORYGUARD manually. The i256 immediate cannot be expressed
+    // with ImmArg + a 'timm' ISel pattern, as the generic SelectionDAG
+    // builder only supports immarg values up to 64 bits wide.
+    const SDLoc DL(Op);
+    const auto *CN = dyn_cast<ConstantSDNode>(Op.getOperand(1));
+    if (!CN)
+      report_fatal_error("evm.memoryguard argument must be a constant");
+    return SDValue(DAG.getMachineNode(EVM::MEMORYGUARD, DL, MVT::i256,
+                                      DAG.getTargetConstant(CN->getAPIntValue(),
+                                                            DL, MVT::i256)),
+                   0);
+  }
   }
 }
 

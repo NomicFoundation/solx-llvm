@@ -1,7 +1,8 @@
 # RUN: llc -x mir -run-pass=evm-finalize-stack-frames < %s | FileCheck %s
 
-# The module contains no MEMORYGUARD instruction, so the stack region is
-# placed at the default memory guard value (128).
+# The initial memory guard value (256) is taken from the MEMORYGUARD
+# instructions. Stack frames are placed starting at the guard: foo gets
+# [256, 288], bar gets [320].
 
 --- |
   source_filename = "test.ll"
@@ -38,9 +39,11 @@ body:             |
     ; CHECK-LABEL: name: foo
     ; CHECK: liveins: $arguments
     ; CHECK-NEXT: {{  $}}
-    ; CHECK-NEXT: PUSH1_S i256 128
-    ; CHECK-NEXT: PUSH1_S i256 160
+    ; CHECK-NEXT: PUSH2_S i256 352
+    ; CHECK-NEXT: PUSH2_S i256 256
+    ; CHECK-NEXT: PUSH2_S i256 288
     ; CHECK-NEXT: PseudoRET
+    MEMORYGUARD_S i256 256
     PUSH_FRAME %stack.0
     PUSH_FRAME %stack.1
     PseudoRET
@@ -64,8 +67,10 @@ body:             |
     ; CHECK-LABEL: name: bar
     ; CHECK: liveins: $arguments
     ; CHECK-NEXT: {{  $}}
-    ; CHECK-NEXT: PUSH1_S i256 192
+    ; CHECK-NEXT: PUSH2_S i256 352
+    ; CHECK-NEXT: PUSH2_S i256 320
     ; CHECK-NEXT: PseudoRET
+    MEMORYGUARD_S i256 256
     PUSH_FRAME %stack.0
     PseudoRET
 

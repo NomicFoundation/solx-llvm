@@ -1149,7 +1149,11 @@ struct MemGuardOpLowering : public OpRewritePattern<yul::MemGuardOp> {
   LogicalResult matchAndRewrite(yul::MemGuardOp op,
                                 PatternRewriter &r) const override {
     auto size = op->getAttrOfType<IntegerAttr>("size");
-    r.replaceOpWithNewOp<arith::ConstantOp>(op, size);
+    auto guard = r.create<arith::ConstantOp>(op.getLoc(), size);
+    r.replaceOpWithNewOp<LLVM::IntrCallOp>(op, llvm::Intrinsic::evm_memoryguard,
+                                           /*resTy=*/r.getIntegerType(256),
+                                           /*ins=*/ValueRange{guard},
+                                           "evm.memoryguard");
     return success();
   }
 };

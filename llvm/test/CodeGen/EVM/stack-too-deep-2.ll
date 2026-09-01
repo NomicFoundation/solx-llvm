@@ -1,5 +1,5 @@
 ; REQUIRES: asserts
-; RUN: llc --cgp-verify-bfi-updates=false -evm-stack-region-offset=128 -evm-stack-region-size=160 --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
+; RUN: llc --cgp-verify-bfi-updates=false --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
 
 target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
 target triple = "evm-unknown-unknown"
@@ -9,8 +9,8 @@ declare void @llvm.evm.revert(ptr addrspace(1), i256) noreturn
 declare i256 @checked_mul_uint8(i256)
 
 ; Check that the stack solver detects unreachable slots, generates spills for them, and
-; succesfully compiles the function. Also, check that we allocated the exact amount of
-; stack space needed for the function, without any warnings about allocated stack region size.
+; succesfully compiles the function. The spill region is placed at the default
+; memory guard value (128), since the module contains no MEMORYGUARD instruction.
 
 ; CHECK: Unreachable slots found: 20, iteration: 1
 ; CHECK: Spilling 1 registers
@@ -22,7 +22,6 @@ declare i256 @checked_mul_uint8(i256)
 ; CHECK: Spilling 1 registers
 ; CHECK: Unreachable slots found: 2, iteration: 5
 ; CHECK: Spilling 1 registers
-; CHECK-NOT: warning: allocated stack region size:
 
 define fastcc i256 @fun_test_462(i256 %0) unnamed_addr {
 entry:

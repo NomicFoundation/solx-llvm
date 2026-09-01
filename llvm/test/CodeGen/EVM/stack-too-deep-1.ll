@@ -1,5 +1,5 @@
 ; REQUIRES: asserts
-; RUN: llc -evm-stack-region-offset=128 -evm-stack-region-size=32 --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
+; RUN: llc --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
 
 target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
 target triple = "evm-unknown-unknown"
@@ -7,7 +7,7 @@ target triple = "evm-unknown-unknown"
 ; Check that the stack solver detects no unreachable slots.
 
 ; CHECK-NOT: Unreachable slots found
-; CHECK: warning: allocated stack region size:
+; CHECK-LABEL: main:
 
 declare void @llvm.evm.revert(ptr addrspace(1), i256) noreturn
 

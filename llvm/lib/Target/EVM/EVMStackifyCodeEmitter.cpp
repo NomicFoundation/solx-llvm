@@ -115,6 +115,18 @@ void EVMStackifyCodeEmitter::CodeEmitter::emitConstant(uint64_t Val) {
   emitConstant(APInt(256, Val));
 }
 
+void EVMStackifyCodeEmitter::CodeEmitter::emitMemoryGuard(const APInt &Val) {
+  // Emit the MEMORYGUARD pseudo rather than a plain PUSH: it must stay
+  // recognizable until EVMFinalizeStackFrames rewrites it to the guard plus
+  // the finalized spill region size.
+  StackHeight += 1;
+  auto NewMI =
+      BuildMI(*CurMBB, CurMBB->end(), DebugLoc(),
+              TII->get(EVM::getStackOpcode(EVM::MEMORYGUARD)))
+          .addCImm(ConstantInt::get(MF.getFunction().getContext(), Val));
+  verify(NewMI);
+}
+
 void EVMStackifyCodeEmitter::CodeEmitter::emitSymbol(const MachineInstr *MI,
                                                      MCSymbol *Symbol) {
   assert((isLinkerPseudoMI(*MI) || MI->getOpcode() == EVM::CODECOPY) &&
@@ -434,6 +446,8 @@ void EVMStackifyCodeEmitter::emitStackPermutations(const Stack &TargetStack) {
         assert(Slot->isRematerializable() || isSpillReg(Slot));
         if (const auto *L = dyn_cast<LiteralSlot>(Slot)) {
           Emitter.emitConstant(L->getValue());
+        } else if (const auto *G = dyn_cast<MemoryGuardSlot>(Slot)) {
+          Emitter.emitMemoryGuard(G->getValue());
         } else if (const auto *S = dyn_cast<SymbolSlot>(Slot)) {
           Emitter.emitSymbol(S->getMachineInstr(), S->getSymbol());
         } else if (const auto *CallRet = dyn_cast<CallerReturnSlot>(Slot)) {
