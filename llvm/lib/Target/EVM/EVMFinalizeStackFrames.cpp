@@ -28,35 +28,8 @@ using namespace llvm;
 #define DEBUG_TYPE "evm-finalize-stack-frames"
 #define PASS_NAME "EVM finalize stack frames"
 
-// TODO: Remove these options and their fallbacks in getEVMStackRegionSize and
-// runOnModule once the Yul and EVMLA pipelines are gone, leaving the
-// "evm-stack-region-size" and "evm-memory-guard" module flags as the only
-// description of the region. Only a front end that folds the guard itself has
-// to name the region on the command line.
-static cl::opt<uint64_t>
-    StackRegionSize("evm-stack-region-size", cl::Hidden, cl::init(0),
-                    cl::desc("Allocated stack region size"));
-
-static cl::opt<uint64_t>
-    StackRegionOffset("evm-stack-region-offset", cl::Hidden,
-                      cl::init(std::numeric_limits<uint64_t>::max()),
-                      cl::desc("Offset where the stack region starts"));
-
-// The base EVMFoldMemoryGuard recorded, i.e. the front end's memory guard.
-static std::optional<uint64_t> getMemoryGuard(const Module &M) {
-  if (auto *Guard = mdconst::extract_or_null<ConstantInt>(
-          M.getModuleFlag("evm-memory-guard")))
-    return Guard->getZExtValue();
-  return std::nullopt;
-}
-
-static std::optional<uint64_t> getStackRegionSize(const Module &M) {
-  if (auto *Size = mdconst::extract_or_null<ConstantInt>(
-          M.getModuleFlag("evm-stack-region-size")))
-    return Size->getZExtValue();
-  if (StackRegionSize.getNumOccurrences())
-    return StackRegionSize;
-  return std::nullopt;
+static const ConstantInt *getFlag(const Module &M, StringRef Name) {
+  return mdconst::extract_or_null<ConstantInt>(M.getModuleFlag(Name));
 }
 
 namespace {
@@ -154,18 +127,23 @@ void EVMFinalizeStackFrames::replaceFrameIndices(
 bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   LLVM_DEBUG({ dbgs() << "********** Finalize stack frames **********\n"; });
 
-  std::optional<uint64_t> Guard = getMemoryGuard(M);
-  uint64_t RegionStart = Guard.value_or(StackRegionOffset);
-  std::optional<uint64_t> RegionSize = getStackRegionSize(M);
+  // The region's base is the front end's memory guard.
+  const ConstantInt *StackRegionOffsetFlag = getFlag(M, "evm-memory-guard");
+  const ConstantInt *StackRegionSizeFlag = getFlag(M, "evm-stack-region-size");
+  uint64_t StackRegionOffset =
+      StackRegionOffsetFlag ? StackRegionOffsetFlag->getZExtValue() : 0;
+  uint64_t StackRegionSize =
+      StackRegionSizeFlag ? StackRegionSizeFlag->getZExtValue() : 0;
 
-  // Check if the stack region size and offset are set correctly.
-  if (RegionSize) {
-    if (!Guard && !StackRegionOffset.getNumOccurrences())
+  // Check if the module flags for stack region size and offset are set
+  // correctly.
+  if (StackRegionSizeFlag) {
+    if (!StackRegionOffsetFlag)
       report_fatal_error("Stack region offset must be set when stack region "
-                         "size is set. Use --evm-stack-region-offset to set "
-                         "the offset.");
+                         "size is set. Set the \"evm-memory-guard\" module "
+                         "flag to the offset.");
 
-    if (RegionStart % 32 != 0)
+    if (StackRegionOffset % 32 != 0)
       report_fatal_error("Stack region offset must be a multiple of 32 bytes.");
   }
 
@@ -183,7 +161,7 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
     if (StackSize == 0)
       continue;
 
-    uint64_t StackRegionStart = RegionStart + TotalStackSize;
+    uint64_t StackRegionStart = StackRegionOffset + TotalStackSize;
     ToReplaceFI.emplace_back(MF, StackRegionStart);
     TotalStackSize += StackSize;
 
@@ -196,16 +174,16 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   LLVM_DEBUG({ dbgs() << "Total stack size: " << TotalStackSize << "\n"; });
 
   // Check if it is valid to replace frame indices.
-  uint64_t AllocatedSize = RegionSize.value_or(0);
-  if (TotalStackSize > 0 && TotalStackSize > AllocatedSize) {
+  if (TotalStackSize > 0 && TotalStackSize > StackRegionSize) {
     report_evm_stack_error(
         "Total stack size: " + Twine(TotalStackSize) +
             " is larger than the allocated stack region size: " +
-            Twine(AllocatedSize),
+            Twine(StackRegionSize),
         TotalStackSize);
   }
-  if (AllocatedSize > TotalStackSize)
-    errs() << "warning: allocated stack region size: " + Twine(AllocatedSize) +
+  if (StackRegionSize > TotalStackSize)
+    errs() << "warning: allocated stack region size: " +
+                  Twine(StackRegionSize) +
                   " is larger than the total stack size: " +
                   Twine(TotalStackSize) + "\n";
 

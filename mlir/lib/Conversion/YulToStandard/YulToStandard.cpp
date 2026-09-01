@@ -1153,9 +1153,8 @@ struct MemGuardOpLowering : public OpRewritePattern<yul::MemGuardOp> {
     if (!mod)
       return failure();
 
-    // The marker only says which value is the free memory pointer's
-    // initializer; the region itself travels on the module. The size starts at
-    // zero and the driver rewrites it when the backend asks for a spill area.
+    // The size starts at zero; the driver rewrites it when the backend asks
+    // for a spill area.
     {
       OpBuilder::InsertionGuard insertGuard(r);
       r.setInsertionPointToEnd(mod.getBody());

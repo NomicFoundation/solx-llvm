@@ -1,5 +1,5 @@
 ; REQUIRES: asserts
-; RUN: llc -evm-stack-region-offset=128 -evm-stack-region-size=32 --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
+; RUN: llc --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
 
 target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
 target triple = "evm-unknown-unknown"
@@ -196,3 +196,7 @@ remainder_join12933:                              ; preds = %"block_rt_101/7"
     i8 13, label %"block_rt_103/7"
   ]
 }
+
+!llvm.module.flags = !{!0, !1}
+!0 = !{i32 1, !"evm-memory-guard", i64 128}
+!1 = !{i32 1, !"evm-stack-region-size", i64 32}

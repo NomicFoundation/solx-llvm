@@ -1,9 +1,5 @@
 // RUN: mlir-opt --convert-yul-to-std %s | FileCheck %s
 
-// The memoryguard is the free memory pointer's initial value. The marker says
-// which value that is; the region travels on the module, with a size the
-// driver rewrites when the backend asks for a spill area.
-
 // CHECK-LABEL: func @free_ptr_init
 // CHECK:       %[[MARK:.*]] = "llvm.intrcall"() <{id = {{[0-9]+}} : i32, name = "evm.memoryguard"}> : () -> i256
 // CHECK:       llvm.store %[[MARK]], %{{.*}} : i256, !llvm.ptr<1>

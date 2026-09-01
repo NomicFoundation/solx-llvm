@@ -1,7 +1,6 @@
-# RUN: llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-size=64 < %s | FileCheck %s
+# RUN: llc -x mir -run-pass=evm-finalize-stack-frames < %s | FileCheck %s
 
-# The folded memory guard is the region's base, so no --evm-stack-region-offset
-# is needed.
+# The memory guard is the region's base.
 
 --- |
   source_filename = "test.ll"
@@ -12,8 +11,9 @@
     ret void
   }
 
-  !llvm.module.flags = !{!0}
+  !llvm.module.flags = !{!0, !1}
   !0 = !{i32 1, !"evm-memory-guard", i64 256}
+  !1 = !{i32 1, !"evm-stack-region-size", i64 64}
 
 ...
 ---
