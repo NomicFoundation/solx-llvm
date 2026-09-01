@@ -1,5 +1,4 @@
 ; RUN: opt -passes=evm-fold-memory-guard -S < %s | FileCheck %s
-; RUN: opt -passes=evm-fold-memory-guard -evm-stack-region-size=64 -S < %s | FileCheck %s
 
 target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
 target triple = "evm"
@@ -7,9 +6,7 @@ target triple = "evm"
 declare i256 @llvm.evm.memoryguard()
 
 ; The spill region is [guard, guard + size), so the free memory pointer is
-; initialized past it. Both values come from module flags:
-; -evm-stack-region-size belongs to the pipelines that fold the guard
-; themselves and never reach this pass.
+; initialized past it. Both values come from module flags.
 
 ; CHECK-LABEL: define void @init(
 ; CHECK: store i256 160, ptr addrspace(1) inttoptr (i256 64 to ptr addrspace(1))

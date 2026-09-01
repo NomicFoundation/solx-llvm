@@ -1,18 +1,17 @@
-# RUN: llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-offset=128 -evm-stack-region-size=96 < %s | FileCheck %s
-# RUN: llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-offset=128 -evm-stack-region-size=128 < %s 2>&1 | FileCheck --check-prefix=CHECK-MOREALLOC %s
-# RUN: not --crash llc -x mir -run-pass=evm-finalize-stack-frames < %s 2>&1 | FileCheck --check-prefix=CHECK-NOALLOC %s
-# RUN: not --crash llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-size=96 < %s 2>&1 | FileCheck --check-prefix=CHECK-NOSTART %s
-# RUN: not --crash llc -x mir -run-pass=evm-finalize-stack-frames -evm-stack-region-offset=129 -evm-stack-region-size=96 < %s 2>&1 | FileCheck --check-prefix=CHECK-NOMOD %s
+# RUN: llc -x mir -run-pass=evm-finalize-stack-frames < %s | FileCheck %s
 
-# CHECK-MOREALLOC: warning: allocated stack region size: 128 is larger than the total stack size: 96
-# CHECK-NOALLOC: LLVM ERROR: Total stack size: 96 is larger than the allocated stack region size: 0
-# CHECK-NOSTART: LLVM ERROR: Stack region offset must be set when stack region size is set. Use --evm-stack-region-offset to set the offset.
-# CHECK-NOMOD: LLVM ERROR: Stack region offset must be a multiple of 32 bytes.
+# The region is described by module flags, so the cases that need a different
+# region live in their own files: finalize-stack-frames-{morealloc,noalloc,
+# nostart,nomod}.mir.
 
 --- |
   source_filename = "test.ll"
   target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
   target triple = "evm"
+
+  !llvm.module.flags = !{!0, !1}
+  !0 = !{i32 1, !"evm-memory-guard", i64 128}
+  !1 = !{i32 1, !"evm-stack-region-size", i64 96}
 
   define void @foo() {
     ret void
