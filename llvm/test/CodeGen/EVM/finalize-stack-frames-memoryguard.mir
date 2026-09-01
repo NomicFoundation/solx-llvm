@@ -4,6 +4,14 @@
 # instructions. Stack frames are placed starting at the guard: foo gets
 # [256, 288], bar gets [320].
 
+# The spill area offset and size are reported via the `evm-spill-area-offset`
+# and `evm-spill-area-size` module metadata, so the driver can label the
+# dumped artifacts of spilling units.
+# CHECK: !evm-spill-area-offset = !{![[OFFSET:[0-9]+]]}
+# CHECK: !evm-spill-area-size = !{![[SIZE:[0-9]+]]}
+# CHECK: ![[OFFSET]] = !{i64 256}
+# CHECK: ![[SIZE]] = !{i64 96}
+
 --- |
   source_filename = "test.ll"
   target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"

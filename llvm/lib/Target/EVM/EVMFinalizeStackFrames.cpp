@@ -177,6 +177,24 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   }
   LLVM_DEBUG({ dbgs() << "Total stack size: " << TotalStackSize << "\n"; });
 
+  // Report the spill area offset and size to the driver via module metadata,
+  // so it can label the dumped artifacts of units where spilling occurred.
+  // The offset is the memory guard value the area starts at. This is a purely
+  // diagnostic channel: dropping the metadata loses the report, not
+  // correctness.
+  if (TotalStackSize > 0) {
+    LLVMContext &Ctx = M.getContext();
+    Type *Int64Ty = Type::getInt64Ty(Ctx);
+    auto AddReport = [&](StringRef Name, uint64_t Value) {
+      NamedMDNode *MD = M.getOrInsertNamedMetadata(Name);
+      MD->clearOperands();
+      MD->addOperand(MDNode::get(
+          Ctx, ConstantAsMetadata::get(ConstantInt::get(Int64Ty, Value))));
+    };
+    AddReport("evm-spill-area-offset", MemoryGuard);
+    AddReport("evm-spill-area-size", TotalStackSize);
+  }
+
   // Replace frame indices with their offsets.
   for (auto &[MF, StackRegionStart] : ToReplaceFI)
     replaceFrameIndices(*MF, StackRegionStart);
