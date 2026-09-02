@@ -576,7 +576,6 @@ define void @br_or(i256 %a, i256 %b, i256 %c) {
 ; CHECK-NEXT:    POP
 ; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    DUP3
-; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    EQ
 ; CHECK-NEXT:    ISZERO
 ; CHECK-NEXT:    SWAP2

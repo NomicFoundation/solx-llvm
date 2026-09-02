@@ -19,9 +19,8 @@
 
 ; The free memory pointer is initialized with the adjusted guard:
 ; mstore(64, 320 + 256), where 256 is the size of the allocated memory array.
-; CHECK: PUSH2 0x100
-; CHECK-NEXT: PUSH2 0x140
-; CHECK-NEXT: ADD
+; The addition is constant-folded into a single push by the EVM peephole pass.
+; CHECK: PUSH2 0x240
 ; CHECK-NEXT: PUSH1 0x40
 ; CHECK-NEXT: MSTORE
 ; CHECK: CALLDATACOPY

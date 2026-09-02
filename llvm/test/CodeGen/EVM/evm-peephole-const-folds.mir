@@ -1,0 +1,348 @@
+# RUN: llc -x mir -mtriple=evm-unknown-unknown -run-pass=evm-peephole < %s | FileCheck %s
+
+--- |
+  target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
+  target triple = "evm-unknown-unknown"
+
+  define void @fold_add() { ret void }
+  define void @fold_add_chain() { ret void }
+  define void @fold_sub_operand_order() { ret void }
+  define void @fold_eq() { ret void }
+  define void @fold_iszero() { ret void }
+  define void @no_fold_not_size_guard() { ret void }
+  define void @no_fold_shl_size_guard() { ret void }
+  define void @fold_zero_add_identity() { ret void }
+  define void @fold_zero_and_needs_pop() { ret void }
+  define void @fold_swap_swap() { ret void }
+  define void @fold_same_push_to_dup() { ret void }
+  define void @fold_push_push_swap1() { ret void }
+  define void @fold_swap1_commutative() { ret void }
+  define void @fold_swap1_comparison() { ret void }
+  define void @no_fold_swap1_sub() { ret void }
+  define void @fold_dup1_swap1() { ret void }
+  define void @fold_dupn_swapn() { ret void }
+  define void @fold_getter_dup() { ret void }
+  define void @no_fold_selfbalance_dup() { ret void }
+  define void @fold_getter_dup_swap_chain() { ret void }
+...
+---
+# The spill-relocated free pointer initialization: PUSH 64, PUSH 192, ADD.
+name:            fold_add
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_add
+    ; CHECK: PUSH2_S i256 256
+    ; CHECK-NOT: ADD_S
+    PUSH1_S i256 64
+    PUSH1_S i256 192
+    ADD_S
+
+...
+---
+# Folding creates a new PUSH adjacent to the next one: the chain collapses.
+name:            fold_add_chain
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_add_chain
+    ; CHECK: PUSH1_S i256 6
+    ; CHECK-NOT: ADD_S
+    PUSH1_S i256 1
+    PUSH1_S i256 2
+    ADD_S
+    PUSH1_S i256 3
+    ADD_S
+
+...
+---
+# SUB computes top - second: PUSH 5, PUSH 32, SUB == 32 - 5.
+name:            fold_sub_operand_order
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_sub_operand_order
+    ; CHECK: PUSH1_S i256 27
+    ; CHECK-NOT: SUB_S
+    PUSH1_S i256 5
+    PUSH1_S i256 32
+    SUB_S
+
+...
+---
+name:            fold_eq
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_eq
+    ; CHECK: PUSH0_S
+    ; CHECK-NOT: EQ_S
+    PUSH2_S i256 256
+    PUSH1_S i256 28
+    EQ_S
+
+...
+---
+name:            fold_iszero
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_iszero
+    ; CHECK: PUSH1_S i256 1
+    ; CHECK-NOT: ISZERO_S
+    PUSH0_S
+    ISZERO_S
+
+...
+---
+# PUSH1 31, NOT is what EVMConstantUnfolding produces for a wide constant;
+# folding it back into a PUSH32 would increase code size, so it must stay.
+name:            no_fold_not_size_guard
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: no_fold_not_size_guard
+    ; CHECK: PUSH1_S i256 31
+    ; CHECK-NEXT: NOT_S
+    PUSH1_S i256 31
+    NOT_S
+
+...
+---
+# 1 << 200 needs a PUSH26; the three-instruction sequence is smaller.
+name:            no_fold_shl_size_guard
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: no_fold_shl_size_guard
+    ; CHECK: PUSH1_S i256 1
+    ; CHECK-NEXT: PUSH1_S i256 200
+    ; CHECK-NEXT: SHL_S
+    PUSH1_S i256 1
+    PUSH1_S i256 200
+    SHL_S
+
+...
+---
+# Adding zero to an unknown value is the identity.
+name:            fold_zero_add_identity
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_zero_add_identity
+    ; CHECK: CALLDATASIZE_S
+    ; CHECK-NOT: PUSH0_S
+    ; CHECK-NOT: ADD_S
+    CALLDATASIZE_S
+    PUSH0_S
+    ADD_S
+
+...
+---
+# AND with zero is always zero, but the unknown operand must be popped.
+name:            fold_zero_and_needs_pop
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_zero_and_needs_pop
+    ; CHECK: CALLDATASIZE_S
+    ; CHECK-NEXT: POP_S
+    ; CHECK-NEXT: PUSH0_S
+    ; CHECK-NOT: AND_S
+    CALLDATASIZE_S
+    PUSH0_S
+    AND_S
+
+...
+---
+name:            fold_swap_swap
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_swap_swap
+    ; CHECK: CALLDATASIZE_S
+    ; CHECK-NOT: SWAP2_S
+    ; CHECK: POP_S
+    CALLDATASIZE_S
+    SWAP2_S
+    SWAP2_S
+    POP_S
+
+...
+---
+# The second identical multi-byte push is replaced with a one-byte DUP1.
+name:            fold_same_push_to_dup
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_same_push_to_dup
+    ; CHECK: PUSH2_S i256 300
+    ; CHECK-NEXT: DUP1_S
+    PUSH2_S i256 300
+    PUSH2_S i256 300
+
+...
+---
+# SWAP1 of two pushed constants reorders the pushes instead.
+name:            fold_push_push_swap1
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_push_push_swap1
+    ; CHECK: PUSH2_S i256 300
+    ; CHECK-NEXT: PUSH1_S i256 5
+    ; CHECK-NOT: SWAP1_S
+    PUSH1_S i256 5
+    PUSH2_S i256 300
+    SWAP1_S
+
+...
+---
+# SWAP1 before a commutative operation is redundant.
+name:            fold_swap1_commutative
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_swap1_commutative
+    ; CHECK: CALLDATASIZE_S
+    ; CHECK-NEXT: CALLVALUE_S
+    ; CHECK-NEXT: ADD_S
+    ; CHECK-NOT: SWAP1_S
+    CALLDATASIZE_S
+    CALLVALUE_S
+    SWAP1_S
+    ADD_S
+
+...
+---
+# SWAP1 before a comparison flips the comparison.
+name:            fold_swap1_comparison
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_swap1_comparison
+    ; CHECK: CALLDATASIZE_S
+    ; CHECK-NEXT: CALLVALUE_S
+    ; CHECK-NEXT: UGT_S
+    ; CHECK-NOT: SWAP1_S
+    ; CHECK-NOT: ULT_S
+    CALLDATASIZE_S
+    CALLVALUE_S
+    SWAP1_S
+    ULT_S
+
+...
+---
+# SWAP1 before SUB must stay: SUB is not commutative.
+name:            no_fold_swap1_sub
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: no_fold_swap1_sub
+    ; CHECK: SWAP1_S
+    ; CHECK-NEXT: SUB_S
+    CALLDATASIZE_S
+    CALLVALUE_S
+    SWAP1_S
+    SUB_S
+
+...
+---
+# DUP1 SWAP1 -> DUP1: swapping two equal values is a no-op.
+# SELFBALANCE is used as the producer since it is not a re-executable getter.
+name:            fold_dup1_swap1
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_dup1_swap1
+    ; CHECK: SELFBALANCE_S
+    ; CHECK-NEXT: DUP1_S
+    ; CHECK-NEXT: MSTORE_S
+    ; CHECK-NOT: SWAP1_S
+    SELFBALANCE_S
+    DUP1_S
+    SWAP1_S
+    MSTORE_S
+
+...
+---
+# DUPn SWAPn -> DUPn for any n.
+name:            fold_dupn_swapn
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_dupn_swapn
+    ; CHECK: DUP12_S
+    ; CHECK-NEXT: ULT_S
+    ; CHECK-NOT: SWAP12_S
+    DUP12_S
+    SWAP12_S
+    ULT_S
+
+...
+---
+# A cheap pure getter is re-executed instead of duplicated (2 gas vs 3).
+name:            fold_getter_dup
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_getter_dup
+    ; CHECK: RETURNDATASIZE_S
+    ; CHECK-NEXT: RETURNDATASIZE_S
+    ; CHECK-NOT: DUP1_S
+    RETURNDATASIZE_S
+    DUP1_S
+
+...
+---
+# SELFBALANCE costs more than DUP1, so the DUP must stay.
+name:            no_fold_selfbalance_dup
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: no_fold_selfbalance_dup
+    ; CHECK: SELFBALANCE_S
+    ; CHECK-NEXT: DUP1_S
+    SELFBALANCE_S
+    DUP1_S
+
+...
+---
+# GETTER, DUP1, SWAP1 collapses fully: the DUP becomes a second getter and
+# the SWAP1 of two equal values is removed.
+name:            fold_getter_dup_swap_chain
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    ; CHECK-LABEL: name: fold_getter_dup_swap_chain
+    ; CHECK: CALLDATASIZE_S
+    ; CHECK-NEXT: CALLDATASIZE_S
+    ; CHECK-NEXT: MSTORE_S
+    ; CHECK-NOT: DUP1_S
+    ; CHECK-NOT: SWAP1_S
+    CALLDATASIZE_S
+    DUP1_S
+    SWAP1_S
+    MSTORE_S
+
+...
