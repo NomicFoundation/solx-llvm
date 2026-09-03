@@ -846,9 +846,9 @@ def Yul_LogOp : Yul_Op<"log"> {
 
 def Yul_SignExtendOp : Yul_Op<"signextend", [Pure]> {
   let summary = "Represents the `signextend` call in yul";
-  let arguments = (ins I256:$val, I256:$off);
+  let arguments = (ins I256:$idx, I256:$val);
   let results = (outs I256:$out);
-  let assemblyFormat = "$val `,` $off attr-dict";
+  let assemblyFormat = "$idx `,` $val attr-dict";
 }
 
 def Yul_SetImmutableOp : Yul_Op<"setimmutable"> {
