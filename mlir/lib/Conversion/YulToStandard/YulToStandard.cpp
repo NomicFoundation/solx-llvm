@@ -469,7 +469,7 @@ struct SignExtendOpLowering : public OpRewritePattern<yul::SignExtendOp> {
     r.replaceOpWithNewOp<LLVM::IntrCallOp>(
         op, llvm::Intrinsic::evm_signextend,
         /*resTy=*/r.getIntegerType(256),
-        /*ins=*/ValueRange{op.getVal(), op.getOff()}, "evm.signextend");
+        /*ins=*/ValueRange{op.getIdx(), op.getVal()}, "evm.signextend");
 
     return success();
   }
