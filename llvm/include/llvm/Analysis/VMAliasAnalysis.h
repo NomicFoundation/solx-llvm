@@ -16,6 +16,9 @@
 
 #include "llvm/Analysis/AliasAnalysis.h"
 
+#include <optional>
+#include <utility>
+
 namespace llvm {
 
 class DataLayout;
@@ -44,6 +47,16 @@ public:
 
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB,
                     AAQueryInfo &AAQI, const Instruction *I);
+
+  /// Get the base pointer and the offset by looking through the
+  /// ptrtoint+arithmetic+inttoptr sequence. Returns a null base if the
+  /// pointer cannot be decomposed.
+  static std::pair<const Value *, APInt>
+  getBaseWithOffset(const Value *V, unsigned BitWidth, unsigned MaxLookup = 6);
+
+  /// Returns the constant start address of the location, if known.
+  static std::optional<APInt> getConstStartLoc(const MemoryLocation &Loc,
+                                               unsigned BitWidth);
 };
 } // end namespace llvm
 

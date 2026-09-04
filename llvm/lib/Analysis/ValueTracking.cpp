@@ -58,6 +58,9 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
+// EVM local begin
+#include "llvm/IR/IntrinsicsEVM.h"
+// EVM local end
 #include "llvm/IR/IntrinsicsRISCV.h"
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/LLVMContext.h"
@@ -1804,6 +1807,21 @@ static void computeKnownBitsFromOperator(const Operator *I,
       switch (II->getIntrinsicID()) {
       default:
         break;
+      // EVM local begin
+      case Intrinsic::evm_memoryguard: {
+        // The final memory guard value materialized by the EVM backend is the
+        // intrinsic argument plus the spill area size. The sum is computed in
+        // 64-bit arithmetic with an overflow check, so the bits above 63 are
+        // known zero. The spill area size is a multiple of 32 bytes, so the
+        // result keeps the argument's alignment up to 32 bytes.
+        // The intrinsic is non-overloaded, so the type is always i256 and
+        // the argument is always a constant.
+        const auto *GuardC = cast<ConstantInt>(II->getArgOperand(0));
+        Known.Zero.setBitsFrom(64);
+        Known.Zero.setLowBits(std::min(GuardC->getValue().countr_zero(), 5u));
+        break;
+      }
+      // EVM local end
       case Intrinsic::abs: {
         computeKnownBits(I->getOperand(0), DemandedElts, Known2, Q, Depth + 1);
         bool IntMinIsPoison = match(II->getArgOperand(1), m_One());
@@ -3315,6 +3333,12 @@ static bool isKnownNonZeroFromOperator(const Operator *I,
 
     if (auto *II = dyn_cast<IntrinsicInst>(I)) {
       switch (II->getIntrinsicID()) {
+      // EVM local begin
+      // The EVM memory guard value is its argument plus the non-negative
+      // spill area size, computed without overflow, so it is not zero if the
+      // argument is not zero.
+      case Intrinsic::evm_memoryguard:
+      // EVM local end
       case Intrinsic::sshl_sat:
       case Intrinsic::ushl_sat:
       case Intrinsic::abs:
@@ -9815,6 +9839,20 @@ static ConstantRange getRangeForIntrinsic(const IntrinsicInst &II,
   unsigned Width = II.getType()->getScalarSizeInBits();
   const APInt *C;
   switch (II.getIntrinsicID()) {
+  // EVM local begin
+  case Intrinsic::evm_memoryguard:
+    // The final memory guard value is the intrinsic argument plus the spill
+    // area size, computed by the EVM backend in 64-bit arithmetic with an
+    // overflow check, hence [C, 2^64). The intrinsic is non-overloaded, so
+    // the width is always 256 and the argument is always a constant.
+    {
+      const APInt &GuardC = cast<ConstantInt>(II.getOperand(0))->getValue();
+      if (GuardC.ult(APInt::getOneBitSet(Width, 64)))
+        return ConstantRange::getNonEmpty(GuardC,
+                                          APInt::getOneBitSet(Width, 64));
+    }
+    break;
+  // EVM local end
   case Intrinsic::ctlz:
   case Intrinsic::cttz: {
     APInt Upper(Width, Width);

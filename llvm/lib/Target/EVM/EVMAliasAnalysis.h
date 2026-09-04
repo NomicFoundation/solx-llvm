@@ -20,8 +20,16 @@ namespace llvm {
 /// EVM-specific AA result. Note that we override certain non-virtual methods
 /// from AAResultBase, as clarified in its documentation.
 class EVMAAResult : public VMAAResult {
+  const DataLayout &DL;
+
 public:
   explicit EVMAAResult(const DataLayout &DL);
+
+  /// Extends the address-space-based reasoning with the memory guard rule:
+  /// heap locations derived from the llvm.evm.memoryguard result cannot alias
+  /// constant heap addresses below the guard argument.
+  AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB,
+                    AAQueryInfo &AAQI, const Instruction *CtxI);
 
   ModRefInfo getModRefInfo(const CallBase *Call, const MemoryLocation &Loc,
                            AAQueryInfo &AAQI);

@@ -40,7 +40,75 @@ ImmutablePass *llvm::createEVMExternalAAWrapperPass() {
 
 EVMAAResult::EVMAAResult(const DataLayout &DL)
     : VMAAResult(DL, {EVMAS::AS_STORAGE, EVMAS::AS_TSTORAGE}, {EVMAS::AS_HEAP},
-                 EVMAS::MAX_ADDRESS) {}
+                 EVMAS::MAX_ADDRESS),
+      DL(DL) {}
+
+/// Returns the lower bound of the llvm.evm.memoryguard result if \p V is such
+/// a call with a constant argument. The final guard value materialized by
+/// EVMFinalizeStackFrames is the argument plus the non-negative spill area
+/// size, so the argument is a valid lower bound.
+static std::optional<APInt> getMemoryGuardLowerBound(const Value *V) {
+  const auto *II = dyn_cast<IntrinsicInst>(V);
+  if (!II || II->getIntrinsicID() != Intrinsic::evm_memoryguard)
+    return std::nullopt;
+  // The argument is always a constant.
+  return cast<ConstantInt>(II->getArgOperand(0))->getValue();
+}
+
+/// Returns NoAlias if \p ConstLoc is a heap location at a constant address
+/// that ends at or below the lower bound of the guard-derived location
+/// \p GuardLoc. Heap accesses extend upwards from their start address, so
+/// only the constant location's size matters.
+static std::optional<AliasResult>
+aliasMemoryGuardDerived(const MemoryLocation &ConstLoc,
+                        const MemoryLocation &GuardLoc, unsigned BitWidth) {
+  // The constant location must have a known start and a precise size.
+  auto ConstStart = VMAAResult::getConstStartLoc(ConstLoc, BitWidth);
+  if (!ConstStart || !ConstLoc.Size.isPrecise() || ConstLoc.Size.isZero())
+    return std::nullopt;
+
+  auto [Base, Offset] = VMAAResult::getBaseWithOffset(GuardLoc.Ptr, BitWidth);
+  if (!Base)
+    return std::nullopt;
+
+  // Only non-negative offsets keep the guard's lower bound valid; negative
+  // offsets could address memory below the guard.
+  if (Offset.isNegative())
+    return std::nullopt;
+
+  auto GuardBound = getMemoryGuardLowerBound(Base);
+  if (!GuardBound)
+    return std::nullopt;
+
+  // Compare in a common signed bitwidth wide enough to rule out overflow.
+  unsigned MaxBitWidth =
+      std::max({ConstStart->getBitWidth(), Offset.getBitWidth(),
+                GuardBound->getBitWidth(), BitWidth}) +
+      2;
+  const APInt ConstEnd = ConstStart->zext(MaxBitWidth) +
+                         APInt(MaxBitWidth, ConstLoc.Size.getValue());
+  const APInt GuardStart =
+      GuardBound->zext(MaxBitWidth) + Offset.zext(MaxBitWidth);
+
+  if (ConstEnd.sle(GuardStart))
+    return AliasResult::NoAlias;
+  return std::nullopt;
+}
+
+AliasResult EVMAAResult::alias(const MemoryLocation &LocA,
+                               const MemoryLocation &LocB, AAQueryInfo &AAQI,
+                               const Instruction *CtxI) {
+  const unsigned ASA = LocA.Ptr->getType()->getPointerAddressSpace();
+  const unsigned ASB = LocB.Ptr->getType()->getPointerAddressSpace();
+  if (ASA == EVMAS::AS_HEAP && ASB == EVMAS::AS_HEAP) {
+    const unsigned BitWidth = DL.getPointerSizeInBits(EVMAS::AS_HEAP);
+    if (auto Result = aliasMemoryGuardDerived(LocA, LocB, BitWidth))
+      return *Result;
+    if (auto Result = aliasMemoryGuardDerived(LocB, LocA, BitWidth))
+      return *Result;
+  }
+  return VMAAResult::alias(LocA, LocB, AAQI, CtxI);
+}
 
 ModRefInfo EVMAAResult::getArgModRefInfo(const CallBase *Call,
                                          unsigned ArgIdx) {
@@ -155,7 +223,7 @@ ModRefInfo EVMAAResult::getModRefInfo(const CallBase *Call,
       continue;
     unsigned ArgIdx = I.index();
     MemoryLocation ArgLoc = getMemLocForArgument(Call, ArgIdx);
-    AliasResult ArgAlias = VMAAResult::alias(ArgLoc, Loc, AAQI, Call);
+    AliasResult ArgAlias = alias(ArgLoc, Loc, AAQI, Call);
     LLVM_DEBUG({
       // NOLINTNEXTLINE(clang-analyzer-core.NonNullParamChecker)
       dbgs() << "  " << ArgAlias << ":\t" << *ArgLoc.Ptr << ", " << *Loc.Ptr

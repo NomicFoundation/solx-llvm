@@ -108,7 +108,8 @@ def int_evm_mstore8
 // since immediates wider than 64 bits are not supported by the generic
 // SelectionDAG immarg handling.
 def int_evm_memoryguard
-    : Intrinsic<[llvm_i256_ty], [llvm_i256_ty], [IntrNoMem, IntrWillReturn]>;
+    : DefaultAttrsIntrinsic<[llvm_i256_ty], [llvm_i256_ty],
+                            [IntrNoMem, IntrSpeculatable]>;
 
 // Special getters that must not be relocated.
 def int_evm_msize : Intrinsic<[llvm_i256_ty], [], [IntrWillReturn]>;

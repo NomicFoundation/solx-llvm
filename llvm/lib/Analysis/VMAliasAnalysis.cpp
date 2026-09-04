@@ -20,8 +20,9 @@ using namespace llvm;
 
 // Get the base pointer and the offset by looking through the
 // ptrtoint+arithmetic+inttoptr sequence.
-static std::pair<const Value *, APInt>
-getBaseWithOffset(const Value *V, unsigned BitWidth, unsigned MaxLookup = 6) {
+std::pair<const Value *, APInt>
+VMAAResult::getBaseWithOffset(const Value *V, unsigned BitWidth,
+                              unsigned MaxLookup) {
   auto Offset = APInt::getZero(BitWidth);
 
   // Bail out if this is not an inttoptr instruction.
@@ -72,8 +73,8 @@ getBaseWithOffset(const Value *V, unsigned BitWidth, unsigned MaxLookup = 6) {
   return {V, Offset};
 }
 
-static std::optional<APInt> getConstStartLoc(const MemoryLocation &Loc,
-                                             unsigned BitWidth) {
+std::optional<APInt> VMAAResult::getConstStartLoc(const MemoryLocation &Loc,
+                                                  unsigned BitWidth) {
   if (isa<ConstantPointerNull>(Loc.Ptr))
     return APInt::getZero(BitWidth);
 

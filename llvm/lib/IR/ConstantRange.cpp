@@ -28,6 +28,9 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+// EVM local begin
+#include "llvm/IR/IntrinsicsEVM.h"
+// EVM local end
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/Compiler.h"
@@ -1022,6 +1025,9 @@ bool ConstantRange::isIntrinsicSupported(Intrinsic::ID IntrinsicID) {
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::ctpop:
+  // EVM local begin
+  case Intrinsic::evm_memoryguard:
+  // EVM local end
     return true;
   default:
     return false;
@@ -1067,6 +1073,10 @@ ConstantRange ConstantRange::intrinsic(Intrinsic::ID IntrinsicID,
   }
   case Intrinsic::ctpop:
     return Ops[0].ctpop();
+  // EVM local begin
+  case Intrinsic::evm_memoryguard:
+    return Ops[0].evmMemoryGuard();
+  // EVM local end
   default:
     assert(!isIntrinsicSupported(IntrinsicID) && "Shouldn't be supported");
     llvm_unreachable("Unsupported intrinsic");
@@ -2137,6 +2147,25 @@ ConstantRange ConstantRange::ctpop() const {
   ConstantRange CR2 = getUnsignedPopCountRange(Zero, Upper);
   return CR1.unionWith(CR2);
 }
+
+// EVM local begin
+ConstantRange ConstantRange::evmMemoryGuard() const {
+  unsigned BitWidth = getBitWidth();
+  if (BitWidth != 256)
+    return getFull();
+
+  if (isEmptySet())
+    return getEmpty();
+
+  // The result is the guard argument plus the spill area size, computed in
+  // 64-bit arithmetic with an overflow check: [ArgMin, 2^64).
+  const APInt UpperBound = APInt::getOneBitSet(BitWidth, 64);
+  const APInt LowerBound = getUnsignedMin();
+  if (LowerBound.uge(UpperBound))
+    return getFull();
+  return getNonEmpty(LowerBound, UpperBound);
+}
+// EVM local end
 
 ConstantRange::OverflowResult ConstantRange::unsignedAddMayOverflow(
     const ConstantRange &Other) const {

@@ -572,6 +572,13 @@ public:
   /// Calculate ctpop range.
   LLVM_ABI ConstantRange ctpop() const;
 
+  // EVM local begin
+  /// Calculate the range of the EVM memory guard value for this range of the
+  /// guard argument: the final value is the argument plus the spill area
+  /// size, computed in 64-bit arithmetic with an overflow check.
+  LLVM_ABI ConstantRange evmMemoryGuard() const;
+  // EVM local end
+
   /// Represents whether an operation on the given constant range is known to
   /// always or never overflow.
   enum class OverflowResult {
