@@ -28,6 +28,18 @@ using namespace llvm;
 #define DEBUG_TYPE "evm-finalize-stack-frames"
 #define PASS_NAME "EVM finalize stack frames"
 
+/// Adds two stack layout quantities, reporting a fatal error on 64-bit
+/// overflow. The stack layout must not wrap: the alias analysis and the
+/// known-bits reasoning for llvm.evm.memoryguard rely on the final guard
+/// value being the guard argument plus the total stack size, computed
+/// without overflow.
+static uint64_t addStackOffset(uint64_t A, uint64_t B) {
+  uint64_t Result = A + B;
+  if (Result < A)
+    report_fatal_error("Stack region exceeds the 64-bit address range.");
+  return Result;
+}
+
 namespace {
 class EVMFinalizeStackFrames : public ModulePass {
 public:
@@ -83,7 +95,7 @@ EVMFinalizeStackFrames::calculateFrameObjectOffsets(MachineFunction &MF) const {
       continue;
 
     MFI.setObjectOffset(I, StackSize);
-    StackSize += MFI.getObjectSize(I);
+    StackSize = addStackOffset(StackSize, MFI.getObjectSize(I));
   }
 
   assert(StackSize % 32 == 0 && "Stack size must be a multiple of 32 bytes");
@@ -107,8 +119,8 @@ void EVMFinalizeStackFrames::replaceFrameIndices(
       assert(FIOp.isFI() && "Expected a frame index operand");
 
       // Replace the frame index with the corresponding stack offset.
-      APInt Offset(256,
-                   StackRegionStart + MFI.getObjectOffset(FIOp.getIndex()));
+      APInt Offset(256, addStackOffset(StackRegionStart,
+                                       MFI.getObjectOffset(FIOp.getIndex())));
       unsigned PushOpc = EVM::getPUSHOpcode(Offset);
       auto NewMI = BuildMI(MBB, MI, MI.getDebugLoc(),
                            TII->get(EVM::getStackOpcode(PushOpc)));
@@ -165,9 +177,9 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
     if (StackSize == 0)
       continue;
 
-    uint64_t StackRegionStart = MemoryGuard + TotalStackSize;
+    uint64_t StackRegionStart = addStackOffset(MemoryGuard, TotalStackSize);
     ToReplaceFI.emplace_back(MF, StackRegionStart);
-    TotalStackSize += StackSize;
+    TotalStackSize = addStackOffset(TotalStackSize, StackSize);
 
     LLVM_DEBUG({
       dbgs() << "Stack size for function " << MF->getName()
@@ -200,7 +212,7 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
     replaceFrameIndices(*MF, StackRegionStart);
 
   // Rewrite memory guard instructions with updated values.
-  APInt NewMemoryGuard(256, MemoryGuard + TotalStackSize);
+  APInt NewMemoryGuard(256, addStackOffset(MemoryGuard, TotalStackSize));
   for (auto *MI : MemoryGuardInsts) {
     unsigned PushOpc = EVM::getPUSHOpcode(NewMemoryGuard);
     MachineFunction *MF = MI->getMF();
