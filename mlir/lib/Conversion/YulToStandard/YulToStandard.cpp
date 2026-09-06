@@ -1148,8 +1148,33 @@ struct MemGuardOpLowering : public OpRewritePattern<yul::MemGuardOp> {
 
   LogicalResult matchAndRewrite(yul::MemGuardOp op,
                                 PatternRewriter &r) const override {
-    auto size = op->getAttrOfType<IntegerAttr>("size");
-    r.replaceOpWithNewOp<arith::ConstantOp>(op, size);
+    auto guard = op->getAttrOfType<IntegerAttr>("size");
+    auto mod = op->getParentOfType<ModuleOp>();
+    if (!mod)
+      return failure();
+
+    // The size starts at zero; the driver rewrites it when the backend asks
+    // for a spill area.
+    {
+      OpBuilder::InsertionGuard insertGuard(r);
+      r.setInsertionPointToEnd(mod.getBody());
+      r.create<LLVM::ModuleFlagsOp>(
+          op.getLoc(),
+          r.getArrayAttr(
+              {LLVM::ModuleFlagAttr::get(
+                   r.getContext(), LLVM::ModFlagBehavior::Error,
+                   r.getStringAttr("evm-memory-guard"),
+                   r.getI64IntegerAttr(guard.getValue().getZExtValue())),
+               LLVM::ModuleFlagAttr::get(
+                   r.getContext(), LLVM::ModFlagBehavior::Error,
+                   r.getStringAttr("evm-stack-region-size"),
+                   r.getI64IntegerAttr(0))}));
+    }
+
+    r.replaceOpWithNewOp<LLVM::IntrCallOp>(op, llvm::Intrinsic::evm_memoryguard,
+                                           /*resTy=*/r.getIntegerType(256),
+                                           /*ins=*/ValueRange{},
+                                           "evm.memoryguard");
     return success();
   }
 };

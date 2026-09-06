@@ -49,6 +49,7 @@ add_llvm_target(EVMCodeGen
   EVMCodegenPrepare.cpp
   EVMFinalizeStackFrames.cpp
   EVMFixIrreducibleControlFlow.cpp
+  EVMFoldMemoryGuard.cpp
   EVMFrameLowering.cpp
   EVMISelDAGToDAG.cpp
   EVMISelLowering.cpp

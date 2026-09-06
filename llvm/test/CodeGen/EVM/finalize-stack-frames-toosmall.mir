@@ -1,4 +1,9 @@
-# RUN: llc -x mir -run-pass=evm-finalize-stack-frames < %s | FileCheck %s
+# RUN: not --crash llc -x mir -run-pass=evm-finalize-stack-frames < %s 2>&1 | FileCheck %s
+
+# A region that is set but too small is what makes the front end retry with a
+# larger one.
+
+# CHECK: LLVM ERROR: Total stack size: 64 is larger than the allocated stack region size: 32
 
 --- |
   source_filename = "test.ll"
@@ -7,13 +12,9 @@
 
   !llvm.module.flags = !{!0, !1}
   !0 = !{i32 1, !"evm-memory-guard", i64 128}
-  !1 = !{i32 1, !"evm-stack-region-size", i64 96}
+  !1 = !{i32 1, !"evm-stack-region-size", i64 32}
 
   define void @foo() {
-    ret void
-  }
-
-  define void @bar() {
     ret void
   }
 
@@ -36,38 +37,8 @@ body:             |
   bb.0 (%ir-block.0):
     liveins: $arguments
 
-    ; CHECK-LABEL: name: foo
-    ; CHECK: liveins: $arguments
-    ; CHECK-NEXT: {{  $}}
-    ; CHECK-NEXT: PUSH1_S i256 128
-    ; CHECK-NEXT: PUSH1_S i256 160
-    ; CHECK-NEXT: PseudoRET
     PUSH_FRAME %stack.0
     PUSH_FRAME %stack.1
-    PseudoRET
-
-...
----
-name:            bar
-alignment:       1
-stack:
-  - { id: 0, name: '', type: spill-slot, offset: 0, size: 32, alignment: 32,
-      stack-id: default, callee-saved-register: '', callee-saved-restored: true,
-      debug-info-variable: '', debug-info-expression: '', debug-info-location: '' }
-machineFunctionInfo:
-  isStackified:    true
-  numberOfParameters: 0
-  hasPushDeployAddress: false
-body:             |
-  bb.0 (%ir-block.0):
-    liveins: $arguments
-
-    ; CHECK-LABEL: name: bar
-    ; CHECK: liveins: $arguments
-    ; CHECK-NEXT: {{  $}}
-    ; CHECK-NEXT: PUSH1_S i256 192
-    ; CHECK-NEXT: PseudoRET
-    PUSH_FRAME %stack.0
     PseudoRET
 
 ...
