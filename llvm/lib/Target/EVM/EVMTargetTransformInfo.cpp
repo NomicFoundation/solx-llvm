@@ -65,6 +65,15 @@ void EVMTTIImpl::getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
   UP.Threshold = 4;
   UP.MaxIterationsCountToAnalyze = 4;
 
+  // Allow full unrolling of loops with small constant trip counts even when
+  // the unrolled body does not provably simplify. Rolled loops read through
+  // address phis, which hides store-to-load forwarding opportunities from
+  // GVN: for example, copies addressed relative to the llvm.evm.memoryguard
+  // value only fold after the addresses are separated by unrolling.
+  if (unsigned TripCount = SE.getSmallConstantTripCount(L);
+      TripCount > 0 && TripCount <= 4)
+    UP.Threshold = 40;
+
   // Disable runtime, partial unrolling and unrolling using
   // trip count upper bound.
   UP.Partial = UP.Runtime = UP.UpperBound = false;
