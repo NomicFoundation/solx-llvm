@@ -70,20 +70,24 @@ Stack EVMStackModel::getFunctionParameters() const {
 }
 
 StackSlot *EVMStackModel::getStackSlot(const MachineOperand &MO) const {
-  // If the virtual register defines a constant and this is the only
-  // definition, emit the literal slot as MI's input.
+  // If the use is reached by a definition that materializes a constant, emit
+  // the literal slot as MI's input: the value is rematerialized at the use,
+  // so the register does not have to be reachable on the stack. This also
+  // covers uses of multi-definition registers created by phi elimination or
+  // tail duplication, as long as the definition reaching this particular use
+  // is a constant. Uses reached by merged (phi) values keep the register
+  // slot, since the constant is not known at the use.
   const LiveInterval *LI = &LIS.getInterval(MO.getReg());
-  if (LI->containsOneValue()) {
-    SlotIndex Idx = LIS.getInstructionIndex(*MO.getParent());
-    const VNInfo *VNI = LI->Query(Idx).valueIn();
-    assert(VNI && "Use of non-existing value");
-    assert(!VNI->isPHIDef());
-    const MachineInstr *DefMI = LIS.getInstructionFromIndex(VNI->def);
-    assert(DefMI && "Dead valno in interval");
-    if (DefMI->getOpcode() == EVM::CONST_I256)
-      return getLiteralSlot(DefMI->getOperand(1).getCImm()->getValue());
-    if (DefMI->getOpcode() == EVM::MEMORYGUARD)
-      return getMemoryGuardSlot(DefMI->getOperand(1).getCImm()->getValue());
+  SlotIndex Idx = LIS.getInstructionIndex(*MO.getParent());
+  const VNInfo *VNI = LI->Query(Idx).valueIn();
+  assert(VNI && "Use of non-existing value");
+  if (!VNI->isPHIDef()) {
+    if (const MachineInstr *DefMI = LIS.getInstructionFromIndex(VNI->def)) {
+      if (DefMI->getOpcode() == EVM::CONST_I256)
+        return getLiteralSlot(DefMI->getOperand(1).getCImm()->getValue());
+      if (DefMI->getOpcode() == EVM::MEMORYGUARD)
+        return getMemoryGuardSlot(DefMI->getOperand(1).getCImm()->getValue());
+    }
   }
   return getRegisterSlot(MO.getReg());
 }

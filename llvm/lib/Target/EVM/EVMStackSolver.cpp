@@ -32,6 +32,12 @@ static cl::opt<unsigned> MaxSpillIterations(
     cl::desc("Maximum number of iterations to spill stack slots "
              "to avoid stack too deep issues."));
 
+static cl::opt<unsigned> DiversifySpillsAfter(
+    "evm-diversify-spills-after", cl::Hidden, cl::init(8),
+    cl::desc("Number of spill iterations after which each unreachable slot "
+             "nominates a distinct register to spill, instead of the "
+             "globally cheapest one."));
+
 #ifndef NDEBUG
 static cl::list<unsigned>
     ForceRegSpills("evm-force-reg-spills",
@@ -153,22 +159,40 @@ Stack calculateStackBeforeInst(const Stack &InstDefs, const Stack &AfterInst,
 }
 
 /// From a vector of spillable registers, find the cheapest one to spill based
-/// on the weights.
+/// on the weights. When \p Diversify is set, registers already chosen for
+/// spilling in this round (\p AlreadyChosen) are avoided if possible: when
+/// many unreachable slots nominate the same globally cheapest register,
+/// spilling only it fixes just a few slots per iteration and the spilling
+/// loop converges too slowly. Nominating a distinct register per slot keeps
+/// the convergence geometric.
 Register getRegToSpill(const SmallSetVector<Register, 16> &SpillableRegs,
-                       const LiveIntervals &LIS) {
+                       const SmallSet<Register, 4> &AlreadyChosen,
+                       bool Diversify, const LiveIntervals &LIS) {
   assert(!SpillableRegs.empty() && "SpillableRegs should not be empty");
 
-  const auto *BestInterval = &LIS.getInterval(SpillableRegs[0]);
-  for (auto Reg : drop_begin(SpillableRegs)) {
+  const LiveInterval *BestInterval = nullptr;
+  const LiveInterval *BestUnchosenInterval = nullptr;
+  for (auto Reg : SpillableRegs) {
     const auto *LI = &LIS.getInterval(Reg);
 
     // Take this interval only if it has a non-zero weight and
-    // either BestInterval has zero weight or this interval has a lower
+    // either the current best has zero weight or this interval has a lower
     // weight than the current best.
-    if (LI->weight() != 0.0F && (BestInterval->weight() == 0.0F ||
-                                 LI->weight() < BestInterval->weight()))
+    auto IsBetterThan = [LI](const LiveInterval *Best) {
+      return !Best ||
+             (LI->weight() != 0.0F &&
+              (Best->weight() == 0.0F || LI->weight() < Best->weight()));
+    };
+    if (IsBetterThan(BestInterval))
       BestInterval = LI;
+    if (Diversify && !AlreadyChosen.contains(Reg) &&
+        IsBetterThan(BestUnchosenInterval))
+      BestUnchosenInterval = LI;
   }
+
+  // Prefer the cheapest register that is not already being spilled.
+  if (BestUnchosenInterval)
+    BestInterval = BestUnchosenInterval;
 
   LLVM_DEBUG({
     for (Register Reg : SpillableRegs) {
@@ -455,8 +479,16 @@ void EVMStackSolver::run() {
           if (!RegSlot->isSpill() && !hasUnreachableDef(RegSlot->getReg()))
             SpillableRegs.insert(RegSlot->getReg());
 
-      if (!SpillableRegs.empty())
-        RegsToSpill.insert(getRegToSpill(SpillableRegs, LIS));
+      if (!SpillableRegs.empty()) {
+        // Classic strategy: every slot nominates its globally cheapest
+        // candidate. If it fails to converge quickly (many slots keep
+        // nominating the same register, fixing only a couple of slots per
+        // iteration), diversify: nominate a distinct register per slot,
+        // which trades a possible spill overshoot for geometric convergence.
+        bool Diversify = IterCount >= DiversifySpillsAfter;
+        RegsToSpill.insert(
+            getRegToSpill(SpillableRegs, RegsToSpill, Diversify, LIS));
+      }
     }
 
     if (!RegsToSpill.empty()) {
