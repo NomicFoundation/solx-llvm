@@ -263,8 +263,7 @@ void EVMPassConfig::addIRPasses() {
     // pipeline can sometimes enable further CFG simplification.
     addPass(createCFGSimplificationPass(SimplifyCFGOptions()
                                             .convertSwitchRangeToICmp(true)
-                                            .hoistCommonInsts(true)
-                                            .sinkCommonInsts(true)));
+                                            .hoistCommonInsts(true)));
     addPass(createLICMPass());
   }
   if (TM->getOptLevel() != CodeGenOptLevel::None) {
