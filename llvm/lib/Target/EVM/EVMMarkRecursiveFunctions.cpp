@@ -11,8 +11,9 @@
 // functions to detect unknown calls (as it is implemented in FunctionAttrs.cpp,
 // function createSCCNodeSet), because all functions are known at compile time,
 // and we don't have any indirect calls.
-// This is needed during stackification, since we can't use spills for recursive
-// functions, as we are using memory for spills, and not the real stack.
+// Stackification depends on this attribute. Spill slots live at fixed
+// memory addresses, so every activation of a recursive function reuses
+// them. For marked functions the stackifier callee-saves each spill slot.
 //
 //===----------------------------------------------------------------------===//
 

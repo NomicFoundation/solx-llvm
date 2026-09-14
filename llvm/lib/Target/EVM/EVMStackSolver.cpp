@@ -383,8 +383,25 @@ void EVMStackSolver::run() {
   SmallSet<Register, 4> ForceSpillRegs;
   for (auto Reg : ForceRegSpills)
     ForceSpillRegs.insert(Register::index2VirtReg(Reg));
-  if (!ForceSpillRegs.empty())
+  if (!ForceSpillRegs.empty()) {
     StackModel.addSpillRegs(ForceSpillRegs);
+
+    // A spilled argument with a callee-saved slot is saved by a swap triple
+    // at the argument's entry depth. The solver never selects an argument
+    // whose definition is out of reach, see hasUnreachableDef, but a forced
+    // spill bypasses that. Reject it here, so that the code emitter never
+    // has to.
+    const Stack EntryStack = StackModel.getFunctionEntryStack();
+    for (auto [Depth, Slot] : enumerate(reverse(EntryStack))) {
+      if (!isSpillReg(Slot))
+        continue;
+      Register Reg = cast<RegisterSlot>(Slot)->getReg();
+      if (StackModel.hasCalleeSavedSlot(Reg) &&
+          Depth + 1 > StackModel.stackDepthLimit())
+        report_fatal_error("EVMStackSolver: spilled argument of '" +
+                           MF.getName() + "' is out of reach for its save");
+    }
+  }
 #endif // NDEBUG
 
   unsigned IterCount = 0;
@@ -399,31 +416,31 @@ void EVMStackSolver::run() {
     if (UnreachableSlots.empty())
       break;
 
-    if (MF.getFunction().hasFnAttribute("evm-recursive")) {
-      // For recursive functions we can't use spills to fix the stack too deep
-      // errors, as we are using memory to spill and not real stack. Report an
-      // error if this function is recursive and we forced compress stack
-      // before.
-      if (ForceCompressStack)
-        report_fatal_error(
-            "Stackification failed for '" + MF.getName() +
-            "' function. It is recursive and has stack too deep errors. "
-            "Consider refactoring it to use a non-recursive approach.");
-
+    if (StackModel.isRecursive() && !ForceCompressStack) {
       LLVM_DEBUG({
-        dbgs()
-            << "EVMStackSolver: force CompressStack for recursive function.\n";
+        dbgs() << "EVMStackSolver: force CompressStack for recursive "
+                  "function.\n";
       });
 
       // propagateThroughMBB can't detect stack-too-deep errors for
-      // transformations from MBB's entry stack to the first instruction entry
-      // stack. Since a recursive function doesn't support spills and reloads,
-      // try to compress the stack.
+      // transformations from MBB's entry stack to the first instruction
+      // entry stack. Try to compress the stack first. Compression is free
+      // at run time. A spill in a recursive function costs a callee-save
+      // load and store pair per slot on every activation.
       // TODO: This is a little bit agressive, since we can detect MBBs where
       // the stack is too deep and compress only them.
       ForceCompressStack = true;
       continue;
     }
+
+    // In a recursive function, compression alone did not resolve the issues.
+    // Fall through to spilling. Every spill slot of a recursive function is
+    // callee-saved on the EVM value stack. This makes its fixed memory
+    // address safe to reuse across activations. The model creates a
+    // CalleeSavedSlot per spill in addSpillRegs. The slot enters the layouts
+    // through the return blocks' exit stacks on the next propagation. The
+    // code emitter materializes it in the prologue and stores it back before
+    // each RET.
 
     if (++IterCount > MaxSpillIterations)
       report_fatal_error("EVMStackSolver: maximum number of spill iterations "
@@ -455,6 +472,17 @@ void EVMStackSolver::run() {
           if (!RegSlot->isSpill() && !hasUnreachableDef(RegSlot->getReg()))
             SpillableRegs.insert(RegSlot->getReg());
 
+      // Prefer candidates that do not cross a re-entrant call. Their spill
+      // slots need no callee-save code.
+      if (!SpillableRegs.empty() && StackModel.spillsNeedCalleeSave()) {
+        SmallSetVector<Register, 16> CallFree;
+        for (Register Reg : SpillableRegs)
+          if (!StackModel.crossesReentrantCall(Reg))
+            CallFree.insert(Reg);
+        if (!CallFree.empty())
+          SpillableRegs = std::move(CallFree);
+      }
+
       if (!SpillableRegs.empty())
         RegsToSpill.insert(getRegToSpill(SpillableRegs, LIS));
     }
@@ -468,9 +496,16 @@ void EVMStackSolver::run() {
 
     // If we did aggressive stack compression, we can't do anything else, so
     // report an error.
-    if (ForceCompressStack)
-      report_fatal_error("EVMStackSolver: no spillable registers found for "
-                         "unreachable slots.");
+    if (ForceCompressStack) {
+      if (StackModel.isRecursive())
+        report_fatal_error(
+            "Stackification failed for '" + MF.getName() +
+            "' function. It is recursive and has stack too deep errors. "
+            "Consider refactoring it to use a non-recursive approach.");
+      report_fatal_error("Stackification failed for '" + MF.getName() +
+                         "' function. It has stack too deep errors, and no "
+                         "register can be spilled to resolve them.");
+    }
 
     LLVM_DEBUG({
       dbgs() << "EVMStackSolver: no spillable registers found, running with "
@@ -824,32 +859,26 @@ void EVMStackSolver::runPropagation() {
     }
   }
 
-  Stack EntryStack;
-  bool IsNoReturn = MF.getFunction().hasFnAttribute(Attribute::NoReturn);
-  Stack FunctionParameters = StackModel.getFunctionParameters();
-
-  // We assume the function containing PUSHDEPLOYADDRESS instruction has the
-  // following properties:
-  //   - It is unique (verified in AsmPrinter)
-  //   - It appears first in the module layout. TODO: #778
-  //   - It does not return and has no arguments
-  if (const auto *MFI = MF.getInfo<EVMMachineFunctionInfo>();
-      MFI->getHasPushDeployAddress()) {
-    MachineBasicBlock::const_iterator I = MF.front().getFirstNonDebugInstr();
-    assert(I != MF.front().end() && I->getOpcode() == EVM::PUSHDEPLOYADDRESS &&
-           "MF has no PUSHDEPLOYADDRESS");
-    assert(IsNoReturn && FunctionParameters.empty() &&
-           "PUSHDEPLOYADDRESS in a non - void/nullary function");
-    EntryStack.push_back(StackModel.getRegisterSlot(I->getOperand(0).getReg()));
-  }
   // The entry MBB's stack contains the function parameters, which cannot be
-  // inferred; put them to the stack.
-  if (!IsNoReturn)
-    EntryStack.push_back(StackModel.getCalleeReturnSlot(&MF));
+  // inferred. Start from the stack as the caller leaves it.
+  Stack EntryStack = StackModel.getFunctionEntryStack();
 
-  // Calling convention: input arguments are passed in stack such that the
-  // first one specified in the function declaration is passed on the stack TOP.
-  append_range(EntryStack, reverse(FunctionParameters));
+  // The code emitter materializes the callee-saved words of the spill slots
+  // right at the function entry. A spilled argument trades places with the
+  // previous contents of its slot, so the saved word takes the argument's
+  // position. The remaining saved words are loaded on top of the parameters.
+  for (const StackSlot *&Slot : EntryStack) {
+    if (!isSpillReg(Slot))
+      continue;
+    Register Reg = cast<RegisterSlot>(Slot)->getReg();
+    if (StackModel.hasCalleeSavedSlot(Reg))
+      Slot = StackModel.getCalleeSavedSlot(Reg);
+  }
+
+  for (const CalleeSavedSlot *Save : StackModel.getCalleeSavedSlots())
+    if (!is_contained(EntryStack, Save))
+      EntryStack.push_back(Save);
+
   insertMBBEntryStack(&MF.front(), EntryStack);
 }
 
