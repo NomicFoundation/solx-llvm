@@ -1,11 +1,13 @@
-# RUN: not --crash llc -x mir -run-pass=evm-backward-propagation-stackification < %s 2>&1 | FileCheck %s
+# RUN: llc -x mir -run-pass=evm-backward-propagation-stackification < %s | FileCheck --check-prefix=SPILLS %s
 
 # This is the same test as bps-spills-2.mir, just with an "evm-recursive" attribute.
-# Since for recursive functions we can't use spills and reloads, purpose of this is
-# to test that we issue an error if there are unreachable slots in a recursive
-# function and compression didn't help.
+# The spill slots of a recursive function are normally callee-saved (see
+# EVMStackModel::addSpillRegs). This function has no RET (all paths are
+# unreachable), so nothing can observe the slot contents after it and spills
+# are emitted without any callee-save code.
 
-# CHECK: LLVM ERROR: Stackification failed for 'main' function. It is recursive and has stack too deep errors. Consider refactoring it to use a non-recursive approach.
+# SPILLS: PUSH_FRAME %stack.0
+# SPILLS-NEXT: MSTORE_S
 
 --- |
   source_filename = "reduced.ll"
