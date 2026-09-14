@@ -54,6 +54,16 @@ private:
     void emitLabelReference(const MachineInstr *Call);
     void emitReload(Register Reg);
     void emitSpill(Register Reg, unsigned DupIdx);
+    /// Emit the fused callee-save and spill of the argument \p Reg, which
+    /// sits at \p Depth on the stack. The previous contents of the spill
+    /// slot surface, trade places with the argument, and the argument enters
+    /// the slot. The loaded word ends up in the argument's stack position,
+    /// so the stack height does not change.
+    void emitCalleeSaveSpill(Register Reg, unsigned Depth);
+    /// Push the previous contents of \p Reg's spill slot onto the stack.
+    void emitCalleeSaveLoad(Register Reg);
+    /// Pop the stack top into \p Reg's spill slot.
+    void emitCalleeSaveRestore(Register Reg);
     /// Remove all the instructions that are not in stack form.
     void finalize();
 
@@ -68,7 +78,20 @@ private:
     DenseMap<const MachineInstr *, MCSymbol *> CallReturnSyms;
 
     void verify(const MachineInstr *MI) const;
+    /// Push the current contents of the stack slot \p FI.
+    void emitFrameLoad(int FI);
+    /// Pop the stack top into the stack slot \p FI.
+    void emitFrameStore(int FI);
+    /// Get or create the spill slot (frame index) of \p Reg. The
+    /// register's live interval is registered with LiveStacks, mirroring
+    /// InlineSpiller, so that StackSlotColoring can shrink the spill area
+    /// afterwards.
     int getStackSlot(Register Reg);
+    /// Same as getStackSlot, but also mark the whole function live in the
+    /// slot's LiveStacks interval. A callee-saved slot's memory word is
+    /// occupied from the prologue to the epilogue, so StackSlotColoring
+    /// must not share the slot.
+    int getCalleeSaveStackSlot(Register Reg);
   };
 
   CodeEmitter Emitter;
@@ -92,6 +115,15 @@ private:
   /// Emit spill instructions for the \p Defs, if needed.
   void emitSpills(const MachineBasicBlock &MBB,
                   MachineBasicBlock::const_iterator Start, const Stack &Defs);
+
+  /// Emit the prologue of a recursive function with spills. It loads the
+  /// previous contents of every spill slot onto the value stack. For a
+  /// spilled argument the save is fused with the argument's spill store
+  /// into a swap triple. This way the previous slot contents are saved in
+  /// the same step that overwrites them. The loaded words are consumed by
+  /// the return path. It stores each word back to its slot just before the
+  /// return jump.
+  void emitCalleeSaves();
 };
 
 } // namespace llvm

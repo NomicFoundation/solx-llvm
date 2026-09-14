@@ -400,29 +400,31 @@ void EVMStackSolver::run() {
       break;
 
     if (MF.getFunction().hasFnAttribute("evm-recursive")) {
-      // For recursive functions we can't use spills to fix the stack too deep
-      // errors, as we are using memory to spill and not real stack. Report an
-      // error if this function is recursive and we forced compress stack
-      // before.
-      if (ForceCompressStack)
-        report_fatal_error(
-            "Stackification failed for '" + MF.getName() +
-            "' function. It is recursive and has stack too deep errors. "
-            "Consider refactoring it to use a non-recursive approach.");
+      if (!ForceCompressStack) {
+        LLVM_DEBUG({
+          dbgs() << "EVMStackSolver: force CompressStack for recursive "
+                    "function.\n";
+        });
 
-      LLVM_DEBUG({
-        dbgs()
-            << "EVMStackSolver: force CompressStack for recursive function.\n";
-      });
+        // propagateThroughMBB can't detect stack-too-deep errors for
+        // transformations from MBB's entry stack to the first instruction
+        // entry stack. Try to compress the stack first. Compression is free
+        // at run time. A spill in a recursive function costs a callee-save
+        // load and store pair per slot on every activation.
+        // TODO: This is a little bit agressive, since we can detect MBBs where
+        // the stack is too deep and compress only them.
+        ForceCompressStack = true;
+        continue;
+      }
 
-      // propagateThroughMBB can't detect stack-too-deep errors for
-      // transformations from MBB's entry stack to the first instruction entry
-      // stack. Since a recursive function doesn't support spills and reloads,
-      // try to compress the stack.
-      // TODO: This is a little bit agressive, since we can detect MBBs where
-      // the stack is too deep and compress only them.
-      ForceCompressStack = true;
-      continue;
+      // Compression alone did not resolve the issues. Fall through to
+      // spilling. Every spill slot of a recursive function is callee-saved
+      // on the EVM value stack. This makes its fixed memory address safe to
+      // reuse across activations. The model creates a CalleeSavedSlot per
+      // spill in addSpillRegs. The slot enters the layouts through the
+      // return blocks' exit stacks on the next propagation. The code
+      // emitter materializes it in the prologue and stores it back before
+      // each RET.
     }
 
     if (++IterCount > MaxSpillIterations)
@@ -468,9 +470,16 @@ void EVMStackSolver::run() {
 
     // If we did aggressive stack compression, we can't do anything else, so
     // report an error.
-    if (ForceCompressStack)
-      report_fatal_error("EVMStackSolver: no spillable registers found for "
-                         "unreachable slots.");
+    if (ForceCompressStack) {
+      if (MF.getFunction().hasFnAttribute("evm-recursive"))
+        report_fatal_error(
+            "Stackification failed for '" + MF.getName() +
+            "' function. It is recursive and has stack too deep errors. "
+            "Consider refactoring it to use a non-recursive approach.");
+      report_fatal_error("Stackification failed for '" + MF.getName() +
+                         "' function. It has stack too deep errors, and no "
+                         "register can be spilled to resolve them.");
+    }
 
     LLVM_DEBUG({
       dbgs() << "EVMStackSolver: no spillable registers found, running with "
@@ -849,7 +858,23 @@ void EVMStackSolver::runPropagation() {
 
   // Calling convention: input arguments are passed in stack such that the
   // first one specified in the function declaration is passed on the stack TOP.
-  append_range(EntryStack, reverse(FunctionParameters));
+  // The code emitter materializes the callee-saved words of the spill slots
+  // right at the function entry. A spilled argument trades places with the
+  // previous contents of its slot, so the saved word takes the argument's
+  // position. The remaining saved words are loaded on top of the parameters.
+  for (const StackSlot *Param : reverse(FunctionParameters)) {
+    if (isSpillReg(Param)) {
+      Register Reg = cast<RegisterSlot>(Param)->getReg();
+      if (StackModel.hasCalleeSavedSlot(Reg)) {
+        EntryStack.push_back(StackModel.getCalleeSavedSlot(Reg));
+        continue;
+      }
+    }
+    EntryStack.push_back(Param);
+  }
+  for (const CalleeSavedSlot *Save : StackModel.getCalleeSavedSlots())
+    if (!StackModel.isArgumentSave(Save))
+      EntryStack.push_back(Save);
   insertMBBEntryStack(&MF.front(), EntryStack);
 }
 
