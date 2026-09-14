@@ -1,0 +1,346 @@
+# RUN: llc -x mir -run-pass=evm-backward-propagation-stackification < %s | FileCheck %s
+
+# The recursive function below keeps 18 values live across the recursive call
+# and consumes each of them twice, in opposite orders. No stack arrangement
+# keeps every access within the 16-slot reach, so the solver must spill.
+# Spill slots of a recursive function are reused by every activation, so the
+# stackifier makes them callee-saved. The prologue loads the previous
+# contents of each slot onto the value stack. The saved words are stored back
+# right before the internal return, in reverse order of the saves. The last
+# restored slot is always %stack.0 and it is followed by the return jump.
+
+# The saves are the first instructions of the function.
+# CHECK-LABEL: bb.0.entry:
+# CHECK: PUSH_FRAME %stack.0
+# CHECK-NEXT: MLOAD_S
+# CHECK-NEXT: PUSH_FRAME %stack.1
+# CHECK-NEXT: MLOAD_S
+
+# The restores end with %stack.0 and the return jump follows.
+# CHECK-LABEL: bb.2.common.ret:
+# CHECK: MSTORE_S
+# CHECK: PUSH_FRAME %stack.0
+# CHECK-NEXT: MSTORE_S
+# CHECK-NEXT: PseudoRET
+
+# The spilled values are defined in the recurse block. Check that a spill
+# store and a reload are present there.
+# CHECK-LABEL: bb.3.recurse:
+# CHECK: MSTORE_S
+# CHECK: MLOAD_S
+
+--- |
+  ; ModuleID = '<stdin>'
+  source_filename = "<stdin>"
+  target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
+  target triple = "evm"
+  
+  define fastcc i256 @rec(i256 %n) #0 {
+  entry:
+    %cmp = icmp eq i256 %n, 0
+    br i1 %cmp, label %common.ret, label %recurse
+  
+  common.ret:                                       ; preds = %entry, %recurse
+    %common.ret.op = phi i256 [ %t18, %recurse ], [ 1, %entry ]
+    ret i256 %common.ret.op
+  
+  recurse:                                          ; preds = %entry
+    %v1 = load i256, ptr addrspace(1) inttoptr (i256 32 to ptr addrspace(1)), align 32
+    %v2 = load i256, ptr addrspace(1) inttoptr (i256 64 to ptr addrspace(1)), align 32
+    %v3 = load i256, ptr addrspace(1) inttoptr (i256 96 to ptr addrspace(1)), align 32
+    %v4 = load i256, ptr addrspace(1) inttoptr (i256 128 to ptr addrspace(1)), align 32
+    %v5 = load i256, ptr addrspace(1) inttoptr (i256 160 to ptr addrspace(1)), align 32
+    %v6 = load i256, ptr addrspace(1) inttoptr (i256 192 to ptr addrspace(1)), align 32
+    %v7 = load i256, ptr addrspace(1) inttoptr (i256 224 to ptr addrspace(1)), align 32
+    %v8 = load i256, ptr addrspace(1) inttoptr (i256 256 to ptr addrspace(1)), align 32
+    %v9 = load i256, ptr addrspace(1) inttoptr (i256 288 to ptr addrspace(1)), align 32
+    %v10 = load i256, ptr addrspace(1) inttoptr (i256 320 to ptr addrspace(1)), align 32
+    %v11 = load i256, ptr addrspace(1) inttoptr (i256 352 to ptr addrspace(1)), align 32
+    %v12 = load i256, ptr addrspace(1) inttoptr (i256 384 to ptr addrspace(1)), align 32
+    %v13 = load i256, ptr addrspace(1) inttoptr (i256 416 to ptr addrspace(1)), align 32
+    %v14 = load i256, ptr addrspace(1) inttoptr (i256 448 to ptr addrspace(1)), align 32
+    %v15 = load i256, ptr addrspace(1) inttoptr (i256 480 to ptr addrspace(1)), align 32
+    %v16 = load i256, ptr addrspace(1) inttoptr (i256 512 to ptr addrspace(1)), align 32
+    %v17 = load i256, ptr addrspace(1) inttoptr (i256 544 to ptr addrspace(1)), align 32
+    %v18 = load i256, ptr addrspace(1) inttoptr (i256 576 to ptr addrspace(1)), align 32
+    %nm1 = sub i256 %n, 1
+    %r = call fastcc i256 @rec(i256 %nm1)
+    %s1 = add i256 %r, %v1
+    %s2 = mul i256 %s1, %v2
+    %s3 = add i256 %s2, %v3
+    %s4 = mul i256 %s3, %v4
+    %s5 = add i256 %s4, %v5
+    %s6 = mul i256 %s5, %v6
+    %s7 = add i256 %s6, %v7
+    %s8 = mul i256 %s7, %v8
+    %s9 = add i256 %s8, %v9
+    %s10 = mul i256 %s9, %v10
+    %s11 = add i256 %s10, %v11
+    %s12 = mul i256 %s11, %v12
+    %s13 = add i256 %s12, %v13
+    %s14 = mul i256 %s13, %v14
+    %s15 = add i256 %s14, %v15
+    %s16 = mul i256 %s15, %v16
+    %s17 = add i256 %s16, %v17
+    %s18 = mul i256 %s17, %v18
+    %t1 = mul i256 %s18, %v18
+    %t2 = add i256 %t1, %v17
+    %t3 = mul i256 %t2, %v16
+    %t4 = add i256 %t3, %v15
+    %t5 = mul i256 %t4, %v14
+    %t6 = add i256 %t5, %v13
+    %t7 = mul i256 %t6, %v12
+    %t8 = add i256 %t7, %v11
+    %t9 = mul i256 %t8, %v10
+    %t10 = add i256 %t9, %v9
+    %t11 = mul i256 %t10, %v8
+    %t12 = add i256 %t11, %v7
+    %t13 = mul i256 %t12, %v6
+    %t14 = add i256 %t13, %v5
+    %t15 = mul i256 %t14, %v4
+    %t16 = add i256 %t15, %v3
+    %t17 = mul i256 %t16, %v2
+    %t18 = add i256 %t17, %v1
+    br label %common.ret
+  }
+  
+  attributes #0 = { "evm-recursive" }
+...
+---
+name:            rec
+alignment:       1
+exposesReturnsTwice: false
+legalized:       false
+regBankSelected: false
+selected:        false
+failedISel:      false
+tracksRegLiveness: true
+hasWinCFI:       false
+noPhis:          true
+isSSA:           false
+noVRegs:         false
+hasFakeUses:     false
+callsEHReturn:   false
+callsUnwindInit: false
+hasEHContTarget: false
+hasEHScopes:     false
+hasEHFunclets:   false
+isOutlined:      false
+debugInstrRef:   false
+failsVerification: false
+tracksDebugUserValues: false
+registers:
+  - { id: 0, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 1, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 2, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 3, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 4, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 5, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 6, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 7, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 8, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 9, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 10, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 11, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 12, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 13, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 14, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 15, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 16, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 17, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 18, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 19, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 20, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 21, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 22, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 23, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 24, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 25, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 26, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 27, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 28, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 29, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 30, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 31, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 32, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 33, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 34, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 35, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 36, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 37, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 38, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 39, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 40, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 41, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 42, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 43, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 44, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 45, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 46, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 47, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 48, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 49, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 50, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 51, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 52, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 53, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 54, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 55, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 56, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 57, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 58, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 59, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 60, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 61, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 62, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 63, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 64, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 65, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 66, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 67, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 68, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 69, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 70, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 71, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 72, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 73, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 74, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 75, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 76, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 77, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 78, class: gpr, preferred-register: '', flags: [  ] }
+liveins:
+  - { reg: '$arguments', virtual-reg: '' }
+  - { reg: '$value_stack', virtual-reg: '' }
+frameInfo:
+  isFrameAddressTaken: false
+  isReturnAddressTaken: false
+  hasStackMap:     false
+  hasPatchPoint:   false
+  stackSize:       0
+  offsetAdjustment: 0
+  maxAlignment:    1
+  adjustsStack:    false
+  hasCalls:        true
+  stackProtector:  ''
+  functionContext: ''
+  maxCallFrameSize: 0
+  cvBytesOfCalleeSavedRegisters: 0
+  hasOpaqueSPAdjustment: false
+  hasVAStart:      false
+  hasMustTailInVarArgFunc: false
+  hasTailCall:     false
+  isCalleeSavedInfoValid: false
+  localFrameSize:  0
+  savePoint:       ''
+  restorePoint:    ''
+fixedStack:      []
+stack:           []
+entry_values:    []
+callSites:       []
+debugValueSubstitutions: []
+constants:       []
+machineFunctionInfo:
+  isStackified:    false
+  numberOfParameters: 1
+  hasPushDeployAddress: false
+body:             |
+  bb.0.entry:
+    successors: %bb.1(0x30000000), %bb.3(0x50000000)
+    liveins: $arguments, $value_stack
+  
+    %2:gpr = ARGUMENT 0, implicit $arguments
+    JUMPI %bb.3, %2, implicit-def dead $arguments
+  
+  bb.1:
+    successors: %bb.2(0x80000000)
+    liveins: $value_stack
+  
+    %78:gpr = CONST_I256 i256 1, implicit-def dead $arguments
+  
+  bb.2.common.ret:
+    liveins: $value_stack
+  
+    RET %78, implicit-def dead $arguments
+  
+  bb.3.recurse:
+    successors: %bb.2(0x80000000)
+    liveins: $value_stack
+  
+    %6:gpr = CONST_I256 i256 576, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %7:gpr = MLOAD %6, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 576 to ptr addrspace(1))`, addrspace 1)
+    %8:gpr = CONST_I256 i256 544, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %9:gpr = MLOAD %8, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 544 to ptr addrspace(1))`, addrspace 1)
+    %10:gpr = CONST_I256 i256 512, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %11:gpr = MLOAD %10, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 512 to ptr addrspace(1))`, addrspace 1)
+    %12:gpr = CONST_I256 i256 480, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %13:gpr = MLOAD %12, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 480 to ptr addrspace(1))`, addrspace 1)
+    %14:gpr = CONST_I256 i256 448, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %15:gpr = MLOAD %14, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 448 to ptr addrspace(1))`, addrspace 1)
+    %16:gpr = CONST_I256 i256 416, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %17:gpr = MLOAD %16, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 416 to ptr addrspace(1))`, addrspace 1)
+    %18:gpr = CONST_I256 i256 384, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %19:gpr = MLOAD %18, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 384 to ptr addrspace(1))`, addrspace 1)
+    %20:gpr = CONST_I256 i256 352, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %21:gpr = MLOAD %20, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 352 to ptr addrspace(1))`, addrspace 1)
+    %22:gpr = CONST_I256 i256 320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %23:gpr = MLOAD %22, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 320 to ptr addrspace(1))`, addrspace 1)
+    %24:gpr = CONST_I256 i256 288, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %25:gpr = MLOAD %24, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 288 to ptr addrspace(1))`, addrspace 1)
+    %26:gpr = CONST_I256 i256 256, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %27:gpr = MLOAD %26, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 256 to ptr addrspace(1))`, addrspace 1)
+    %28:gpr = CONST_I256 i256 224, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %29:gpr = MLOAD %28, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 224 to ptr addrspace(1))`, addrspace 1)
+    %30:gpr = CONST_I256 i256 192, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %31:gpr = MLOAD %30, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 192 to ptr addrspace(1))`, addrspace 1)
+    %32:gpr = CONST_I256 i256 160, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %33:gpr = MLOAD %32, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 160 to ptr addrspace(1))`, addrspace 1)
+    %34:gpr = CONST_I256 i256 128, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %35:gpr = MLOAD %34, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 128 to ptr addrspace(1))`, addrspace 1)
+    %36:gpr = CONST_I256 i256 96, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %37:gpr = MLOAD %36, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 96 to ptr addrspace(1))`, addrspace 1)
+    %38:gpr = CONST_I256 i256 64, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %39:gpr = MLOAD %38, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 64 to ptr addrspace(1))`, addrspace 1)
+    %40:gpr = CONST_I256 i256 32, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %41:gpr = MLOAD %40, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack :: (load (s256) from `ptr addrspace(1) inttoptr (i256 32 to ptr addrspace(1))`, addrspace 1)
+    %4:gpr = CONST_I256 i256 1, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = SUB %2, %4, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %42:gpr = FCALL @rec, %5, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %43:gpr = ADD %42, %41, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %44:gpr = MUL %43, %39, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %45:gpr = ADD %44, %37, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %46:gpr = MUL %45, %35, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %47:gpr = ADD %46, %33, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %48:gpr = MUL %47, %31, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %49:gpr = ADD %48, %29, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %50:gpr = MUL %49, %27, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %51:gpr = ADD %50, %25, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %52:gpr = MUL %51, %23, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %53:gpr = ADD %52, %21, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %54:gpr = MUL %53, %19, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %55:gpr = ADD %54, %17, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %56:gpr = MUL %55, %15, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %57:gpr = ADD %56, %13, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %58:gpr = MUL %57, %11, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %59:gpr = ADD %58, %9, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %60:gpr = MUL %59, %7, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %61:gpr = MUL %60, %7, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %62:gpr = ADD %61, %9, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %63:gpr = MUL %62, %11, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %64:gpr = ADD %63, %13, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %65:gpr = MUL %64, %15, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %66:gpr = ADD %65, %17, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %67:gpr = MUL %66, %19, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %68:gpr = ADD %67, %21, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %69:gpr = MUL %68, %23, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %70:gpr = ADD %69, %25, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %71:gpr = MUL %70, %27, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %72:gpr = ADD %71, %29, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %73:gpr = MUL %72, %31, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %74:gpr = ADD %73, %33, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %75:gpr = MUL %74, %35, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %76:gpr = ADD %75, %37, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %77:gpr = MUL %76, %39, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %78:gpr = ADD %77, %41, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    JUMP %bb.2, implicit-def $arguments
+...

@@ -56,6 +56,33 @@ EVMStackModel::EVMStackModel(MachineFunction &MF, const LiveIntervals &LIS,
       processMI(MI);
 }
 
+void EVMStackModel::addSpillRegs(const SmallSet<Register, 4> &SpillRegs) {
+  // Spill slots have fixed memory addresses, so every activation of a
+  // recursive function reuses them and they must be callee-saved. Without an
+  // internal return nothing can observe the slot contents after this
+  // function, because all exits abort the external call frame. In that case
+  // no saving is needed.
+  const bool ShouldCalleeSaveSpills =
+      MF.getFunction().hasFnAttribute("evm-recursive") &&
+      any_of(MF,
+             [](const MachineBasicBlock &MBB) { return MBB.isReturnBlock(); });
+
+  // Sort for a deterministic slot creation order.
+  SmallVector<Register> Sorted(SpillRegs.begin(), SpillRegs.end());
+  llvm::sort(Sorted, [](Register A, Register B) { return A.id() < B.id(); });
+  for (const auto &R : Sorted) {
+    // Note: getRegisterSlot may create the slot. A register whose only use
+    // is RET has no slot yet at this point, because RET is not processed by
+    // the model.
+    auto *RegSlot = getRegisterSlot(R);
+    assert(!RegSlot->isSpill() &&
+           "Register slot has already been marked as spill");
+    RegSlot->setIsSpill();
+    if (ShouldCalleeSaveSpills)
+      getCalleeSavedSlot(R);
+  }
+}
+
 Stack EVMStackModel::getFunctionParameters() const {
   auto *MFI = MF.getInfo<EVMMachineFunctionInfo>();
   Stack Parameters(MFI->getNumParams(), EVMStackModel::getUnusedSlot());
@@ -150,5 +177,9 @@ Stack EVMStackModel::getReturnArguments(const MachineInstr &MI) const {
   // last one specified in the RET instruction is passed on the stack TOP.
   std::reverse(Input.begin(), Input.end());
   Input.push_back(getCalleeReturnSlot(&MF));
+  // The callee-saved words of the spill slots sit on top. The code emitter
+  // consumes each of them with a store back to its slot just before the
+  // return jump. This restores the caller's spill area.
+  append_range(Input, getCalleeSavedSlots());
   return Input;
 }
