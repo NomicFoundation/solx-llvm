@@ -28,14 +28,9 @@ using namespace llvm;
 #define DEBUG_TYPE "evm-finalize-stack-frames"
 #define PASS_NAME "EVM finalize stack frames"
 
-static cl::opt<uint64_t>
-    StackRegionSize("evm-stack-region-size", cl::Hidden, cl::init(0),
-                    cl::desc("Allocated stack region size"));
-
-static cl::opt<uint64_t>
-    StackRegionOffset("evm-stack-region-offset", cl::Hidden,
-                      cl::init(std::numeric_limits<uint64_t>::max()),
-                      cl::desc("Offset where the stack region starts"));
+static const ConstantInt *getFlag(const Module &M, StringRef Name) {
+  return mdconst::extract_or_null<ConstantInt>(M.getModuleFlag(Name));
+}
 
 namespace {
 class EVMFinalizeStackFrames : public ModulePass {
@@ -132,12 +127,21 @@ void EVMFinalizeStackFrames::replaceFrameIndices(
 bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   LLVM_DEBUG({ dbgs() << "********** Finalize stack frames **********\n"; });
 
-  // Check if options for stack region size and offset are set correctly.
-  if (StackRegionSize.getNumOccurrences()) {
-    if (!StackRegionOffset.getNumOccurrences())
+  // The region's base is the front end's memory guard.
+  const ConstantInt *StackRegionOffsetFlag = getFlag(M, "evm-memory-guard");
+  const ConstantInt *StackRegionSizeFlag = getFlag(M, "evm-stack-region-size");
+  uint64_t StackRegionOffset =
+      StackRegionOffsetFlag ? StackRegionOffsetFlag->getZExtValue() : 0;
+  uint64_t StackRegionSize =
+      StackRegionSizeFlag ? StackRegionSizeFlag->getZExtValue() : 0;
+
+  // Check if the module flags for stack region size and offset are set
+  // correctly.
+  if (StackRegionSizeFlag) {
+    if (!StackRegionOffsetFlag)
       report_fatal_error("Stack region offset must be set when stack region "
-                         "size is set. Use --evm-stack-region-offset to set "
-                         "the offset.");
+                         "size is set. Set the \"evm-memory-guard\" module "
+                         "flag to the offset.");
 
     if (StackRegionOffset % 32 != 0)
       report_fatal_error("Stack region offset must be a multiple of 32 bytes.");
