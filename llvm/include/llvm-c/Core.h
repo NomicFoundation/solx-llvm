@@ -652,6 +652,19 @@ LLVM_C_ABI char *LLVMGetDiagInfoDescription(LLVMDiagnosticInfoRef DI);
 LLVM_C_ABI LLVMDiagnosticSeverity
 LLVMGetDiagInfoSeverity(LLVMDiagnosticInfoRef DI);
 
+// EVM local begin
+/**
+ * If DI is an EVM stack-region-overflow diagnostic, store the reported total
+ * stack size and the configured region size into the non-null out-parameters
+ * and return 1; otherwise return 0.
+ *
+ * @see llvm::DiagnosticInfoEVMStackRegionOverflow
+ */
+LLVM_C_ABI LLVMBool LLVMGetDiagInfoEVMStackRegionOverflow(
+    LLVMDiagnosticInfoRef DI, uint64_t *TotalStackSize,
+    uint64_t *StackRegionSize);
+// EVM local end
+
 LLVM_C_ABI unsigned LLVMGetMDKindIDInContext(LLVMContextRef C, const char *Name,
                                              unsigned SLen);
 LLVM_C_ABI unsigned LLVMGetMDKindID(const char *Name, unsigned SLen);

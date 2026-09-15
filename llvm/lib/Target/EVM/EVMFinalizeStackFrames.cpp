@@ -20,6 +20,7 @@
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Module.h"
 #include "llvm/InitializePasses.h"
 
@@ -132,9 +133,19 @@ void EVMFinalizeStackFrames::replaceFrameIndices(
 bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   LLVM_DEBUG({ dbgs() << "********** Finalize stack frames **********\n"; });
 
+  // Module flags take precedence over the same-named cl::opts, which the
+  // resolved locals shadow below.
+  std::optional<uint64_t> RegionSizeFlag =
+      EVM::getModuleFlagU64(M, "evm-stack-region-size");
+  std::optional<uint64_t> RegionOffsetFlag =
+      EVM::getModuleFlagU64(M, "evm-stack-region-offset");
+  const uint64_t StackRegionSize = RegionSizeFlag.value_or(::StackRegionSize);
+  const uint64_t StackRegionOffset =
+      RegionOffsetFlag.value_or(::StackRegionOffset);
+
   // Check if options for stack region size and offset are set correctly.
-  if (StackRegionSize.getNumOccurrences()) {
-    if (!StackRegionOffset.getNumOccurrences())
+  if (RegionSizeFlag || ::StackRegionSize.getNumOccurrences()) {
+    if (!RegionOffsetFlag && !::StackRegionOffset.getNumOccurrences())
       report_fatal_error("Stack region offset must be set when stack region "
                          "size is set. Use --evm-stack-region-offset to set "
                          "the offset.");
@@ -169,13 +180,13 @@ bool EVMFinalizeStackFrames::runOnModule(Module &M) {
   }
   LLVM_DEBUG({ dbgs() << "Total stack size: " << TotalStackSize << "\n"; });
 
-  // Check if it is valid to replace frame indices.
+  // On overflow, report through the per-context diagnostic handler and keep
+  // going: the pipeline must still produce well-formed (if oversized-region)
+  // output, and the front-end discards it and retries with the reported size.
+  // Without a handler, diagnose() exits for DS_Error.
   if (TotalStackSize > 0 && TotalStackSize > StackRegionSize) {
-    report_evm_stack_error(
-        "Total stack size: " + Twine(TotalStackSize) +
-            " is larger than the allocated stack region size: " +
-            Twine(StackRegionSize),
-        TotalStackSize);
+    M.getContext().diagnose(
+        DiagnosticInfoEVMStackRegionOverflow(TotalStackSize, StackRegionSize));
   }
   if (StackRegionSize > TotalStackSize)
     errs() << "warning: allocated stack region size: " +

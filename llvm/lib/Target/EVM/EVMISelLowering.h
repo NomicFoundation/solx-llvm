@@ -29,6 +29,10 @@ public:
                              unsigned AS,
                              Instruction *I = nullptr) const override;
 
+  bool isSuitableForJumpTable(const SwitchInst *SI, uint64_t NumCases,
+                              uint64_t Range, ProfileSummaryInfo *PSI,
+                              BlockFrequencyInfo *BFI) const override;
+
   EVT getSetCCResultType(const DataLayout &DL, LLVMContext &Context,
                          EVT VT) const override {
     return MVT::i256;
