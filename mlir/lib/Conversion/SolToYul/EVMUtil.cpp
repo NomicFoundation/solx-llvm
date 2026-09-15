@@ -928,8 +928,8 @@ Value evm::Builder::genIntCleanup(unsigned width, bool isSigned, Value val,
   }
 
   assert(width % 8 == 0 && "signed Yul cleanup expects byte-aligned widths");
-  Value off = bExt.genI256Const((width / 8) - 1, loc);
-  return b.create<yul::SignExtendOp>(loc, off, val);
+  Value idx = bExt.genI256Const((width / 8) - 1, loc);
+  return b.create<yul::SignExtendOp>(loc, idx, val);
 }
 
 Value evm::Builder::genCleanup(Type ty, Value val,
