@@ -1510,13 +1510,15 @@ struct LoopOpInterfaceLowering
         lowerTerminator(bodyYield, (step ? step : cond), r);
     }
 
-    // Lower mandatory step region yield.
+    // Lower step region yield.
     if (step) {
-      auto branch =
-          lowerTerminator(cast<yul::YieldOp>(step->getTerminator()), cond, r);
-      if (op->hasAttr("full_unroll"))
-        branch->setAttr("loop_annotation",
-                        getFullUnrollLoopAnnotation(op->getContext()));
+      // The step has no yield if it ends with a `leave`.
+      if (auto stepYield = dyn_cast<yul::YieldOp>(step->getTerminator())) {
+        auto branch = lowerTerminator(stepYield, cond, r);
+        if (op->hasAttr("full_unroll"))
+          branch->setAttr("loop_annotation",
+                          getFullUnrollLoopAnnotation(op->getContext()));
+      }
     }
 
     // Move region contents out of the loop op.

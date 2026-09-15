@@ -335,6 +335,11 @@ def Yul_ForOp : Yul_Op<"for", [Yul_LoopOpInterface,
   let arguments = (ins Variadic<I256OrI256LLVMStruct>:$initArgs,
                        OptionalAttr<UnitAttr>:$full_unroll);
   let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
+  // TODO: Verifier:
+  // - $cond ends in yul.condition.
+  // - $body blocks end in yul.yield, yul.func_return, yul.break or
+  //   yul.continue.
+  // - $step ends in yul.yield or yul.func_return.
   let regions = (region SizedRegion<1>:$cond, MinSizedRegion<1>:$body,
                         SizedRegion<1>:$step);
 
