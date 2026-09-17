@@ -4,22 +4,29 @@
 # and consumes each of them twice, in opposite orders. No stack arrangement
 # keeps every access within the 16-slot reach, so the solver must spill.
 # Spill slots of a recursive function are reused by every activation, so the
-# stackifier makes them callee-saved. The prologue loads the previous
-# contents of each slot onto the value stack. The saved words are stored back
-# right before the internal return, in reverse order of the saves. The last
-# restored slot is always %stack.0 and it is followed by the return jump.
+# stackifier callee-saves the slots of registers that are live across the
+# recursive call. The prologue loads the previous contents of each such slot
+# onto the value stack. The saved words are stored back right before the
+# internal return, in reverse order of the saves.
+# The argument %n is not live across the call. The solver prefers such
+# call-free candidates, so %n is spilled first, with a plain store at the
+# entry and no callee-save code for its slot (%stack.0).
 
-# The saves are the first instructions of the function.
+# The call-free argument store comes first. The saves of the callee-saved
+# slots follow.
 # CHECK-LABEL: bb.0.entry:
 # CHECK: PUSH_FRAME %stack.0
-# CHECK-NEXT: MLOAD_S
+# CHECK-NEXT: MSTORE_S
 # CHECK-NEXT: PUSH_FRAME %stack.1
 # CHECK-NEXT: MLOAD_S
+# CHECK: PUSH_FRAME %stack.10
+# CHECK-NEXT: MLOAD_S
 
-# The restores end with %stack.0 and the return jump follows.
+# The restores end with %stack.1 and the return jump follows. The call-free
+# slot %stack.0 is not restored.
 # CHECK-LABEL: bb.2.common.ret:
 # CHECK: MSTORE_S
-# CHECK: PUSH_FRAME %stack.0
+# CHECK: PUSH_FRAME %stack.1
 # CHECK-NEXT: MSTORE_S
 # CHECK-NEXT: PseudoRET
 

@@ -69,6 +69,31 @@ EVMStackModel::EVMStackModel(MachineFunction &MF, const LiveIntervals &LIS,
   }
 }
 
+// Return true if \p Callee may belong to the same call graph cycle as \p F,
+// so a call to it may create a new activation of \p F. That is only possible
+// if both functions are recursive. A path from a non-recursive callee back
+// to \p F would form a cycle through \p F, and then
+// EVMMarkRecursiveFunctions would have marked the callee as well.
+static bool inSameRecursiveCycle(const Function &F, const Function &Callee) {
+  if (&Callee == &F)
+    return true;
+
+  return F.hasFnAttribute("evm-recursive") &&
+         Callee.hasFnAttribute("evm-recursive");
+}
+
+bool EVMStackModel::crossesReentrantCall(const Register &Reg) const {
+  // The register crosses the call if its value is live into the call and
+  // is not killed by it. A register defined by the call has no live-in
+  // value there. A register whose last use is a call argument is killed at
+  // the call, and its last reload happens before the callee starts.
+  const LiveInterval &LI = LIS.getInterval(Reg);
+  return any_of(ReentrantCallIndexes, [&LI](SlotIndex Idx) {
+    LiveQueryResult Q = LI.Query(Idx);
+    return Q.valueIn() && !Q.isKill();
+  });
+}
+
 void EVMStackModel::addSpillRegs(const SmallSet<Register, 4> &SpillRegs) {
   for (const auto &R : SpillRegs) {
     // Note: getRegisterSlot may create the slot. A register whose only use
@@ -87,7 +112,8 @@ void EVMStackModel::addSpillRegs(const SmallSet<Register, 4> &SpillRegs) {
   SmallVector<Register> Sorted(SpillRegs.begin(), SpillRegs.end());
   llvm::sort(Sorted, [](Register A, Register B) { return A.id() < B.id(); });
   for (const auto &R : Sorted)
-    getCalleeSavedSlot(R);
+    if (crossesReentrantCall(R))
+      getCalleeSavedSlot(R);
 }
 
 Stack EVMStackModel::getFunctionEntryStack() const {
@@ -165,6 +191,11 @@ void EVMStackModel::processMI(const MachineInstr &MI) {
          "Unexpected explicit def or use");
 
   if (Opc == EVM::FCALL) {
+    const auto *Callee =
+        cast<Function>(MI.explicit_uses().begin()->getGlobal());
+    if (inSameRecursiveCycle(MF.getFunction(), *Callee))
+      ReentrantCallIndexes.push_back(LIS.getInstructionIndex(MI));
+
     Stack Input;
     if (!isNoReturnCallMI(MI))
       Input.push_back(getCallerReturnSlot(&MI));

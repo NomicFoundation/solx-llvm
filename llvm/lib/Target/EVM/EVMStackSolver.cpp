@@ -457,6 +457,17 @@ void EVMStackSolver::run() {
           if (!RegSlot->isSpill() && !hasUnreachableDef(RegSlot->getReg()))
             SpillableRegs.insert(RegSlot->getReg());
 
+      // Prefer candidates that do not cross a re-entrant call. Their spill
+      // slots need no callee-save code.
+      if (!SpillableRegs.empty() && StackModel.spillsNeedCalleeSave()) {
+        SmallSetVector<Register, 16> CallFree;
+        for (Register Reg : SpillableRegs)
+          if (!StackModel.crossesReentrantCall(Reg))
+            CallFree.insert(Reg);
+        if (!CallFree.empty())
+          SpillableRegs = std::move(CallFree);
+      }
+
       if (!SpillableRegs.empty())
         RegsToSpill.insert(getRegToSpill(SpillableRegs, LIS));
     }

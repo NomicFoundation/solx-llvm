@@ -275,6 +275,9 @@ class EVMStackModel {
       CalleeSavedStorage;
   // Callee-saved words for the spill slots in creation order.
   mutable SmallVector<const CalleeSavedSlot *, 8> CalleeSavedSlots;
+  // Slot indexes of the calls that may re-enter this function, collected in
+  // processMI.
+  SmallVector<SlotIndex, 4> ReentrantCallIndexes;
 
   using MBBStackMap = DenseMap<const MachineBasicBlock *, Stack>;
   using InstStackMap = DenseMap<const MachineInstr *, Stack>;
@@ -320,8 +323,7 @@ public:
   }
 
   // Mark the registers as spilled. For a recursive function with internal
-  // returns, also create the callee-saved slot of each new spill. The slot
-  // enters the layouts through getReturnArguments() on the next propagation.
+  // returns, also create the callee-saved slot of each new spill.
   void addSpillRegs(const SmallSet<Register, 4> &SpillRegs);
 
   bool isRecursive() const { return IsRecursive; }
@@ -338,6 +340,10 @@ public:
   ArrayRef<const CalleeSavedSlot *> getCalleeSavedSlots() const {
     return CalleeSavedSlots;
   }
+
+  // Return true if \p Reg is live across a call that may re-enter this
+  // function.
+  bool crossesReentrantCall(const Register &Reg) const;
 
   // Return true if a callee-saved slot exists for the spill slot of \p R.
   bool hasCalleeSavedSlot(const Register &R) const {

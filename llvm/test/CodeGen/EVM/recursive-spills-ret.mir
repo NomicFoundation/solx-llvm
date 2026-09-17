@@ -1,17 +1,16 @@
 # REQUIRES: asserts
 # RUN: llc -x mir -run-pass=evm-backward-propagation-stackification -evm-force-reg-spills=10 < %s | FileCheck %s
 
-# A spilled register that is used by RET is supported. The return value is
-# materialized by the exit stack transformation, and the transformation runs
-# before the callee-save restore overwrites the slot. Register %10 is the
+# A spilled register that is used by RET is supported. Register %10 is the
 # return value. It has two definitions, one on the base path and one on the
-# recurse path. Each definition gets a spill store. The register is not an
-# argument, so the save in the prologue is a plain load.
+# recurse path, and each definition gets a spill store. The live range of %10
+# does not cross the recursive call, so its spill slot cannot be clobbered by
+# another activation. Therefore the slot needs no callee-save code at all:
+# no save load in the prologue and no restore before the return jump.
 
-# The save of the previous slot contents in the prologue.
+# No callee-save load in the prologue.
 # CHECK-LABEL: bb.0.entry:
-# CHECK: PUSH_FRAME %stack.0
-# CHECK-NEXT: MLOAD_S
+# CHECK-NOT: PUSH_FRAME
 
 # The spill store at the base path definition.
 # CHECK-LABEL: bb.1:
@@ -19,11 +18,10 @@
 # CHECK: PUSH_FRAME %stack.0
 # CHECK-NEXT: MSTORE_S
 
-# The restore of the saved word right before the return jump.
+# No restore before the return jump.
 # CHECK-LABEL: bb.2.common.ret:
-# CHECK: PUSH_FRAME %stack.0
-# CHECK-NEXT: MSTORE_S
-# CHECK-NEXT: PseudoRET
+# CHECK-NOT: PUSH_FRAME
+# CHECK: PseudoRET
 
 # The spill store at the recurse path definition.
 # CHECK-LABEL: bb.3.recurse:
