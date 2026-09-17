@@ -1,5 +1,5 @@
 ; REQUIRES: asserts
-; RUN: llc --cgp-verify-bfi-updates=false -evm-stack-region-offset=128 -evm-stack-region-size=160 --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
+; RUN: llc --cgp-verify-bfi-updates=false --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
 
 target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
 target triple = "evm-unknown-unknown"
@@ -246,3 +246,7 @@ if_join318:                                       ; preds = %if_join309
   %addition_result312 = add nuw nsw i256 %and_result311, 1
   br label %for_increment273
 }
+
+!llvm.module.flags = !{!0, !1}
+!0 = !{i32 1, !"evm-memory-guard", i64 128}
+!1 = !{i32 1, !"evm-stack-region-size", i64 160}
