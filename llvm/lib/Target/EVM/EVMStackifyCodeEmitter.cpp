@@ -396,10 +396,17 @@ void EVMStackifyCodeEmitter::emitCalleeSaves() {
 
 void EVMStackifyCodeEmitter::emitSpills(const MachineBasicBlock &MBB,
                                         MachineBasicBlock::const_iterator Start,
-                                        const Stack &Defs) {
+                                        const Stack &Defs,
+                                        bool SkipCalleeSaved) {
+  auto NeedsStore = [this, SkipCalleeSaved](const StackSlot *Slot) {
+    if (!isSpillReg(Slot))
+      return false;
+    return !(SkipCalleeSaved &&
+             StackModel.hasCalleeSavedSlot(cast<RegisterSlot>(Slot)->getReg()));
+  };
+
   // Check if we have any spillable registers.
-  if (find_if(Defs, [](const StackSlot *Slot) { return isSpillReg(Slot); }) ==
-      Defs.end())
+  if (find_if(Defs, NeedsStore) == Defs.end())
     return;
 
   // In case of a single definition, we can remove it from the stack
@@ -433,7 +440,7 @@ void EVMStackifyCodeEmitter::emitSpills(const MachineBasicBlock &MBB,
     // need to do stack manipulation to keep the stack in sync
     // with the target stack.
     for (auto [DefIdx, Def] : enumerate(reverse(Defs)))
-      if (isSpillReg(Def))
+      if (NeedsStore(Def))
         Emitter.emitSpill(cast<RegisterSlot>(Def)->getReg(), DefIdx + 1);
   }
   assert(Emitter.stackHeight() == CurrentStack.size());
@@ -602,14 +609,15 @@ void EVMStackifyCodeEmitter::run() {
     const MachineInstr *ReturnMI = HasReturn ? &MBB->back() : nullptr;
 
     if (MBB == &MF.front()) {
+      // Store the spilled arguments whose slots need no callee-save, if any.
+      // Note: CurrentStack is used instead of the model's entry stack, so
+      // that the claimed callee-saved slots do not shift the depths.
+      emitSpills(*MBB, MBB->begin(), CurrentStack, /*SkipCalleeSaved=*/true);
       if (!StackModel.getCalleeSavedSlots().empty())
-        // This is a recursive function with spills. Callee-save the previous
-        // contents of the spill slots. This also stores the spilled
-        // arguments.
+        // This is a recursive function with callee-saved spills. Save the
+        // previous contents of the spill slots. This also stores the spilled
+        // arguments that have a callee-saved slot.
         emitCalleeSaves();
-      else
-        // Emit the spills for the arguments, if needed.
-        emitSpills(*MBB, MBB->begin(), StackModel.getMBBEntryStack(MBB));
     }
 
     for (const auto &MI : StackModel.instructionsToProcess(MBB)) {
