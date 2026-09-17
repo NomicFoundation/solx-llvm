@@ -56,16 +56,39 @@ EVMStackModel::EVMStackModel(MachineFunction &MF, const LiveIntervals &LIS,
       processMI(MI);
 }
 
+bool EVMStackModel::spillsNeedCalleeSave() const {
+  return MF.getFunction().hasFnAttribute("evm-recursive") &&
+         any_of(MF, [](const MachineBasicBlock &MBB) {
+           return MBB.isReturnBlock();
+         });
+}
+
+// Return true if a call to \p Callee may create a new activation of \p F.
+// That is only possible if both functions are recursive. A path from a
+// non-recursive callee back to \p F would form a cycle through \p F, and
+// then EVMMarkRecursiveFunctions would have marked the callee as well.
+static bool mayReenter(const Function &F, const Function &Callee) {
+  if (&Callee == &F)
+    return true;
+
+  return F.hasFnAttribute("evm-recursive") &&
+         Callee.hasFnAttribute("evm-recursive");
+}
+
+bool EVMStackModel::crossesReentrantCall(const Register &Reg) const {
+  // The register crosses the call if its value is live into the call and
+  // is not killed by it. A register defined by the call has no live-in
+  // value there. A register whose last use is a call argument is killed at
+  // the call, and its last reload happens before the callee starts.
+  const LiveInterval &LI = LIS.getInterval(Reg);
+  return any_of(ReentrantCallIndexes, [&LI](SlotIndex Idx) {
+    LiveQueryResult Q = LI.Query(Idx);
+    return Q.valueIn() && !Q.isKill();
+  });
+}
+
 void EVMStackModel::addSpillRegs(const SmallSet<Register, 4> &SpillRegs) {
-  // Spill slots have fixed memory addresses, so every activation of a
-  // recursive function reuses them and they must be callee-saved. Without an
-  // internal return nothing can observe the slot contents after this
-  // function, because all exits abort the external call frame. In that case
-  // no saving is needed.
-  const bool ShouldCalleeSaveSpills =
-      MF.getFunction().hasFnAttribute("evm-recursive") &&
-      any_of(MF,
-             [](const MachineBasicBlock &MBB) { return MBB.isReturnBlock(); });
+  const bool ShouldCalleeSaveSpills = spillsNeedCalleeSave();
 
   // Sort for a deterministic slot creation order.
   SmallVector<Register> Sorted(SpillRegs.begin(), SpillRegs.end());
@@ -78,7 +101,7 @@ void EVMStackModel::addSpillRegs(const SmallSet<Register, 4> &SpillRegs) {
     assert(!RegSlot->isSpill() &&
            "Register slot has already been marked as spill");
     RegSlot->setIsSpill();
-    if (ShouldCalleeSaveSpills)
+    if (ShouldCalleeSaveSpills && crossesReentrantCall(R))
       getCalleeSavedSlot(R);
   }
 }
@@ -143,6 +166,11 @@ void EVMStackModel::processMI(const MachineInstr &MI) {
          "Unexpected explicit def or use");
 
   if (Opc == EVM::FCALL) {
+    const auto *Callee =
+        cast<Function>(MI.explicit_uses().begin()->getGlobal());
+    if (mayReenter(MF.getFunction(), *Callee))
+      ReentrantCallIndexes.push_back(LIS.getInstructionIndex(MI));
+
     Stack Input;
     if (!isNoReturnCallMI(MI))
       Input.push_back(getCallerReturnSlot(&MI));

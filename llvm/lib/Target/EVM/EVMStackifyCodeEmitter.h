@@ -112,9 +112,13 @@ private:
   /// Generate code for the instruction.
   void emitMI(const MachineInstr &MI);
 
-  /// Emit spill instructions for the \p Defs, if needed.
+  /// Emit spill instructions for the \p Defs, if needed. With
+  /// \p SkipCalleeSaved set, registers that have a callee-saved slot are not
+  /// stored. This is used for the entry block, where such arguments are
+  /// stored by the fused triple in emitCalleeSaves instead.
   void emitSpills(const MachineBasicBlock &MBB,
-                  MachineBasicBlock::const_iterator Start, const Stack &Defs);
+                  MachineBasicBlock::const_iterator Start, const Stack &Defs,
+                  bool SkipCalleeSaved = false);
 
   /// Emit the prologue of a recursive function with spills. It loads the
   /// previous contents of every spill slot onto the value stack. For a
