@@ -64,15 +64,22 @@ bool EVMStackModel::spillsNeedCalleeSave() const {
 }
 
 // Return true if a call to \p Callee may create a new activation of \p F.
-// That is only possible if both functions are recursive. A path from a
-// non-recursive callee back to \p F would form a cycle through \p F, and
-// then EVMMarkRecursiveFunctions would have marked the callee as well.
+// That is only possible if the callee belongs to the same call graph cycle
+// as \p F.
 static bool mayReenter(const Function &F, const Function &Callee) {
   if (&Callee == &F)
     return true;
 
-  return F.hasFnAttribute("evm-recursive") &&
-         Callee.hasFnAttribute("evm-recursive");
+  if (!F.hasFnAttribute("evm-recursive") ||
+      !Callee.hasFnAttribute("evm-recursive"))
+    return false;
+
+  if (!F.hasFnAttribute("evm-recursive-scc") ||
+      !Callee.hasFnAttribute("evm-recursive-scc"))
+    return true;
+
+  return F.getFnAttribute("evm-recursive-scc").getValueAsString() ==
+         Callee.getFnAttribute("evm-recursive-scc").getValueAsString();
 }
 
 bool EVMStackModel::crossesReentrantCall(const Register &Reg) const {

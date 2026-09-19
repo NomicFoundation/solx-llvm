@@ -3,21 +3,21 @@
 target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
 target triple = "evm"
 
-; CHECK: define i256 @indirect_recursive2(i256 %x) #[[RECURSIVE:[0-9]+]] {
+; CHECK: define i256 @indirect_recursive2(i256 %x) #[[MUTUAL:[0-9]+]] {
 define i256 @indirect_recursive2(i256 %x) {
 entry:
   %call = call i256 @indirect_recursive1(i256 %x)
   ret i256 %call
 }
 
-; CHECK: define i256 @indirect_recursive1(i256 %y) #[[RECURSIVE:[0-9]+]] {
+; CHECK: define i256 @indirect_recursive1(i256 %y) #[[MUTUAL]] {
 define i256 @indirect_recursive1(i256 %y) {
 entry:
   %call = call i256 @indirect_recursive2(i256 %y)
   ret i256 %call
 }
 
-; CHECK: define i256 @recursive(i256 %z) #[[RECURSIVE:[0-9]+]] {
+; CHECK: define i256 @recursive(i256 %z) #[[SELF:[0-9]+]] {
 define i256 @recursive(i256 %z) {
 entry:
   %call = call i256 @recursive(i256 %z)
@@ -36,4 +36,6 @@ define i256 @non_recursive() {
   ret i256 1
 }
 
-; CHECK: attributes #[[RECURSIVE]] = { "evm-recursive" }
+; Functions from different call graph cycles get different cycle ids.
+; CHECK: attributes #[[MUTUAL]] = { "evm-recursive" "evm-recursive-scc"="0" }
+; CHECK: attributes #[[SELF]] = { "evm-recursive" "evm-recursive-scc"="1" }
