@@ -73,17 +73,19 @@ EVMStackModel::EVMStackModel(MachineFunction &MF, const LiveIntervals &LIS,
   }
 }
 
-// Return true if \p Callee may belong to the same call graph cycle as \p F,
-// so a call to it may create a new activation of \p F. That is only possible
-// if both functions are recursive. A path from a non-recursive callee back
-// to \p F would form a cycle through \p F, and then
-// EVMMarkRecursiveFunctions would have marked the callee as well.
+// Return true if \p Callee belongs to the same call graph cycle as \p F, so
+// a call to it may create a new activation of \p F. The cycle id is the value
+// of the "evm-recursive" attribute, see EVMMarkRecursiveFunctions.
 static bool inSameRecursiveCycle(const Function &F, const Function &Callee) {
   if (&Callee == &F)
     return true;
 
-  return F.hasFnAttribute("evm-recursive") &&
-         Callee.hasFnAttribute("evm-recursive");
+  if (!F.hasFnAttribute("evm-recursive") ||
+      !Callee.hasFnAttribute("evm-recursive"))
+    return false;
+
+  return F.getFnAttribute("evm-recursive").getValueAsString() ==
+         Callee.getFnAttribute("evm-recursive").getValueAsString();
 }
 
 bool EVMStackModel::crossesReentrantCall(const Register &Reg) const {
