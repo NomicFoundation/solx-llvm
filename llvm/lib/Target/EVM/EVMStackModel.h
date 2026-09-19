@@ -39,6 +39,7 @@ public:
     SK_Symbol,
     SK_CallerReturn,
     SK_CalleeReturn,
+    SK_CalleeSaved,
     SK_Unused,
     SK_Unknown
   };
@@ -161,6 +162,29 @@ public:
   }
 };
 
+/// The previous contents of a spill slot of a recursive function.
+/// The slot is not rematerializable. Once the spill slot has been
+/// overwritten, the saved word exists only on the stack.
+class CalleeSavedSlot final : public StackSlot {
+  Register SpilledReg;
+
+public:
+  explicit CalleeSavedSlot(const Register &R)
+      : StackSlot(SK_CalleeSaved), SpilledReg(R) {}
+  const Register &getReg() const { return SpilledReg; }
+
+  bool isRematerializable() const override { return false; }
+  std::string toString() const override {
+    SmallString<64> S;
+    raw_svector_ostream OS(S);
+    OS << "Saved[" << printReg(SpilledReg, nullptr, 0, nullptr) << ']';
+    return std::string(S.str());
+  }
+  static bool classof(const StackSlot *S) {
+    return S->getSlotKind() == SK_CalleeSaved;
+  }
+};
+
 /// A slot containing an arbitrary value that is always eventually popped and
 /// never used. Used to maintain stack balance on control flow joins.
 class UnusedSlot final : public StackSlot {
@@ -241,6 +265,14 @@ class EVMStackModel {
   // There should be a single CalleeReturnSlot for the MF.
   mutable std::unique_ptr<CalleeReturnSlot> TheCalleeReturnSlot;
 
+  mutable DenseMap<Register, std::unique_ptr<CalleeSavedSlot>>
+      CalleeSavedStorage;
+  // Callee-saved words for the spill slots in creation order.
+  mutable SmallVector<const CalleeSavedSlot *, 8> CalleeSavedSlots;
+  // Slot indexes of the calls that may re-enter this function, collected in
+  // processMI.
+  SmallVector<SlotIndex, 4> ReentrantCallIndexes;
+
   using MBBStackMap = DenseMap<const MachineBasicBlock *, Stack>;
   using InstStackMap = DenseMap<const MachineInstr *, Stack>;
 
@@ -278,13 +310,36 @@ public:
     return Defs;
   }
 
-  void addSpillRegs(const SmallSet<Register, 4> &SpillRegs) {
-    for (const auto &R : SpillRegs) {
-      auto *RegSlot = RegStorage.at(R).get();
-      assert(!RegSlot->isSpill() &&
-             "Register slot has already been marked as spill");
-      RegSlot->setIsSpill();
+  // Mark the registers as spilled. For a recursive function with internal
+  // returns, also create the callee-saved slot of each new spill.
+  void addSpillRegs(const SmallSet<Register, 4> &SpillRegs);
+
+  // The callee-saved words of this function's spill slots, in creation
+  // order.
+  ArrayRef<const CalleeSavedSlot *> getCalleeSavedSlots() const {
+    return CalleeSavedSlots;
+  }
+
+  // Return true if the spills of this function need the callee-save
+  // discipline.
+  bool spillsNeedCalleeSave() const;
+
+  // Return true if \p Reg is live across a call that may re-enter this
+  // function.
+  bool crossesReentrantCall(const Register &Reg) const;
+
+  /// Return true if a callee-saved slot exists for the spill slot of \p R.
+  bool hasCalleeSavedSlot(const Register &R) const {
+    return CalleeSavedStorage.count(R) != 0;
+  }
+
+  /// Get or create the callee-saved slot for the spill slot of \p R.
+  const CalleeSavedSlot *getCalleeSavedSlot(const Register &R) const {
+    if (CalleeSavedStorage.count(R) == 0) {
+      CalleeSavedStorage[R] = std::make_unique<CalleeSavedSlot>(R);
+      CalleeSavedSlots.push_back(CalleeSavedStorage[R].get());
     }
+    return CalleeSavedStorage[R].get();
   }
 
   // Get or create a requested stack slot.
