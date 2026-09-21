@@ -436,7 +436,8 @@ def Yul_SelfBalanceOp : Yul_Op<"selfbalance"> {
   let assemblyFormat = "attr-dict";
 }
 
-def Yul_CallOp : Yul_Op<"call"> {
+def Yul_CallOp : Yul_Op<"call", [MemoryEffects<[MemRead<Yul_MemoryResource>,
+    MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `call` call in yul";
   let arguments = (ins I256:$gas, I256:$address, I256:$value, I256:$inpOffset,
                        I256:$inpSize, I256:$outOffset, I256:$outSize);
@@ -447,7 +448,8 @@ def Yul_CallOp : Yul_Op<"call"> {
   }];
 }
 
-def Yul_CallCodeOp : Yul_Op<"callcode"> {
+def Yul_CallCodeOp : Yul_Op<"callcode", [MemoryEffects<[
+    MemRead<Yul_MemoryResource>, MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `callcode` call in yul";
   let arguments = (ins I256:$gas, I256:$address, I256:$value, I256:$inpOffset,
       I256:$inpSize, I256:$outOffset, I256:$outSize);
@@ -458,7 +460,8 @@ def Yul_CallCodeOp : Yul_Op<"callcode"> {
   }];
 }
 
-def Yul_StaticCallOp : Yul_Op<"static_call"> {
+def Yul_StaticCallOp : Yul_Op<"static_call", [MemoryEffects<[
+    MemRead<Yul_MemoryResource>, MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `staticcall` call in yul";
   let arguments = (ins I256:$gas, I256:$address, I256:$inpOffset,
                        I256:$inpSize, I256:$outOffset, I256:$outSize);
@@ -469,7 +472,8 @@ def Yul_StaticCallOp : Yul_Op<"static_call"> {
   }];
 }
 
-def Yul_DelegateCallOp : Yul_Op<"delegate_call"> {
+def Yul_DelegateCallOp : Yul_Op<"delegate_call", [MemoryEffects<[
+    MemRead<Yul_MemoryResource>, MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `delegatecall` call in yul";
   let arguments = (ins I256:$gas, I256:$address, I256:$inpOffset,
                        I256:$inpSize, I256:$outOffset, I256:$outSize);
@@ -480,13 +484,15 @@ def Yul_DelegateCallOp : Yul_Op<"delegate_call"> {
   }];
 }
 
-def Yul_ReturnOp : Yul_Op<"return"> {
+def Yul_ReturnOp : Yul_Op<"return", [MemoryEffects<[
+    MemRead<Yul_MemoryResource>, MemWrite<Yul_ExternalResource>]>]> {
   let summary = "Represents the `return` call in yul";
   let arguments = (ins I256:$addr, I256:$size);
   let assemblyFormat = "$addr `,` $size attr-dict";
 }
 
-def Yul_RevertOp : Yul_Op<"revert"> {
+def Yul_RevertOp : Yul_Op<"revert", [MemoryEffects<[
+    MemRead<Yul_MemoryResource>, MemWrite<Yul_ExternalResource>]>]> {
   let summary = "Represents the `revert` call in yul";
   // TODO: Support revert strings.
   let arguments = (ins I256:$addr, I256:$size);
@@ -509,20 +515,20 @@ def Yul_SelfDestructOp : Yul_Op<"selfdestruct"> {
   let assemblyFormat = "$addr attr-dict";
 }
 
-def Yul_MLoadOp : Yul_Op<"mload"> {
+def Yul_MLoadOp : Yul_Op<"mload", [MemoryEffects<[MemRead<Yul_MemoryResource>]>]> {
   let summary = "Represents the `mload` call in yul";
   let arguments = (ins I256:$addr);
   let results = (outs I256:$out);
   let assemblyFormat = "$addr attr-dict";
 }
 
-def Yul_MStoreOp : Yul_Op<"mstore"> {
+def Yul_MStoreOp : Yul_Op<"mstore", [MemoryEffects<[MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `mstore` call in yul";
   let arguments = (ins I256:$addr, I256:$val);
   let assemblyFormat = "$addr `,` $val attr-dict";
 }
 
-def Yul_MStore8Op : Yul_Op<"mstore8"> {
+def Yul_MStore8Op : Yul_Op<"mstore8", [MemoryEffects<[MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `mstore8` call in yul";
   let arguments = (ins I256:$addr, I256:$val);
   let assemblyFormat = "$addr `,` $val attr-dict";
@@ -535,13 +541,14 @@ def Yul_ByteOp : Yul_Op<"byte"> {
   let assemblyFormat = "$idx `,` $val attr-dict";
 }
 
-def Yul_MCopyOp : Yul_Op<"mcopy"> {
+def Yul_MCopyOp : Yul_Op<"mcopy", [MemoryEffects<[MemRead<Yul_MemoryResource>,
+    MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `mcopy` call in yul";
   let arguments = (ins I256:$dst, I256:$src, I256:$size);
   let assemblyFormat = "$dst `,` $src `,` $size attr-dict";
 }
 
-def Yul_MSizeOp : Yul_Op<"msize"> {
+def Yul_MSizeOp : Yul_Op<"msize", [MemoryEffects<[MemRead<Yul_MemoryResource>]>]> {
   let summary = "Represents the `msize` call in yul";
   let results = (outs I256:$out);
   let assemblyFormat = "attr-dict";
@@ -566,7 +573,7 @@ def Yul_CallDataSizeOp : Yul_Op<"calldatasize", [Pure]> {
   let assemblyFormat = "attr-dict";
 }
 
-def Yul_CallDataCopyOp : Yul_Op<"calldatacopy"> {
+def Yul_CallDataCopyOp : Yul_Op<"calldatacopy", [MemoryEffects<[MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `calldatacopy` call in yul";
   let arguments = (ins I256:$dst, I256:$src, I256:$size);
   let assemblyFormat = "$dst `,` $src `,` $size attr-dict";
@@ -578,7 +585,7 @@ def Yul_ReturnDataSizeOp : Yul_Op<"returndatasize", [Pure]> {
   let assemblyFormat = "attr-dict";
 }
 
-def Yul_ReturnDataCopyOp : Yul_Op<"returndatacopy"> {
+def Yul_ReturnDataCopyOp : Yul_Op<"returndatacopy", [MemoryEffects<[MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `returndatacopy` call in yul";
   let arguments = (ins I256:$dst, I256:$src, I256:$size);
   let assemblyFormat = "$dst `,` $src `,` $size attr-dict";
@@ -634,13 +641,13 @@ def Yul_CodeSizeOp : Yul_Op<"codesize", [Pure]> {
   let assemblyFormat = "attr-dict";
 }
 
-def Yul_CodeCopyOp : Yul_Op<"codecopy"> {
+def Yul_CodeCopyOp : Yul_Op<"codecopy", [MemoryEffects<[MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `codecopy` call in yul";
   let arguments = (ins I256:$dst, I256:$src, I256:$size);
   let assemblyFormat = "$dst `,` $src `,` $size attr-dict";
 }
 
-def Yul_ExtCodeCopyOp : Yul_Op<"extcodecopy"> {
+def Yul_ExtCodeCopyOp : Yul_Op<"extcodecopy", [MemoryEffects<[MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `extcodecopy` call in yul";
   let arguments = (ins I256:$addr, I256:$dst, I256:$src, I256:$size);
   let assemblyFormat = "$addr `,` $dst `,` $src `,` $size attr-dict";
@@ -660,14 +667,16 @@ def Yul_ExtCodeHashOp : Yul_Op<"extcodehash", [Pure]> {
   let assemblyFormat = "$addr attr-dict";
 }
 
-def Yul_CreateOp : Yul_Op<"create"> {
+def Yul_CreateOp : Yul_Op<"create", [MemoryEffects<[
+    MemRead<Yul_MemoryResource>, MemWrite<Yul_ExternalResource>]>]> {
   let summary = "Represents the `create` call in yul";
   let arguments = (ins I256:$val, I256:$addr, I256:$size);
   let results = (outs I256:$out);
   let assemblyFormat = "$val `,` $addr `,` $size attr-dict";
 }
 
-def Yul_Create2Op : Yul_Op<"create2"> {
+def Yul_Create2Op : Yul_Op<"create2", [MemoryEffects<[
+    MemRead<Yul_MemoryResource>, MemWrite<Yul_ExternalResource>]>]> {
   let summary = "Represents the `create2` call in yul";
   let arguments = (ins I256:$val, I256:$addr, I256:$size, I256:$salt);
   let results = (outs I256:$out);
@@ -757,7 +766,7 @@ def Yul_MemGuardOp : Yul_Op<"memoryguard", [Pure]> {
   let assemblyFormat = "$size attr-dict";
 }
 
-def Yul_Keccak256Op : Yul_Op<"keccak256"> {
+def Yul_Keccak256Op : Yul_Op<"keccak256", [MemoryEffects<[MemRead<Yul_MemoryResource>]>]> {
   // Note that the keccak256 yul builtin has side effects.
   let summary = "Represents the `keccak256` call in yul";
   let arguments = (ins I256:$addr, I256:$size);
@@ -842,7 +851,8 @@ def Yul_MulModOp : Yul_Op<"mulmod", [Pure]> {
   let assemblyFormat = "$x `,` $y `,` $mod attr-dict";
 }
 
-def Yul_LogOp : Yul_Op<"log"> {
+def Yul_LogOp : Yul_Op<"log", [MemoryEffects<[
+    MemRead<Yul_MemoryResource>, MemWrite<Yul_ExternalResource>]>]> {
   let summary = "Represents the `log*` calls in yul";
   let arguments = (ins I256:$addr, I256:$size, Variadic<I256>:$topics);
   // FIXME: Trailing spaces with empty $topics.

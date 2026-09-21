@@ -29,6 +29,17 @@
 
 namespace mlir::yul {
 bool isI256OrI256LLVMStruct(Type type);
+
+struct MemoryResource : public SideEffects::Resource::Base<MemoryResource> {
+  StringRef getName() final { return "<Memory>"; }
+};
+
+/// State outside the EVM machine: the caller, the transaction log, the
+/// deployed contracts.
+// TODO: Can we replace ValidationResource with this?
+struct ExternalResource : public SideEffects::Resource::Base<ExternalResource> {
+  StringRef getName() final { return "<External>"; }
+};
 } // namespace mlir::yul
 
 #include "mlir/Dialect/Yul/YulInterfaces.h.inc"
