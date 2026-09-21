@@ -335,7 +335,10 @@ llvm::DISubprogram *DebugTranslation::translateImpl(DISubprogramAttr attr) {
       getMDStringOrNull(attr.getLinkageName()), file, attr.getLine(), type,
       attr.getScopeLine(),
       /*ContainingType=*/nullptr, /*VirtualIndex=*/0,
-      /*ThisAdjustment=*/0, llvm::DINode::FlagZero,
+      /*ThisAdjustment=*/0,
+      // EVM local begin
+      static_cast<llvm::DINode::DIFlags>(attr.getFlags()),
+      // EVM local end
       static_cast<llvm::DISubprogram::DISPFlags>(attr.getSubprogramFlags()),
       compileUnit, /*TemplateParams=*/nullptr, /*Declaration=*/nullptr,
       getMDTupleOrNull(attr.getRetainedNodes()), nullptr,

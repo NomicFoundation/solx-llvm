@@ -727,3 +727,24 @@ llvm.mlir.global @data() {dbg_exprs = [#var_expression, #var_expression1]} : i64
 // CHECK: ![[VAR1]] = {{.*}}!DIGlobalVariable(name: "a"{{.*}})
 // CHECK: ![[EXP2]] = !DIGlobalVariableExpression(var: ![[VAR2:[0-9]+]], expr: !DIExpression())
 // CHECK: ![[VAR2]] = {{.*}}!DIGlobalVariable(name: "b"{{.*}})
+
+// -----
+
+// EVM local begin
+// Test that a DISubprogramAttr's DIFlags reach the translated DISubprogram.
+#file = #llvm.di_file<"test.f90" in "">
+#cu = #llvm.di_compile_unit<id = distinct[0]<>, sourceLanguage = DW_LANG_C,
+ file = #file, isOptimized = false, emissionKind = Full>
+#sp = #llvm.di_subprogram<id = distinct[1]<>, compileUnit = #cu, scope = #file,
+ name = "artificial", file = #file, subprogramFlags = Definition,
+ flags = Artificial>
+
+llvm.func @artificial() {
+  llvm.return
+} loc(#loc2)
+
+#loc1 = loc("test.f90":1:1)
+#loc2 = loc(fused<#sp>[#loc1])
+
+// CHECK: !DISubprogram(name: "artificial"{{.*}} flags: DIFlagArtificial{{.*}})
+// EVM local end

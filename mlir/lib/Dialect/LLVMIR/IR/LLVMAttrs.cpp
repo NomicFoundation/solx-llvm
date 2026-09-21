@@ -243,12 +243,19 @@ DIRecursiveTypeAttrInterface DISubprogramAttr::withRecId(DistinctAttr recId) {
                                getCompileUnit(), getScope(), getName(),
                                getLinkageName(), getFile(), getLine(),
                                getScopeLine(), getSubprogramFlags(), getType(),
+                               // EVM local begin
+                               getFlags(),
+                               // EVM local end
                                getRetainedNodes(), getAnnotations());
 }
 
 DIRecursiveTypeAttrInterface DISubprogramAttr::getRecSelf(DistinctAttr recId) {
   return DISubprogramAttr::get(recId.getContext(), recId, /*isRecSelf=*/true,
-                               {}, {}, {}, {}, {}, {}, 0, 0, {}, {}, {}, {});
+                               {}, {}, {}, {}, {}, {}, 0, 0, {}, {},
+                               // EVM local begin
+                               DIFlags::Zero,
+                               // EVM local end
+                               {}, {});
 }
 
 //===----------------------------------------------------------------------===//

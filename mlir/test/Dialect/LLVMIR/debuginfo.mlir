@@ -124,10 +124,15 @@
   apinotes = "/", line = 42, isDecl = true
 >
 
-// CHECK-DAG: #[[SP2:.*]] = #llvm.di_subprogram<compileUnit = #[[CU]], scope = #[[MODULE]], name = "value", file = #[[FILE]], subprogramFlags = Definition, type = #[[SPTYPE2]], annotations = #llvm.di_annotation<name = "foo", value = "bar">
+// EVM local begin
+// CHECK-DAG: #[[SP2:.*]] = #llvm.di_subprogram<compileUnit = #[[CU]], scope = #[[MODULE]], name = "value", file = #[[FILE]], subprogramFlags = Definition, type = #[[SPTYPE2]], flags = Artificial, annotations = #llvm.di_annotation<name = "foo", value = "bar">
+// EVM local end
 #sp2 = #llvm.di_subprogram<
   compileUnit = #cu, scope = #module, name = "value",
   file = #file, subprogramFlags = "Definition", type = #spType2,
+  // EVM local begin
+  flags = Artificial,
+  // EVM local end
   annotations = #llvm.di_annotation<name = "foo", value = "bar">
 >
 

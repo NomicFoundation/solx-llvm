@@ -337,6 +337,9 @@ MlirAttribute mlirLLVMDISubprogramAttrGet(
       cast<StringAttr>(unwrap(linkageName)), cast<DIFileAttr>(unwrap(file)),
       line, scopeLine, DISubprogramFlags(subprogramFlags),
       cast<DISubroutineTypeAttr>(unwrap(type)),
+      // EVM local begin
+      /*flags=*/DIFlags::Zero,
+      // EVM local end
       llvm::map_to_vector(
           unwrapList(nRetainedNodes, retainedNodes, nodesStorage),
           [](Attribute a) { return cast<DINodeAttr>(a); }),
