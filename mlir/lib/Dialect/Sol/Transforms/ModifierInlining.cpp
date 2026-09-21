@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Sol/DebugInfo.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Sol/Transforms/Passes.h"
 #include "mlir/Dialect/Sol/Utils.h"
@@ -53,11 +54,10 @@ namespace {
 class ModifierInliner {
 public:
   ModifierInliner(sol::FuncOp fn, ArrayRef<sol::ModifierInvocationOp> invs)
-      : fn(fn), invs(invs) {}
+      : fn(fn), invs(invs), generatedLoc(evm::artificialLoc(fn.getLoc())) {}
 
   void run() {
     Block &entry = fn.getBody().front();
-    Location loc = fn.getLoc();
 
     // Split the original body off the entry. Body blocks (the split-off
     // suffix plus any post-return blocks the frontend created) stay parked at
@@ -71,10 +71,10 @@ public:
 
     for (Type resTy : fn.getResultTypes()) {
       auto slot = b.create<sol::AllocaOp>(
-          loc, sol::PointerType::get(b.getContext(), resTy,
-                                     sol::DataLocation::Stack));
-      Value defaultVal = sol::genDefaultVal(b, resTy, loc);
-      b.create<sol::StoreOp>(loc, defaultVal, slot);
+          generatedLoc, sol::PointerType::get(b.getContext(), resTy,
+                                              sol::DataLocation::Stack));
+      Value defaultVal = sol::genDefaultVal(b, resTy, generatedLoc);
+      b.create<sol::StoreOp>(generatedLoc, defaultVal, slot);
       retSlots.push_back(slot);
     }
 
@@ -82,8 +82,8 @@ public:
 
     SmallVector<Value> rets;
     for (Value slot : retSlots)
-      rets.push_back(b.create<sol::LoadOp>(loc, slot).getResult());
-    b.create<sol::ReturnOp>(loc, rets);
+      rets.push_back(b.create<sol::LoadOp>(generatedLoc, slot).getResult());
+    b.create<sol::ReturnOp>(generatedLoc, rets);
 
     for (sol::ModifierInvocationOp inv : llvm::reverse(invs))
       inv.erase();
@@ -111,7 +111,9 @@ private:
   void emitLayer(OpBuilder &b, unsigned depth) {
     SmallVector<Block *> srcBlks;
     IRMapping map;
-    Location loc = fn.getLoc();
+    // The innermost layer wraps the original body and has no invocation, so
+    // its scope is generated; every other layer is at its invocation.
+    Location loc = generatedLoc;
     if (depth == invs.size()) {
       srcBlks = bodyBlks;
     } else {
@@ -168,6 +170,11 @@ private:
 
   sol::FuncOp fn;
   ArrayRef<sol::ModifierInvocationOp> invs;
+  /// The location of the code this pass generates: the result slots,
+  /// their default stores, the closing loads and the final return. Line 0,
+  /// since no source wrote it, and without the subprogram fused onto `fn`. A
+  /// `return` cloned from the body keeps its own location.
+  Location generatedLoc;
   SmallVector<Value> retSlots;
   SmallVector<Block *> bodyBlks;
 };
