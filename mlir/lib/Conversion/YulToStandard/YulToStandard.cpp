@@ -1153,6 +1153,14 @@ struct MemGuardOpLowering : public OpRewritePattern<yul::MemGuardOp> {
     if (!mod)
       return failure();
 
+    // A memory-guard implies memory-safe asm. So we don't generate them if
+    // there are memory-unsafe asm.
+    if (llvm::any_of(mod.getOps<yul::FuncOp>(),
+                     [](yul::FuncOp fn) { return fn.getUnsafeAsm(); })) {
+      r.replaceOpWithNewOp<arith::ConstantOp>(op, guard);
+      return success();
+    }
+
     // The size starts at zero; the driver rewrites it when the backend asks
     // for a spill area.
     {
