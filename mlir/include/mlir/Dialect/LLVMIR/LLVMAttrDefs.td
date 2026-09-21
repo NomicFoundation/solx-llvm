@@ -653,6 +653,11 @@ def LLVM_DISubprogramAttr : LLVM_Attr<"DISubprogram", "di_subprogram",
     OptionalParameter<"unsigned">:$scopeLine,
     OptionalParameter<"DISubprogramFlags">:$subprogramFlags,
     OptionalParameter<"DISubroutineTypeAttr">:$type,
+    // EVM local begin
+    // DIFlags, the second flag set of a DISubprogram. Placed before the array
+    // parameters, which struct(params) parses greedily.
+    OptionalParameter<"DIFlags", "DIFlags::Zero">:$flags,
+    // EVM local end
     OptionalArrayRefParameter<"DINodeAttr">:$retainedNodes,
     OptionalArrayRefParameter<"DINodeAttr">:$annotations
   );
@@ -662,11 +667,16 @@ def LLVM_DISubprogramAttr : LLVM_Attr<"DISubprogram", "di_subprogram",
       "DIScopeAttr":$scope, "StringAttr":$name, "StringAttr":$linkageName,
       "DIFileAttr":$file, "unsigned":$line, "unsigned":$scopeLine,
       "DISubprogramFlags":$subprogramFlags, "DISubroutineTypeAttr":$type,
-      "ArrayRef<DINodeAttr>":$retainedNodes, "ArrayRef<DINodeAttr>":$annotations
+      // EVM local begin
+      "ArrayRef<DINodeAttr>":$retainedNodes, "ArrayRef<DINodeAttr>":$annotations,
+      CArg<"DIFlags", "DIFlags::Zero">:$flags
+      // EVM local end
     ), [{
       return $_get($_ctxt, /*recId=*/nullptr, /*isRecSelf=*/false, id, compileUnit,
                    scope, name, linkageName, file, line, scopeLine,
-                   subprogramFlags, type, retainedNodes, annotations);
+                   // EVM local begin
+                   subprogramFlags, type, flags, retainedNodes, annotations);
+                   // EVM local end
     }]>
   ];
   let assemblyFormat = "`<` struct(params) `>`";

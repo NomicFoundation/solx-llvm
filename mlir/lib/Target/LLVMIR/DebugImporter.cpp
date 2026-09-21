@@ -261,12 +261,17 @@ DISubprogramAttr DebugImporter::translateImpl(llvm::DISubprogram *node) {
     }
   }
 
+  // EVM local begin
+  DIFlags flags = symbolizeDIFlags(node->getFlags()).value_or(DIFlags::Zero);
+  // EVM local end
   return DISubprogramAttr::get(context, id, translate(node->getUnit()), scope,
                                getStringAttrOrNull(node->getRawName()),
                                getStringAttrOrNull(node->getRawLinkageName()),
                                translate(node->getFile()), node->getLine(),
                                node->getScopeLine(), *subprogramFlags, type,
-                               retainedNodes, annotations);
+                               // EVM local begin
+                               retainedNodes, annotations, flags);
+  // EVM local end
 }
 
 DISubrangeAttr DebugImporter::translateImpl(llvm::DISubrange *node) {

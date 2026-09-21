@@ -599,6 +599,9 @@ define void @distinct_cu_func1() !dbg !5 {
 !llvm.module.flags = !{!3}
 
 ; CHECK-COUNT-2: #llvm.di_compile_unit<id = distinct[{{[0-9]+}}]<>
+; EVM local begin
+; CHECK-COUNT-2: #llvm.di_subprogram<{{.*}}name = "func"{{.*}}flags = Artificial>
+; EVM local end
 
 !0 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, file: !2, producer: "clang")
 !1 = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, file: !2, producer: "clang")
