@@ -1,0 +1,187 @@
+# REQUIRES: asserts
+# RUN: not --crash llc -x mir -run-pass=evm-backward-propagation-stackification -evm-force-reg-spills=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17 < %s 2>&1 | FileCheck %s
+
+# The 17 values %1 to %17 are live across the recursive call and are spilled,
+# so each spill slot gets a callee-saved word. The saved words stay on the
+# stack for the whole function and cannot be spilled themselves. The return
+# jump needs the return address right below them, at a depth no SWAP reaches.
+# Compression does not help, and no spillable register is left, so the solver
+# reports the recursion as the cause.
+
+# CHECK: Stackification failed for 'f' function. It is recursive and has stack too deep errors. Consider refactoring it to use a non-recursive approach.
+
+--- |
+  target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
+  target triple = "evm"
+
+  define fastcc i256 @f(i256 %n) #0 {
+  entry:
+    %cmp = icmp eq i256 %n, 0
+    br i1 %cmp, label %common.ret, label %recurse
+
+  common.ret:
+    %common.ret.op = phi i256 [ %y, %recurse ], [ 1, %entry ]
+    ret i256 %common.ret.op
+
+  recurse:
+    %v1 = add i256 %n, %n
+    %v2 = add i256 %v1, %n
+    %v3 = add i256 %v2, %n
+    %v4 = add i256 %v3, %n
+    %v5 = add i256 %v4, %n
+    %v6 = add i256 %v5, %n
+    %v7 = add i256 %v6, %n
+    %v8 = add i256 %v7, %n
+    %v9 = add i256 %v8, %n
+    %v10 = add i256 %v9, %n
+    %v11 = add i256 %v10, %n
+    %v12 = add i256 %v11, %n
+    %v13 = add i256 %v12, %n
+    %v14 = add i256 %v13, %n
+    %v15 = add i256 %v14, %n
+    %v16 = add i256 %v15, %n
+    %v17 = add i256 %v16, %n
+    %nm1 = sub i256 %n, 1
+    %r = call fastcc i256 @f(i256 %nm1)
+    %s1 = add i256 %r, %v1
+    %s2 = add i256 %s1, %v2
+    %s3 = add i256 %s2, %v3
+    %s4 = add i256 %s3, %v4
+    %s5 = add i256 %s4, %v5
+    %s6 = add i256 %s5, %v6
+    %s7 = add i256 %s6, %v7
+    %s8 = add i256 %s7, %v8
+    %s9 = add i256 %s8, %v9
+    %s10 = add i256 %s9, %v10
+    %s11 = add i256 %s10, %v11
+    %s12 = add i256 %s11, %v12
+    %s13 = add i256 %s12, %v13
+    %s14 = add i256 %s13, %v14
+    %s15 = add i256 %s14, %v15
+    %s16 = add i256 %s15, %v16
+    %s17 = add i256 %s16, %v17
+    %y = add i256 %s17, %n
+    br label %common.ret
+  }
+
+  attributes #0 = { "evm-recursive" }
+...
+---
+name:            f
+alignment:       1
+tracksRegLiveness: true
+noPhis:          true
+isSSA:           false
+noVRegs:         false
+registers:
+  - { id: 0, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 1, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 2, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 3, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 4, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 5, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 6, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 7, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 8, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 9, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 10, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 11, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 12, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 13, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 14, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 15, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 16, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 17, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 18, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 19, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 20, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 21, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 22, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 23, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 24, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 25, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 26, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 27, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 28, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 29, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 30, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 31, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 32, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 33, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 34, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 35, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 36, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 37, class: gpr, preferred-register: '', flags: [  ] }
+  - { id: 38, class: gpr, preferred-register: '', flags: [  ] }
+liveins:
+  - { reg: '$arguments', virtual-reg: '' }
+  - { reg: '$value_stack', virtual-reg: '' }
+frameInfo:
+  hasCalls:        true
+machineFunctionInfo:
+  isStackified:    false
+  numberOfParameters: 1
+  hasPushDeployAddress: false
+body:             |
+  bb.0.entry:
+    successors: %bb.1(0x30000000), %bb.3(0x50000000)
+    liveins: $arguments, $value_stack
+
+    %0:gpr = ARGUMENT 0, implicit $arguments
+    JUMPI %bb.3, %0, implicit-def dead $arguments
+
+  bb.1:
+    successors: %bb.2(0x80000000)
+    liveins: $value_stack
+
+    %38:gpr = CONST_I256 i256 1, implicit-def dead $arguments
+
+  bb.2.common.ret:
+    liveins: $value_stack
+
+    RET %38, implicit-def dead $arguments
+
+  bb.3.recurse:
+    successors: %bb.2(0x80000000)
+    liveins: $value_stack
+
+    %1:gpr = ADD %0, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %2:gpr = ADD %1, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %3:gpr = ADD %2, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %4:gpr = ADD %3, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %4, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %6:gpr = ADD %5, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %7:gpr = ADD %6, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %8:gpr = ADD %7, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %9:gpr = ADD %8, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %10:gpr = ADD %9, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %11:gpr = ADD %10, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %12:gpr = ADD %11, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %13:gpr = ADD %12, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %14:gpr = ADD %13, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %15:gpr = ADD %14, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %16:gpr = ADD %15, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %17:gpr = ADD %16, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %18:gpr = CONST_I256 i256 1, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %19:gpr = SUB %0, %18, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %20:gpr = FCALL @f, %19, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %21:gpr = ADD %20, %1, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %22:gpr = ADD %21, %2, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %23:gpr = ADD %22, %3, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %24:gpr = ADD %23, %4, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %25:gpr = ADD %24, %5, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %26:gpr = ADD %25, %6, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %27:gpr = ADD %26, %7, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %28:gpr = ADD %27, %8, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %29:gpr = ADD %28, %9, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %30:gpr = ADD %29, %10, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %31:gpr = ADD %30, %11, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %32:gpr = ADD %31, %12, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %33:gpr = ADD %32, %13, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %34:gpr = ADD %33, %14, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %35:gpr = ADD %34, %15, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %36:gpr = ADD %35, %16, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %37:gpr = ADD %36, %17, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %38:gpr = ADD %37, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    JUMP %bb.2, implicit-def $arguments
+...
