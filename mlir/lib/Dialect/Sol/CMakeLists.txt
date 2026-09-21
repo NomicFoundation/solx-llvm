@@ -1,4 +1,5 @@
 add_mlir_dialect_library(MLIRSolDialect
+  DebugInfo.cpp
   SolBase.cpp
   SolOps.cpp
   Utils.cpp
@@ -16,6 +17,8 @@ add_mlir_dialect_library(MLIRSolDialect
   LINK_LIBS PUBLIC
   # Bridge ops (sol.ptr_cast, sol.selector, ...) produce !yul.ptr.
   MLIRYulDialect
+  # DI attributes, used by DebugInfo.cpp.
+  MLIRLLVMDialect
   )
 
 add_subdirectory(Transforms)

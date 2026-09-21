@@ -513,7 +513,8 @@ public:
   /// Returns the helper function named \p symbol in the enclosing contract,
   /// creating it on first request: a `sol.func` with signature
   /// `argTys -> resTys` whose body is emitted by \p genBody (which receives the
-  /// entry-block arguments and must emit the terminating `sol.return`). The
+  /// entry-block arguments and the location to build at, line 0 since every
+  /// caller shares the body, and must emit the terminating `sol.return`). The
   /// symbol must come from a `helpersym` generator, which guarantees it is
   /// unique to one helper. The signature is verified when an existing helper
   /// is reused. The symbol is registered before \p genBody runs, so a
@@ -531,7 +532,7 @@ public:
   /// future removal, see the comment in the implementation.
   mlir::sol::FuncOp getOrCreateHelperFn(
       llvm::StringRef symbol, mlir::TypeRange argTys, mlir::TypeRange resTys,
-      llvm::function_ref<void(mlir::ValueRange)> genBody, mlir::Location loc);
+      llvm::function_ref<void(mlir::ValueRange, mlir::Location)> genBody);
 
   /// Generates the 'push' of a value to string.
   void genPushToString(mlir::Value srcAddr, mlir::Value value,

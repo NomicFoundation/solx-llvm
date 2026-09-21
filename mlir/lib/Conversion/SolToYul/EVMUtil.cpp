@@ -17,6 +17,7 @@
 #include "mlir/Conversion/SolToYul/EVMUtil.h"
 #include "mlir/Conversion/SolToYul/EVMConstants.h"
 #include "mlir/Conversion/SolToYul/Util.h"
+#include "mlir/Dialect/Sol/DebugInfo.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "llvm/ADT/DenseSet.h"
@@ -1864,11 +1865,10 @@ void evm::Builder::genClearStringStorageTail(Value dstAddr, Value oldLength,
   auto i256Ty = b.getIntegerType(256);
   sol::FuncOp fn = getOrCreateHelperFn(
       helpersym::clearStringTail(), {i256Ty, i256Ty, i256Ty}, {},
-      [&](ValueRange args) {
-        genClearStringStorageTailInline(args[0], args[1], args[2], loc);
-        b.create<sol::ReturnOp>(loc);
-      },
-      loc);
+      [&](ValueRange args, Location bodyLoc) {
+        genClearStringStorageTailInline(args[0], args[1], args[2], bodyLoc);
+        b.create<sol::ReturnOp>(bodyLoc);
+      });
   b.create<sol::CallOp>(loc, fn, ValueRange{dstAddr, oldLength, newLength});
 }
 
@@ -1924,25 +1924,21 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
     Value length = genDynSize(src, ty, loc);
     sol::FuncOp fn = getOrCreateHelperFn(
         helpersym::copy(srcDataLoc, sol::DataLocation::Storage, "string"),
-        {i256Ty, i256Ty, i256Ty}, {},
-        [&](ValueRange args) {
-          genCopyStringToStorageInline(args[0], ty, args[2], loc,
+        {i256Ty, i256Ty, i256Ty}, {}, [&](ValueRange args, Location bodyLoc) {
+          genCopyStringToStorageInline(args[0], ty, args[2], bodyLoc,
                                        /*srcLength=*/args[1]);
-          b.create<sol::ReturnOp>(loc);
-        },
-        loc);
+          b.create<sol::ReturnOp>(bodyLoc);
+        });
     b.create<sol::CallOp>(loc, fn, ValueRange{dataAddr, length, dstAddr});
     return;
   }
 
   sol::FuncOp fn = getOrCreateHelperFn(
       helpersym::copy(srcDataLoc, sol::DataLocation::Storage, "string"),
-      {i256Ty, i256Ty}, {},
-      [&](ValueRange args) {
-        genCopyStringToStorageInline(args[0], ty, args[1], loc);
-        b.create<sol::ReturnOp>(loc);
-      },
-      loc);
+      {i256Ty, i256Ty}, {}, [&](ValueRange args, Location bodyLoc) {
+        genCopyStringToStorageInline(args[0], ty, args[1], bodyLoc);
+        b.create<sol::ReturnOp>(bodyLoc);
+      });
   b.create<sol::CallOp>(loc, fn, ValueRange{src, dstAddr});
 }
 
@@ -2133,11 +2129,10 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
     auto i256Ty = b.getIntegerType(256);
     sol::FuncOp fn = getOrCreateHelperFn(
         helpersym::clearStorage(structTy), {i256Ty}, {},
-        [&](ValueRange args) {
-          genClearStorageValueInline(structTy, args[0], loc);
-          b.create<sol::ReturnOp>(loc);
-        },
-        loc);
+        [&](ValueRange args, Location bodyLoc) {
+          genClearStorageValueInline(structTy, args[0], bodyLoc);
+          b.create<sol::ReturnOp>(bodyLoc);
+        });
     b.create<sol::CallOp>(loc, fn, ValueRange{slot});
     return;
   }
@@ -2195,7 +2190,7 @@ std::string evm::helpersym::internalDispatch(bool runtime,
 
 sol::FuncOp evm::Builder::getOrCreateHelperFn(
     StringRef symbol, TypeRange argTys, TypeRange resTys,
-    llvm::function_ref<void(ValueRange)> genBody, Location loc) {
+    llvm::function_ref<void(ValueRange, Location)> genBody) {
   // The helper normally lives in the enclosing contract: stage-2 contract
   // lowering then relocates it into the creation/runtime objects and clones
   // it where needed, and the regular sol.func -> yul.func lowering handles
@@ -2232,12 +2227,18 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
   OpBuilder::InsertionGuard guard(b);
   b.setInsertionPointToEnd(hostBlock);
 
-  auto fn = b.create<sol::FuncOp>(loc, symbol, fnTy);
+  // The helper is generated and shared by every caller: its subprogram is
+  // artificial at the host's line, and its body and arguments are at line 0.
+  Location hostLoc = host->getLoc();
+  Location bodyLoc = evm::artificialLoc(hostLoc);
+
+  auto fn = b.create<sol::FuncOp>(
+      evm::fuseArtificialSubprogram(mod, symbol, hostLoc), symbol, fnTy);
   Block *entry = &fn.getBody().emplaceBlock();
-  SmallVector<Location> argLocs(argTys.size(), loc);
+  SmallVector<Location> argLocs(argTys.size(), bodyLoc);
   entry->addArguments(argTys, argLocs);
   b.setInsertionPointToStart(entry);
-  genBody(entry->getArguments());
+  genBody(entry->getArguments(), bodyLoc);
 
   return fn;
 }
@@ -2524,16 +2525,15 @@ void evm::Builder::genCopyStringDataFromStorageToMemory(
     std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   auto i256Ty = b.getIntegerType(256);
-  sol::FuncOp fn = getOrCreateHelperFn(
-      helpersym::copyStringData(sol::DataLocation::Storage,
-                                sol::DataLocation::Memory),
-      {i256Ty, i256Ty, i256Ty, i256Ty}, {},
-      [&](ValueRange args) {
-        genCopyStringDataFromStorageToMemoryInline(args[0], args[1], args[2],
-                                                   args[3], loc);
-        b.create<sol::ReturnOp>(loc);
-      },
-      loc);
+  sol::FuncOp fn =
+      getOrCreateHelperFn(helpersym::copyStringData(sol::DataLocation::Storage,
+                                                    sol::DataLocation::Memory),
+                          {i256Ty, i256Ty, i256Ty, i256Ty}, {},
+                          [&](ValueRange args, Location bodyLoc) {
+                            genCopyStringDataFromStorageToMemoryInline(
+                                args[0], args[1], args[2], args[3], bodyLoc);
+                            b.create<sol::ReturnOp>(bodyLoc);
+                          });
   b.create<sol::CallOp>(loc, fn,
                         ValueRange{src, lengthSlot, length, dstDataAddr});
 }
@@ -3211,13 +3211,11 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
       sol::FuncOp fn = getOrCreateHelperFn(
           helpersym::copy(srcDataLoc, sol::DataLocation::Storage,
                           dstStructTy.getName()),
-          {i256Ty, i256Ty}, {},
-          [&](ValueRange args) {
+          {i256Ty, i256Ty}, {}, [&](ValueRange args, Location bodyLoc) {
             genStructToStorageCopyInline(srcStructTy, dstStructTy, args[0],
-                                         args[1], srcDataLoc, loc);
-            b.create<sol::ReturnOp>(loc);
-          },
-          loc);
+                                         args[1], srcDataLoc, bodyLoc);
+            b.create<sol::ReturnOp>(bodyLoc);
+          });
       b.create<sol::CallOp>(loc, fn, ValueRange{srcAddr, dstAddr});
     } else {
       genStructToStorageCopyInline(srcStructTy, dstStructTy, srcAddr, dstAddr,

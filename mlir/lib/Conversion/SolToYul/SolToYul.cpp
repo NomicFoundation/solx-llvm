@@ -15,6 +15,7 @@
 #include "mlir/Conversion/SolToYul/EVMUtil.h"
 #include "mlir/Conversion/SolToYul/Util.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/Sol/DebugInfo.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/Builders.h"
@@ -2385,13 +2386,11 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
         sol::FuncOp fn = evmB.getOrCreateHelperFn(
             evm::helpersym::copy(srcDataLoc, sol::DataLocation::Memory,
                                  structTy.getName()),
-            {i256Ty}, {i256Ty},
-            [&](ValueRange args) {
+            {i256Ty}, {i256Ty}, [&](ValueRange args, Location bodyLoc) {
               Value memPtr = genStructToMemoryInline(mod, args[0], structTy,
-                                                     srcDataLoc, r, loc);
-              r.create<sol::ReturnOp>(loc, ValueRange{memPtr});
-            },
-            loc);
+                                                     srcDataLoc, r, bodyLoc);
+              r.create<sol::ReturnOp>(bodyLoc, ValueRange{memPtr});
+            });
         return r.create<sol::CallOp>(loc, fn, ValueRange{srcAddr}).getResult(0);
       }
       return genStructToMemoryInline(mod, srcAddr, structTy, srcDataLoc, r,
@@ -3973,9 +3972,13 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
                             FunctionType calleeTy, FunctionType dispatchFnTy,
                             bool callerRuntime, sol::ICallOp op,
                             ConversionPatternRewriter &r) const {
-    Location loc = op.getLoc();
+    // The dispatch function is generated and shared by every call of these
+    // candidates: its subprogram is artificial at the line of the module
+    // hosting it, and its body and arguments are at line 0.
+    ModuleOp mod = getModule(op);
+    Location loc = evm::artificialLoc(mod.getLoc());
     Operation *symTab = SymbolTable::getNearestSymbolTable(op);
-    evm::Builder evmB(getModule(op), r, loc);
+    evm::Builder evmB(mod, r, loc);
 
     // Resolve the candidate ids in the caller's phase.
     DenseSet<int64_t> candidateIdSet(candidateIds.begin(), candidateIds.end());
@@ -3999,7 +4002,9 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
     OpBuilder::InsertionGuard insertGuard(r);
     r.setInsertionPointAfter(op->getParentOfType<sol::FuncOp>());
 
-    auto fn = r.create<yul::FuncOp>(loc, name, dispatchFnTy);
+    auto fn = r.create<yul::FuncOp>(
+        evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name,
+        dispatchFnTy);
 
     SmallVector<Location> argLocs(dispatchFnTy.getNumInputs(), loc);
     Block *entry = r.createBlock(&fn.getBody(), fn.getBody().end(),
@@ -4137,9 +4142,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
   /// Generates the dispatch to interface functions.
   void genDispatch(sol::ContractOp contrOp,
                    SmallVector<uint32_t, 4> const &selectors,
-                   SmallVector<sol::FuncOp, 4> &ifcFns,
-                   PatternRewriter &r) const {
-    Location loc = contrOp.getLoc();
+                   SmallVector<sol::FuncOp, 4> &ifcFns, PatternRewriter &r,
+                   Location loc) const {
     mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(contrOp), r, loc);
 
@@ -4197,21 +4201,28 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       mlir::Block *caseBlk = r.createBlock(&caseRegion);
       r.setInsertionPointToStart(caseBlk);
 
+      // A case runs its interface function, so it is at that function's
+      // location.
+      Location fnLoc = evm::sourceLoc(ifcFnOp.getLoc());
+      mlir::solgen::BuilderExt fnBExt(r, fnLoc);
+      evm::Builder fnEvmB(getModule(contrOp), r, fnLoc);
+
       assert(ifcFnOp.getStateMutability());
       sol::StateMutability stateMutability = *ifcFnOp.getStateMutability();
       if (contrOp.getKind() == sol::ContractKind::Library) {
         assert(stateMutability != sol::StateMutability::Payable);
         if (stateMutability > sol::StateMutability::View) {
           assert(notDelegateCallCond);
-          evmB.genDebugRevertWithMsg(
+          fnEvmB.genDebugRevertWithMsg(
               notDelegateCallCond,
-              "Non-view function of library called without DELEGATECALL", loc);
+              "Non-view function of library called without DELEGATECALL",
+              fnLoc);
         }
       }
 
       if (contrOp.getKind() != sol::ContractKind::Library &&
           stateMutability != sol::StateMutability::Payable) {
-        genCallValChk(getModule(contrOp), r, loc);
+        genCallValChk(getModule(contrOp), r, fnLoc);
       }
 
       // Decode the input parameters (if required).
@@ -4224,30 +4235,30 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
                       contrOp.getKind() == sol::ContractKind::Library);
       std::vector<Value> decodedArgs;
       if (!abiInputTys.empty())
-        evmB.genABITupleDecoding(abiInputTys,
-                                 /*tupleStart=*/bExt.genI256Const(4),
-                                 /*tupleEnd=*/callDataSz, decodedArgs,
-                                 /*fromMem=*/false);
+        fnEvmB.genABITupleDecoding(abiInputTys,
+                                   /*tupleStart=*/fnBExt.genI256Const(4),
+                                   /*tupleEnd=*/callDataSz, decodedArgs,
+                                   /*fromMem=*/false);
 
       // Generate the actual call.
-      auto callOp = r.create<sol::CallOp>(loc, ifcFnOp, decodedArgs);
+      auto callOp = r.create<sol::CallOp>(fnLoc, ifcFnOp, decodedArgs);
 
       // Encode the result using the ABI's tuple encoder.
-      auto tupleStart = evmB.genFreePtr();
+      auto tupleStart = fnEvmB.genFreePtr();
       mlir::Value tupleSize;
       if (!callOp.getResultTypes().empty()) {
-        auto tupleEnd =
-            evmB.genABIEncoding(abiResultTys, callOp.getResults(), tupleStart);
-        tupleSize = r.create<yul::SubOp>(loc, tupleEnd, tupleStart);
+        auto tupleEnd = fnEvmB.genABIEncoding(abiResultTys, callOp.getResults(),
+                                              tupleStart);
+        tupleSize = r.create<yul::SubOp>(fnLoc, tupleEnd, tupleStart);
       } else {
-        tupleSize = bExt.genI256Const(0);
+        tupleSize = fnBExt.genI256Const(0);
       }
 
       // Generate the return.
       assert(tupleSize);
-      r.create<yul::ReturnOp>(loc, tupleStart, tupleSize);
+      r.create<yul::ReturnOp>(fnLoc, tupleStart, tupleSize);
 
-      r.create<yul::YieldOp>(loc);
+      r.create<yul::YieldOp>(fnLoc);
     }
   }
 
@@ -4275,16 +4286,22 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 
   LogicalResult matchAndRewrite(sol::ContractOp op,
                                 PatternRewriter &r) const override {
-    mlir::Location loc = op.getLoc();
+    // The code this pattern emits is at the contract's location, except the
+    // dispatch cases and the constructor's part of the creation code, which are
+    // at their function's. The objects keep the contract's location with the
+    // compile unit fused onto it: the runtime module is created at it and
+    // inherits the compile unit.
+    mlir::Location contractLoc = op.getLoc();
+    mlir::Location loc = evm::sourceLoc(contractLoc);
     mlir::solgen::BuilderExt bExt(r, loc);
     ModuleOp mod = getModule(op);
     evm::Builder evmB(mod, r, loc);
 
     // Generate the creation and runtime ObjectOp.
-    auto creationObj = r.create<yul::ObjectOp>(loc, op.getName());
+    auto creationObj = r.create<yul::ObjectOp>(contractLoc, op.getName());
     r.setInsertionPointToStart(&creationObj.getBody().front());
-    auto runtimeObj =
-        r.create<yul::ObjectOp>(loc, std::string(op.getName()) + "_deployed");
+    auto runtimeObj = r.create<yul::ObjectOp>(
+        contractLoc, std::string(op.getName()) + "_deployed");
 
     SmallVector<sol::FuncOp, 4> ifcFns;
     sol::FuncOp ctor, receiveFn, fallbackFn;
@@ -4371,31 +4388,36 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 
     genFreePtrInit(r, loc, reservedMemSize);
 
+    // The constructor's check, argument decoding and call run the constructor,
+    // so they are at its location.
+    Location ctorLoc = ctor ? evm::sourceLoc(ctor.getLoc()) : loc;
+    evm::Builder ctorEvmB(mod, r, ctorLoc);
+
     if (!ctor) {
       genCallValChk(mod, r, loc);
     } else {
       assert(ctor.getStateMutability());
       if (*ctor.getStateMutability() != sol::StateMutability::Payable)
-        genCallValChk(mod, r, loc);
+        genCallValChk(mod, r, ctorLoc);
     }
 
     // Generate the call to constructor (if required).
     if (ctor && op.getKind() != sol::ContractKind::Library) {
-      auto progSize = r.create<yul::DataSizeOp>(loc, creationObj.getName());
-      auto codeSize = r.create<yul::CodeSizeOp>(loc);
-      auto argSize = r.create<yul::SubOp>(loc, codeSize, progSize);
-      Value tupleStart = evmB.genMemAlloc(argSize);
-      r.create<yul::CodeCopyOp>(loc, tupleStart, progSize, argSize);
+      auto progSize = r.create<yul::DataSizeOp>(ctorLoc, creationObj.getName());
+      auto codeSize = r.create<yul::CodeSizeOp>(ctorLoc);
+      auto argSize = r.create<yul::SubOp>(ctorLoc, codeSize, progSize);
+      Value tupleStart = ctorEvmB.genMemAlloc(argSize);
+      r.create<yul::CodeCopyOp>(ctorLoc, tupleStart, progSize, argSize);
       std::vector<Value> decodedArgs;
       FunctionType ctorFnTy = *ctor.getOrigFnType();
       if (!ctorFnTy.getInputs().empty()) {
-        evmB.genABITupleDecoding(
+        ctorEvmB.genABITupleDecoding(
             ctorFnTy.getInputs(), tupleStart,
-            /*tupleEnd=*/r.create<yul::AddOp>(loc, tupleStart, argSize),
+            /*tupleEnd=*/r.create<yul::AddOp>(ctorLoc, tupleStart, argSize),
             decodedArgs,
             /*fromMem=*/true);
       }
-      r.create<sol::CallOp>(loc, ctor, decodedArgs);
+      r.create<sol::CallOp>(ctorLoc, ctor, decodedArgs);
     }
 
     // Generate the codecopy of the runtime object for the return from the
@@ -4435,7 +4457,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     genFreePtrInit(r, loc);
 
     // Generate the dispatch to interface functions.
-    genDispatch(op, selectors, ifcFns, r);
+    genDispatch(op, selectors, ifcFns, r, loc);
 
     // Generate receive function.
     if (receiveFn) {

@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Sol/DebugInfo.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/APInt.h"
@@ -36,6 +37,9 @@ static ModuleOp getModule(OpT op) {
 }
 
 // Returns an existing or a new (if not found) FuncOp in the ModuleOp `mod`.
+//
+// Both functions created here (`__entry` and `.unreachable`) are generated, so
+// a new one carries an artificial subprogram at the module's location.
 func::FuncOp getOrInsertFuncOp(PatternRewriter &r, ModuleOp mod, StringRef name,
                                FunctionType fnTy, LLVM::Linkage linkage) {
   if (auto found = mod.lookupSymbol<func::FuncOp>(name))
@@ -54,7 +58,9 @@ func::FuncOp getOrInsertFuncOp(PatternRewriter &r, ModuleOp mod, StringRef name,
   attrs.push_back(r.getNamedAttr(
       "passthrough", ArrayAttr::get(r.getContext(), passthroughAttrs)));
 
-  return r.create<func::FuncOp>(mod.getLoc(), name, fnTy, attrs);
+  return r.create<func::FuncOp>(
+      evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name, fnTy,
+      attrs);
 }
 
 // Creates a call to a wrapper function of the LLVM::UnreachableOp. This is a
@@ -72,7 +78,9 @@ void createCallToUnreachableWrapper(PatternRewriter &r, ModuleOp mod,
     Block *blk = r.createBlock(&fn.getBody());
     OpBuilder::InsertionGuard insertGuard(r);
     r.setInsertionPointToStart(blk);
-    r.create<LLVM::UnreachableOp>(loc);
+    // The body is shared by every caller, so it is at line 0 of the module
+    // its subprogram is at; only the call above is at `loc`.
+    r.create<LLVM::UnreachableOp>(evm::artificialLoc(mod.getLoc()));
   }
 }
 
@@ -1611,7 +1619,6 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
 
   // "Moves" the yul.object to the module.
   void moveObjToMod(yul::ObjectOp obj, ModuleOp mod, PatternRewriter &r) const {
-    Location loc = obj.getLoc();
     OpBuilder::InsertionGuard insertGuard(r);
 
     // Generate the entry function.
@@ -1633,10 +1640,12 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
             nestedOp.moveBefore(modBlk, modBlk->end());
 
     // Terminate all blocks without terminators using the unreachable op.
+    // They are generated, so they are at line 0.
+    Location unreachableLoc = evm::artificialLoc(obj.getLoc());
     obj.walk([&](Block *blk) {
       if (blk->empty() || !blk->back().hasTrait<OpTrait::IsTerminator>()) {
         r.setInsertionPointToEnd(blk);
-        r.create<LLVM::UnreachableOp>(loc);
+        r.create<LLVM::UnreachableOp>(unreachableLoc);
       };
     });
     r.inlineRegionBefore(obj.getBody(), entryFn.getBody(),
