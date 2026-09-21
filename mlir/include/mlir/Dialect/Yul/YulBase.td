@@ -69,4 +69,11 @@ def Yul_CmpPredicateAttr :
 class Yul_Op<string mnemonic, list<Trait> traits = []> : Op<Yul_Dialect,
                                                             mnemonic, traits>;
 
+def Yul_MemoryResource : Resource<"::mlir::yul::MemoryResource">;
+
+// Catch-all resource: a write to it stands for effects the dialect does not
+// model.
+// TODO: Do we need finer-grained attributes for them?
+def Yul_ExternalResource : Resource<"::mlir::yul::ExternalResource">;
+
 #endif // MLIR_DIALECT_YUL_YULBASE_TD

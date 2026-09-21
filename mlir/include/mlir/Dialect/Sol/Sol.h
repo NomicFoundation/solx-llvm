@@ -25,6 +25,8 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/APInt.h"
 
+#include "mlir/Dialect/Yul/Yul.h"
+
 #include "mlir/Dialect/Sol/SolInterfaces.h.inc"
 #include "mlir/Dialect/Sol/SolOpsDialect.h.inc"
 #include "mlir/Dialect/Sol/SolOpsEnums.h.inc"
@@ -113,9 +115,9 @@ struct CallDataResource : public SideEffects::Resource::Base<CallDataResource> {
   StringRef getName() final { return "<CallData>"; }
 };
 
-struct MemoryResource : public SideEffects::Resource::Base<MemoryResource> {
-  StringRef getName() final { return "<Memory>"; }
-};
+// TODO: Can all the resources move to something like EVM/Resources.h for both
+// dialects to use?
+using MemoryResource = yul::MemoryResource;
 
 struct StorageResource : public SideEffects::Resource::Base<StorageResource> {
   StringRef getName() final { return "<Storage>"; }
