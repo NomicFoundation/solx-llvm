@@ -114,6 +114,8 @@ module {
 #View = #sol<StateMutability View>
 module {
   sol.contract @C {
+    // The struct's uint256[] member is a word array, so decoding it is one
+    // mcopy and no element loop.
     // CHECK-LABEL: yul.func @structRet : (i256) -> i256
     // CHECK:         yul.constant 1481905832
     // CHECK:         %[[BUF:.*]] = yul.mload
@@ -121,7 +123,9 @@ module {
     // CHECK:         %[[R:.*]] = yul.if %{{.*}} -> i256 {
     // CHECK:           %[[RDS:.*]] = yul.returndatasize
     // CHECK:           yul.returndatacopy %[[BUF]], %{{.*}}, %[[RDS]]
-    // CHECK:           yul.for
+    // CHECK-NOT:       yul.for
+    // CHECK:           yul.mcopy
+    // CHECK-NOT:       yul.for
     // CHECK:         } else {
     // CHECK:         %[[DATA:.*]] = yul.mload
     // CHECK:         %[[LEN:.*]] = yul.mload %[[DATA]]

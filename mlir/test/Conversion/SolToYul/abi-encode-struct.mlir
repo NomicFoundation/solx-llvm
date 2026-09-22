@@ -17,10 +17,15 @@
 // CHECK:         %[[SLEN:.*]] = yul.mload
 // CHECK:         yul.mcopy %{{.*}}, %{{.*}}, %[[SLEN]]
 // CHECK:         yul.mstore %[[TAIL]], %[[SLEN]]
+// The uint256[2] and uint256[] members are word arrays: one mcopy each, no
+// element loop.
 // CHECK:         %[[C2:.*]] = yul.constant 2{{$}}
-// CHECK:         yul.for
-// CHECK:           yul.cmp ult, %{{.*}}, %[[C2]]
-// CHECK:         yul.for
+// CHECK:         %[[FSZ:.*]] = yul.mul %[[C2]], %c32
+// CHECK:         yul.mcopy %{{.*}}, %{{.*}}, %[[FSZ]]
+// CHECK-NOT:     yul.for
+// CHECK:         yul.mcopy
+// CHECK-NOT:     yul.for
+// CHECK:         yul.func_return
 module {
   sol.contract @C {
     sol.func @mem_nested(%arg0: !sol.struct<(ui256, !sol.struct<(ui256, ui256, !sol.string<Memory>, !sol.array<2 x ui256, Memory>, !sol.array<? x ui256, Memory>), Memory>, ui256), Memory>) -> !sol.string<Memory> attributes {state_mutability = #Pure} {

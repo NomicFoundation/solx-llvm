@@ -133,15 +133,17 @@ module {
 #Contract = #sol<ContractKind Contract>
 #Pure = #sol<StateMutability Pure>
 
-// A static uint256[2][2] has a 128-byte head and no offsets.
+// A static uint256[2][2] has a 128-byte head and no offsets. Each uint256[2]
+// row is a word array, so the row loop copies it with one mcopy.
 // CHECK-LABEL: yul.func @array_fixed_fixed : (i256) -> ()
 // CHECK-NOT:     yul.mcopy
 // CHECK:         %[[HEAD:.*]] = yul.constant 128{{$}}
 // CHECK:         yul.cmp slt, %{{.*}}, %[[HEAD]]
 // CHECK:         yul.for
-// CHECK:           yul.for
-// CHECK:             %[[V:.*]] = yul.mload
-// CHECK:             yul.mstore %{{.*}}, %[[V]]
+// CHECK:           %[[N:.*]] = yul.constant 2{{$}}
+// CHECK:           %[[RSZ:.*]] = yul.mul %[[N]], %c32
+// CHECK:           yul.mcopy %{{.*}}, %{{.*}}, %[[RSZ]]
+// CHECK-NOT:       yul.for
 // CHECK:           %[[C64:.*]] = yul.constant 64{{$}}
 // CHECK:           yul.add %{{.*}}, %[[C64]]
 module {
@@ -164,10 +166,11 @@ module {
 // CHECK:         yul.cmp ugt, %[[OFF]], %{{.*}}
 // CHECK:         %[[ARR:.*]] = yul.add %[[SRC]], %[[OFF]]
 // CHECK:         %[[LEN:.*]] = yul.mload %[[ARR]]
-// CHECK:         yul.for
-// CHECK:           yul.cmp ult, %{{.*}}, %[[LEN]]
-// CHECK:           %[[V:.*]] = yul.mload
-// CHECK:           yul.mstore %{{.*}}, %[[V]]
+// CHECK:         yul.mstore %{{.*}}, %[[LEN]]
+// CHECK:         %[[SZ:.*]] = yul.mul %[[LEN]], %c32
+// CHECK:         yul.mcopy %{{.*}}, %{{.*}}, %[[SZ]]
+// CHECK-NOT:     yul.for
+// CHECK:         yul.func_return
 module {
   sol.contract @C {
     sol.func @array_dyn(%arg0: !sol.string<Memory>) attributes {state_mutability = #Pure} {
@@ -186,10 +189,10 @@ module {
 // CHECK:         %[[HEAD:.*]] = yul.constant 64{{$}}
 // CHECK:         yul.cmp slt, %{{.*}}, %[[HEAD]]
 // CHECK:         %[[N:.*]] = yul.constant 2{{$}}
-// CHECK:         yul.for
-// CHECK:           yul.cmp ult, %{{.*}}, %[[N]]
-// CHECK:           %[[V:.*]] = yul.mload
-// CHECK:           yul.mstore %{{.*}}, %[[V]]
+// CHECK:         %[[SZ:.*]] = yul.mul %[[N]], %c32
+// CHECK:         yul.mcopy %{{.*}}, %{{.*}}, %[[SZ]]
+// CHECK-NOT:     yul.for
+// CHECK:         yul.func_return
 module {
   sol.contract @C {
     sol.func @array_fixed(%arg0: !sol.string<Memory>) attributes {state_mutability = #Pure} {

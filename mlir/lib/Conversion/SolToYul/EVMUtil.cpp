@@ -723,15 +723,22 @@ static void emitRepackStorageToStorageCopyLoop(OpBuilder &b, Location loc,
   }
 }
 
-// Returns true when a calldata array element type can be copied directly as a
-// 32-byte word in the fast-path array copy.
-bool canFastCopyCalldataArray(Type eltTy) {
-  if (auto intTy = dyn_cast<IntegerType>(eltTy))
-    // TODO: Can we allow signed integers here as well?
-    return intTy.getWidth() == 256 && !intTy.isSigned();
+// Returns true when a value of \p ty occupies exactly one 32-byte word in the
+// ABI encoding and in memory and needs no cleanup: a 256-bit integer, whatever
+// its signedness, or bytes32.
+static bool isWordElt(Type ty) {
+  return sol::canBePacked(ty) && sol::getNumBytes(ty) == 32;
+}
 
-  auto bytesTy = dyn_cast<sol::FixedBytesType>(eltTy);
-  return bytesTy && bytesTy.getSize() == 32;
+// Returns true when an array copy between these locations is one calldatacopy
+// or mcopy: neither side is storage, and both hold one word per element that
+// needs no cleanup.
+static bool isBulkArrayCopy(Type srcEltTy, Type dstEltTy,
+                            sol::DataLocation srcDataLoc,
+                            sol::DataLocation dstDataLoc) {
+  return srcDataLoc != sol::DataLocation::Storage &&
+         dstDataLoc == sol::DataLocation::Memory && srcEltTy == dstEltTy &&
+         isWordElt(dstEltTy);
 }
 
 // Centralizes common ABI decode bounds checks and the canonical diagnostic
@@ -2896,6 +2903,10 @@ void evm::Builder::genPopString(Value srcAddr, Value oldData, Value length,
 // |                            | Stg->Mem/CD: compact-read loop: extract +    |
 // |                            |   cleanup + store (32-byte word per elt).    |
 // +----------------------------+----------------------------------------------+
+// | Array, word elt, Mem/CD -> | calldatacopy / mcopy of the whole payload.   |
+// |   Mem (256-bit int,        |   Nested arrays: once per innermost row      |
+// |   bytes32)                 |   from the generic fallback.                 |
+// +----------------------------+----------------------------------------------+
 // | Array, generic fallback    | any->any: yul.for over [0, len):             |
 // |   (npacked on both sides,  |   genAddrAtIdx, then resolve CD/Mem ref      |
 // |   or neither side is Stg)  |   pointers, then genCopy per element.        |
@@ -3140,6 +3151,21 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
                 b.create<yul::AddOp>(loc, srcAddr, bExt.genI256Const(32));
             return std::make_pair(newAccum, nextSrcAddr);
           });
+      return;
+    }
+
+    // Memory/CallData -> Memory with word-sized elements that need no
+    // cleanup: both sides hold one 32-byte word per element, so the payload
+    // is one bulk copy. A nested array reaches this path once per innermost
+    // row through the generic loop below.
+    if (isBulkArrayCopy(srcEltTy, dstEltTy, srcDataLoc, dstDataLoc)) {
+      Value sizeInBytes =
+          b.create<yul::MulOp>(loc, length, bExt.genI256Const(32));
+      if (srcDataLoc == sol::DataLocation::CallData)
+        b.create<yul::CallDataCopyOp>(loc, dstDataAddr, srcDataAddr,
+                                      sizeInBytes);
+      else
+        b.create<yul::MCopyOp>(loc, dstDataAddr, srcDataAddr, sizeInBytes);
       return;
     }
 
@@ -3512,8 +3538,7 @@ Value evm::Builder::genABIEncodingImpl(
     }
 
     // ---- Path (A): whole-array CallDataCopy. ---------------------------
-    if (dataLoc == sol::DataLocation::CallData &&
-        canFastCopyCalldataArray(eltTy)) {
+    if (dataLoc == sol::DataLocation::CallData && isWordElt(eltTy)) {
       if (arrTy.isDynSized()) {
         unsigned stride = getCallDataHeadSize(eltTy);
         APInt maxLength = APInt::getAllOnes(256).udiv(APInt(256, stride));
@@ -3524,6 +3549,17 @@ Value evm::Builder::genABIEncodingImpl(
       }
       Value sizeInBytes = b.create<yul::MulOp>(loc, size, dstStride);
       b.create<yul::CallDataCopyOp>(loc, dstArrAddr, srcArrAddr, sizeInBytes);
+      return tailAddr;
+    }
+
+    // ---- Path (A'): whole-array MCopy from memory. ----------------------
+    // A memory array holds one 32-byte word per element, and word-sized
+    // elements need no cleanup, so the encoding is a byte-identical copy.
+    // A nested memory array reaches this path once per innermost row through
+    // path (D) below.
+    if (dataLoc == sol::DataLocation::Memory && isWordElt(eltTy)) {
+      Value sizeInBytes = b.create<yul::MulOp>(loc, size, dstStride);
+      b.create<yul::MCopyOp>(loc, dstArrAddr, srcArrAddr, sizeInBytes);
       return tailAddr;
     }
 
@@ -3773,6 +3809,19 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
       srcAddr = addr;
       size = bExt.genI256Const(arrTy.getSize());
       guards.requireFixedArraySpan(srcAddr, arrTy);
+    }
+
+    // Word-sized elements that need no cleanup are laid out identically in
+    // the encoding and in memory, so the payload is one bulk copy. The span
+    // guards above validated the whole source range. A nested array reaches
+    // this path once per innermost row through the loop below.
+    if (isWordElt(eltTy)) {
+      Value sizeInBytes = b.create<yul::MulOp>(loc, size, thirtyTwo);
+      if (fromMem)
+        b.create<yul::MCopyOp>(loc, dstAddr, srcAddr, sizeInBytes);
+      else
+        b.create<yul::CallDataCopyOp>(loc, dstAddr, srcAddr, sizeInBytes);
+      return ret;
     }
 
     bExt.createCountedLoop(

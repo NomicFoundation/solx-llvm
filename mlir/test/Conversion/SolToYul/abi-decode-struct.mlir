@@ -1,6 +1,8 @@
 // RUN: mlir-opt %s --convert-sol-to-yul | FileCheck %s
 
-// Big's head is 6 words (fixedArr inline); its memory copy is 5 words.
+// Big's head is 6 words (fixedArr inline); its memory copy is 5 words. The
+// string, the uint256[2] and the uint256[] are word arrays, so each is one
+// calldatacopy and no element loop.
 // CHECK:         case 1543776000 {
 // CHECK:           yul.constant 96
 // CHECK:           yul.constant 96
@@ -8,8 +10,12 @@
 // CHECK:           yul.constant 192
 // CHECK:           yul.constant 160
 // CHECK:           yul.calldatacopy
-// CHECK:           yul.for
-// CHECK:           yul.for
+// CHECK-NOT:       yul.for
+// CHECK:           %[[FIXED:.*]] = yul.mul %c2{{.*}}, %c32
+// CHECK:           yul.calldatacopy %{{.*}}, %{{.*}}, %[[FIXED]]
+// CHECK-NOT:       yul.for
+// CHECK:           yul.calldatacopy
+// CHECK-NOT:       yul.for
 // CHECK:           yul.func_call @mem_nested(%[[NS]]) : (i256) -> ()
 
 // CHECK:         case 2433354261 {
