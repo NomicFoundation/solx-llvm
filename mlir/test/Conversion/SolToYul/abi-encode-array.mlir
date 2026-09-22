@@ -133,7 +133,8 @@ module {
 module {
   sol.contract @C {
     // Static inner arrays are encoded in place: the head is len * 128 for
-    // uint[2][2][], with each uint[2] taking 64 bytes.
+    // uint[2][2][], with each uint[2] taking 64 bytes. The innermost uint[2]
+    // is a word array, so its row is one mcopy rather than a third loop.
     // CHECK-LABEL: yul.func @nested_static_memory : (i256) -> i256
     // CHECK:         %[[OFFS:.*]] = yul.sub
     // CHECK:         yul.mstore %{{.*}}, %[[OFFS]]
@@ -144,9 +145,12 @@ module {
     // CHECK:         yul.for {{.*}}, %[[TAIL]] :
     // CHECK:           %[[ISTRIDE:.*]] = yul.constant 64
     // CHECK:           yul.for
-    // CHECK:             yul.for
-    // CHECK:           yul.add %{{.*}}, %[[ISTRIDE]]
-    // CHECK:         yul.add %{{.*}}, %[[STRIDE]]
+    // CHECK-NOT:         yul.for
+    // CHECK:             yul.mul %c2{{.*}}, %c32
+    // CHECK:             yul.mcopy
+    // CHECK-NOT:         yul.for
+    // CHECK:             yul.add %{{.*}}, %[[ISTRIDE]]
+    // CHECK:           yul.add %{{.*}}, %[[STRIDE]]
     sol.func @nested_static_memory(%arg0: !sol.array<? x !sol.array<2 x !sol.array<2 x ui256, Memory>, Memory>, Memory>) -> !sol.string<Memory> {
       %0 = sol.encode %arg0 : (!sol.array<? x !sol.array<2 x !sol.array<2 x ui256, Memory>, Memory>, Memory>) -> !sol.string<Memory>
       sol.return %0 : !sol.string<Memory>
