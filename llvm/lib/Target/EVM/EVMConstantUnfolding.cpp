@@ -632,7 +632,8 @@ static bool runImpl(Module &M, MachineModuleInfo &MMI) {
 
   // Metadata size is included into the bytecode size.
   const unsigned ModuleCodeSize =
-      EVM::calculateModuleCodeSize(M, MMI) + MetadataSize;
+      EVM::calculateModuleCodeSize(M, MMI) +
+      EVM::getModuleFlagU64(M, "evm-metadata-size").value_or(MetadataSize);
 
   // Collect PUSH instructions to process.
   SmallVector<
