@@ -2,10 +2,11 @@
 
 // Array copies into storage that convert the element type read each source
 // element with the source element type, then convert to the destination
-// element type.
+// element type. Each copy is outlined as the `__sol.copy_array` helper of its
+// type pair, so the checks read the helper that the function calls.
 
 // Same-type copies into an unpacked element store the cleaned word unmasked.
-// CHECK-LABEL: yul.func @cd2s_i136_i136
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_si136_$_CallData_$.array$_dyn_si136_$_Storage_$
 // CHECK:           %[[V:.*]] = yul.calldataload
 // CHECK-NEXT:      %[[C16:.*]] = yul.constant 16
 // CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C16]], %[[V]]
@@ -13,7 +14,7 @@
 // CHECK:           yul.revert
 // CHECK:           yul.sstore %{{.*}}, %[[S]]
 
-// CHECK-LABEL: yul.func @m2s_i136_i136
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_dyn_si136_$_Memory_$.array$_dyn_si136_$_Storage_$
 // CHECK:         yul.for
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.mload
@@ -21,14 +22,14 @@
 // CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C16]], %[[V]]
 // CHECK-NEXT:      yul.sstore %{{.*}}, %[[S]]
 
-// CHECK-LABEL: yul.func @m2s_i8_i136
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_dyn_si8_$_Memory_$.array$_dyn_si136_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.mload
 // CHECK-NEXT:      %[[C0:.*]] = yul.constant 0
 // CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
 // CHECK-NEXT:      yul.sstore %{{.*}}, %[[S]]
 
-// CHECK-LABEL: yul.func @cd2s_i8_i16
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_si8_$_CallData_$.array$_dyn_si16_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           yul.for
 // CHECK:             %[[V:.*]] = yul.calldataload
@@ -40,14 +41,14 @@
 // CHECK-NEXT:        yul.and %[[S]], %[[M]]
 
 // Packed -> unpacked storage: sign-extend the int8 field into int136.
-// CHECK-LABEL: yul.func @s2s_i8_i136
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_si8_$_Storage_$.array$_dyn_si136_$_Storage_$
 // CHECK:           %[[V:.*]] = yul.arith_shr
 // CHECK-NEXT:      %[[C0:.*]] = yul.constant 0
 // CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
 // CHECK-NEXT:      yul.sstore %{{.*}}, %[[S]]
 
 // Packed -> packed storage repack: sign-extend the int8 field into int16.
-// CHECK-LABEL: yul.func @s2s_i8_i16
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_si8_$_Storage_$.array$_dyn_si16_$_Storage_$
 // CHECK:           %[[M:.*]] = yul.constant 255
 // CHECK-NEXT:      %[[V:.*]] = yul.and %{{.*}}, %[[M]]
 // CHECK-NEXT:      %[[C0:.*]] = yul.constant 0
@@ -56,28 +57,28 @@
 // CHECK-NEXT:      yul.and %[[S]], %[[M16]]
 
 // bytes17 storage is right-aligned: left-align it as bytes17 for bytes32.
-// CHECK-LABEL: yul.func @s2s_b17_b32
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_fixedbytes$_17_$_$_Storage_$.array$_dyn_fixedbytes$_32_$_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.sload
 // CHECK-NEXT:      %[[C120:.*]] = yul.constant 120
 // CHECK-NEXT:      yul.arith_shl %[[V]], %[[C120]]
 // CHECK:           yul.sstore
 
-// CHECK-LABEL: yul.func @s2s_i136_i256
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_si136_$_Storage_$.array$_dyn_si256_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.sload
 // CHECK-NEXT:      %[[C16:.*]] = yul.constant 16
 // CHECK-NEXT:      yul.signextend %[[C16]], %[[V]]
 // CHECK:           yul.sstore
 
-// CHECK-LABEL: yul.func @m2s_u8_u136
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_dyn_ui8_$_Memory_$.array$_dyn_ui136_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.mload
 // CHECK-NEXT:      %[[M:.*]] = yul.constant 255
 // CHECK-NEXT:      yul.and %[[V]], %[[M]]
 // CHECK:           yul.sstore
 
-// CHECK-LABEL: yul.func @cd2s_b15_b17
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_fixedbytes$_15_$_$_CallData_$.array$_dyn_fixedbytes$_17_$_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.calldataload
 // CHECK-NEXT:      %[[M:.*]] = yul.constant -87112285931760246646623899502532662132736
@@ -87,7 +88,7 @@
 // CHECK-NEXT:      yul.arith_shr %[[C]], %[[C120]]
 // CHECK:           yul.sstore
 
-// CHECK-LABEL: yul.func @m2s_b15_b16
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_dyn_fixedbytes$_15_$_$_Memory_$.array$_dyn_fixedbytes$_16_$_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           yul.for
 // CHECK:             %[[V:.*]] = yul.mload
@@ -96,7 +97,7 @@
 // CHECK-NEXT:        %[[C128:.*]] = yul.constant 128
 // CHECK-NEXT:        yul.arith_shr %[[C]], %[[C128]]
 
-// CHECK-LABEL: yul.func @m2s_i8_i16
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_dyn_si8_$_Memory_$.array$_dyn_si16_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           yul.for
 // CHECK:             %[[V:.*]] = yul.mload
@@ -105,7 +106,7 @@
 // CHECK-NEXT:        %[[M:.*]] = yul.constant 65535
 // CHECK-NEXT:        yul.and %[[S]], %[[M]]
 
-// CHECK-LABEL: yul.func @cd2s_b15_b16
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_fixedbytes$_15_$_$_CallData_$.array$_dyn_fixedbytes$_16_$_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           yul.for
 // CHECK:             %[[V:.*]] = yul.calldataload
@@ -113,7 +114,7 @@
 // CHECK-NEXT:        %[[C:.*]] = yul.and %[[V]], %[[M]]
 // CHECK-NEXT:        yul.cmp ne, %[[V]], %[[C]]
 
-// CHECK-LABEL: yul.func @cd2s_u8_u16
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_ui8_$_CallData_$.array$_dyn_ui16_$_Storage_$
 // CHECK:         yul.for
 // CHECK:           yul.for
 // CHECK:             %[[V:.*]] = yul.calldataload

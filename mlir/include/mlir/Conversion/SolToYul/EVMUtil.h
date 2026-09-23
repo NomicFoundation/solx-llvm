@@ -21,6 +21,8 @@
 #include <optional>
 
 namespace mlir {
+class TypeConverter;
+
 namespace evm {
 
 enum AddrSpace : unsigned {
@@ -47,6 +49,11 @@ using AllocSize = int64_t;
 unsigned getAlignment(AddrSpace addrSpace);
 /// Returns the alignment of the LLVMPointerType value `ptr`
 unsigned getAlignment(Value ptr);
+
+/// Returns true when \p v is a compile-time constant. The type converter may
+/// leave a single materialization cast over the constant, which is looked
+/// through.
+bool isConstantValue(Value v);
 
 // FIXME: Remove this! The lowering should not expand the ABI encoding/decoding
 // code (where this is used) involved in sol.contract, sol.emit etc. lowering.
@@ -100,32 +107,6 @@ struct ABIEncodingOptions {
   /// struct/array body contiguously (no head + tail with offset words).
   bool dynamicInplace = false;
 };
-
-/// Typed generators for out-of-line helper symbols. Every helper symbol is
-/// produced by one of these. A symbol is the helper's fixed spelling and its
-/// '.'-joined fields after the reserved "__sol." prefix. Two different
-/// helpers can never produce the same symbol: each generator uses a distinct
-/// spelling, the parts are separated by '.', and no field may contain '.'
-/// (asserted). Solidity identifiers cannot contain '.' either, so no user
-/// symbol can collide with a helper symbol.
-namespace helpersym {
-/// Deep copy between data locations: `__sol.copy.<src>.<dst>.<type name>`.
-std::string copy(mlir::sol::DataLocation src, mlir::sol::DataLocation dst,
-                 llvm::StringRef tyName);
-/// Zeroes an identified struct in storage:
-/// `__sol.clear_storage.<struct name>`.
-std::string clearStorage(mlir::sol::StructType ty);
-/// Zeroes the no longer needed out-of-place data slots of a storage string:
-/// `__sol.clear_string_tail`.
-std::string clearStringTail();
-/// Copies the raw bytes of a string between data locations, without writing
-/// the length word: `__sol.copy_string_data.<src>.<dst>`.
-std::string copyStringData(mlir::sol::DataLocation src,
-                           mlir::sol::DataLocation dst);
-/// Dispatches the internal function pointer calls of one signature, the
-/// module's `index`-th such dispatch: `__sol.internal_dispatch.<index>`.
-std::string internalDispatch(unsigned index);
-} // namespace helpersym
 
 /// IR Builder for EVM specific lowering.
 class Builder {
@@ -183,7 +164,8 @@ public:
   void genFreePtrUpd(Value freePtr, Value size,
                      std::optional<Location> locArg = std::nullopt);
 
-  /// Generates the memory allocation code.
+  /// Returns the address of \p size fresh bytes of memory. A constant size
+  /// allocates inline, any other through `helpersym::alloc`.
   Value genMemAlloc(Value size, std::optional<Location> locArg = std::nullopt);
   Value genMemAlloc(AllocSize size,
                     std::optional<Location> locArg = std::nullopt);
@@ -233,13 +215,39 @@ private:
   ///   allocations made by other literal ops.
   ///
   /// \p recDepth tracks the recursion depth to identify the outermost
-  /// dimension; it is pre-incremented on entry, so external callers pass -1
+  /// dimension. It is pre-incremented on entry, so external callers pass -1
   /// (the public overload above does this).
   ///
   /// The allocation spans are word-rounded centrally in genFreePtrUpd.
+  ///
+  /// A static array with reference-typed elements (nested arrays, arrays of
+  /// structs or strings) allocates its rows through genMemAllocArray. The
+  /// public overload decides the same for the outermost dynamic array, whose
+  /// length it has.
   Value genMemAlloc(Type ty, bool zeroInit, ValueRange initVals, Value sizeVar,
                     int64_t recDepth,
                     std::optional<Location> locArg = std::nullopt);
+
+  /// The inline expansion behind genMemAlloc. Element allocations go back
+  /// through genMemAlloc, so nested rows share their helper.
+  Value genMemAllocInline(Type ty, bool zeroInit, ValueRange initVals,
+                          Value sizeVar, int64_t recDepth, Location loc);
+
+  /// The free pointer read and update behind genMemAlloc(Value).
+  Value genAllocInline(Value size, Location loc);
+
+  /// The row allocation of \p arrTy as `helpersym::allocMemoryArray`.
+  /// \p sizeVar is the length of a dynamic array and null for a static one.
+  Value genMemAllocArray(sol::ArrayType arrTy, bool zeroInit, Value sizeVar,
+                         int64_t recDepth, Location loc);
+
+  void genRevertInline(TypeRange tys, ValueRange vals, StringRef signature,
+                       Location loc);
+
+  /// The checks and loads behind `helpersym::abiDecodeCalldataSlice`: the
+  /// data address and the length of the calldata slice whose length word is
+  /// at \p addr, bounded by \p tupleEnd.
+  Value genCalldataSliceDecodeInline(Value addr, Value tupleEnd, Location loc);
 
   /// Recursive primitive for `genABIEncoding` covering the full type taxonomy
   /// parameterised by `opts`. `dstAddrInTail`, `tupleStart`, `tailAddr` are
@@ -248,6 +256,19 @@ private:
                            ABIEncodingOptions opts, bool dstAddrInTail,
                            Value tupleStart, Value tailAddr, Location loc,
                            std::optional<sol::DataLocation> srcDataLoc);
+
+  /// The inline expansion behind genABIEncodingImpl. A memory array that
+  /// needs a loop is encoded by `helpersym::abiEncodeMemoryArray`. Elements
+  /// recurse through genABIEncodingImpl so rows share their helper.
+  /// \p arrayLength, when set, is the length of the dynamic array \p src and
+  /// is used instead of loading it. The encode helper takes it as an
+  /// argument so that a compile-time constant length still folds after the
+  /// helper is inlined back.
+  Value genABIEncodingImplInline(Type ty, Value src, Value dstAddr,
+                                 ABIEncodingOptions opts, bool dstAddrInTail,
+                                 Value tupleStart, Value tailAddr, Location loc,
+                                 std::optional<sol::DataLocation> srcDataLoc,
+                                 Value arrayLength = {});
 
   /// Zeroes storage slots in the out-of-place data area of a storage
   /// string/bytes at \p dstAddr that are no longer needed when the content
@@ -263,13 +284,22 @@ private:
                                        mlir::Value newLength,
                                        mlir::Location loc);
 
-  /// Inline expansion behind genCopyStringToStorage. For calldata sources the
-  /// caller pre decodes the fat pointer: \p src is the raw data address and
-  /// \p srcLength is the length. For other sources \p src is the string
-  /// reference and \p srcLength must be null.
+  /// Copies \p length bytes from \p srcAddr in \p srcDataLoc (memory or
+  /// calldata) to \p dstAddr in memory with one mcopy or calldatacopy. With
+  /// \p withCleanup, zeroes the word at dstAddr + length so the padding of a
+  /// variable-length copy is canonical.
+  void genBulkCopy(Value dstAddr, Value srcAddr, Value length,
+                   sol::DataLocation srcDataLoc, Location loc,
+                   bool withCleanup = false);
+
+  /// Copies \p count 32-byte words from \p srcAddr in \p srcDataLoc
+  /// (memory or calldata) to \p dstAddr in memory with one mcopy or
+  /// calldatacopy.
+  void genBulkWordCopy(Value dstAddr, Value srcAddr, Value count,
+                       sol::DataLocation srcDataLoc, Location loc);
+
   void genCopyStringToStorageInline(mlir::Value src, mlir::Type ty,
-                                    mlir::Value dstAddr, mlir::Location loc,
-                                    mlir::Value srcLength = nullptr);
+                                    mlir::Value dstAddr, mlir::Location loc);
 
   /// Inline expansion behind genCopyStringDataFromStorageToMemory.
   void genCopyStringDataFromStorageToMemoryInline(mlir::Value src,
@@ -301,6 +331,15 @@ private:
   void genClearStorageValueInline(mlir::Type ty, mlir::Value slot,
                                   mlir::Location loc);
 
+  /// Inline expansion behind genCopy for a struct destined to memory: copies
+  /// each member from \p srcAddr (data location \p srcDataLoc) into the
+  /// allocated member table at \p dstAddr, cloning aggregate members through
+  /// genCloneToMemory.
+  void genStructToMemoryCopyInline(mlir::sol::StructType structTy,
+                                   mlir::Value srcAddr, mlir::Value dstAddr,
+                                   mlir::sol::DataLocation srcDataLoc,
+                                   mlir::Location loc);
+
   /// Inline expansion behind genCopy for a struct destined to storage: copies
   /// each member from \p srcAddr (data location \p srcDataLoc) to \p dstAddr in
   /// storage, recursing through genCopy for aggregate members so that nested
@@ -316,6 +355,43 @@ private:
                         std::optional<Location> locArg = std::nullopt);
   void genRevertWithMsg(Value cond, std::string const &msg,
                         std::optional<Location> locArg = std::nullopt);
+
+  /// Decodes the length of the inline and the out-of-place layout from the
+  /// loaded \p lengthSlot and panics on an encoding that is neither.
+  Value genStorageStringLengthInline(Value lengthSlot, Location loc);
+
+  /// Returns the byte length of the string at \p src (any data location
+  /// encoded in \p ty) and, for a storage source, the loaded length slot,
+  /// which also holds the bytes of a short string. Null otherwise.
+  std::pair<Value, Value> genStringLength(Value src, Type ty, Location loc);
+
+  /// Copies the \p length bytes of the string at \p src (any data location
+  /// encoded in \p ty, \p lengthSlot as returned by genStringLength) into the
+  /// already-allocated memory area \p dstDataAddr (the address past the
+  /// length word). Does not write the length word. When \p withCleanup is
+  /// true, emits a trailing zero-word cleanup store at dstDataAddr + length.
+  void genCopyStringBytesToMemory(Value src, Type ty, Value lengthSlot,
+                                  Value length, Value dstDataAddr, Location loc,
+                                  bool withCleanup = false);
+
+  /// The inline expansion behind genCopy. Returns the destination. A null
+  /// \p dstAddr with a memory destination is a clone: the object is
+  /// allocated here, from the length read off the source, and returned.
+  /// Reference elements and members of a memory destination are cloned in
+  /// turn through genCloneToMemory.
+  Value genCopyInline(mlir::Type srcTy, mlir::Type dstTy, mlir::Value srcAddr,
+                      mlir::Value dstAddr, mlir::sol::DataLocation srcDataLoc,
+                      mlir::sol::DataLocation dstDataLoc, mlir::Location loc);
+
+  Value genABIEncodingInline(TypeRange tys, ValueRange vals, Value startAddr,
+                             ABIEncodingOptions opts, Location loc);
+
+  Value genABITupleDecodingInline(Type ty, Value addr, bool fromMem,
+                                  Value tupleEnd, bool topLevel, Location loc);
+
+  void genABITupleDecodingInline(TypeRange tys, Value tupleStart,
+                                 Value tupleEnd, std::vector<Value> &results,
+                                 bool fromMem, Location loc);
 
 public:
   //
@@ -364,6 +440,12 @@ public:
   Value genPackedStorageAddr(Value baseSlot, Value idx, Type eltTy,
                              bool isDataLeftAligned = false,
                              std::optional<Location> locArg = std::nullopt);
+
+  /// The address of element \p idx of the storage array \p arrTy whose data
+  /// starts at \p dataSlot: the {slot, byte offset} pair for a packable
+  /// element type, else the strided slot from genAddrAtIdx.
+  Value genStorageEltAddr(Value dataSlot, Value idx, sol::ArrayType arrTy,
+                          Location loc);
 
   /// Returns {slot, byteOffset} for an element at \p idx in a packed storage
   /// array rooted at \p baseSlot, where elements are \p eltByteSize bytes each.
@@ -426,7 +508,8 @@ public:
   void genStringStore(std::string const &str, Value addr,
                       std::optional<Location> locArg = std::nullopt);
 
-  /// Generates length of a string in storage.
+  /// Returns the length of the storage string whose loaded length slot is
+  /// \p lengthSlot, through `helpersym::storageStringLength`.
   mlir::Value
   genStorageStringLength(mlir::Value lengthSlot,
                          std::optional<mlir::Location> locArg = std::nullopt);
@@ -441,11 +524,8 @@ public:
       mlir::Value dstDataAddr,
       std::optional<mlir::Location> locArg = std::nullopt);
 
-  /// Copies string data from \p src (any data location encoded in \p ty) into
-  /// the already-allocated memory area \p dstDataAddr (the address past the
-  /// length word). Does not write the length word. Returns the byte length.
-  /// When \p withCleanup is true, emits a trailing zero-word cleanup store at
-  /// dstDataAddr + length.
+  /// genStringLength followed by genCopyStringBytesToMemory. Returns the
+  /// byte length.
   mlir::Value
   genCopyStringDataToMemory(mlir::Value src, mlir::Type ty,
                             mlir::Value dstDataAddr,
@@ -484,10 +564,10 @@ public:
 
   /// Zeros the storage occupied by a value of type \p ty at \p slot.
   ///
-  /// Identified (self-referential) structs are cleared via an out-of-line
-  /// helper function that recurses at runtime. Every other type is expanded
-  /// inline. Recursing inline on a self-referential struct (e.g.
-  /// `struct S { S[] arr; }`) would never terminate in the compiler.
+  /// Structs and arrays are cleared via an out-of-line helper function, one
+  /// per type, that recurses at runtime (a self-referential struct such as
+  /// `struct S { S[] arr; }` could not be expanded inline anyway). Scalars
+  /// and strings are expanded inline.
   void genClearStorageValue(mlir::Type ty, mlir::Value slot,
                             mlir::Location loc);
 
@@ -505,31 +585,48 @@ public:
   /// large enough to hold the object.
   ///
   /// Supported: scalars (int, bytesN, addr, enum, FuncRef, ExtFuncRef),
-  /// StringType (any->Stg or any->Mem), StructType (any->Stg only, memory
-  /// copies must be lowered by DataLocCastOpLowering first), and arrays of
-  /// any element type with any packing combination.
+  /// StringType (any->Stg), StructType (any->Stg), and arrays of any element
+  /// type with any packing combination. Copies into memory are clones, made
+  /// by genCloneToMemory.
+  ///
+  /// An array copy that is not one bulk copy is emitted as
+  /// `helpersym::copyArray`. Nested rows recurse through genCopy and share
+  /// their helper.
   void genCopy(mlir::Type srcTy, mlir::Type dstTy, mlir::Value srcAddr,
                mlir::Value dstAddr, mlir::sol::DataLocation srcDataLoc,
                mlir::sol::DataLocation dstDataLoc,
                std::optional<mlir::Location> locArg = std::nullopt);
 
-  /// Returns the helper function named \p symbol in the enclosing contract,
-  /// creating it on first request: a `sol.func` with signature
-  /// `argTys -> resTys` whose body is emitted by \p genBody (which receives the
-  /// entry-block arguments and the location to build at, line 0 since every
-  /// caller shares the body, and must emit the terminating `sol.return`). The
-  /// symbol must come from a `helpersym` generator, which guarantees it is
-  /// unique to one helper. The signature is verified when an existing helper
-  /// is reused. The symbol is registered before \p genBody runs, so a
-  /// self-reference reached while building the body resolves to a recursive
-  /// call instead of recursing in the compiler. Used to out-of-line recursive
-  /// storage operations (clear, deep copy) over self-referential structs,
-  /// mirroring upstream solc's named Yul copy/convert functions. As a
-  /// `sol.func` the helper is moved into its contract's object and lowered by
-  /// the existing contract/object machinery.
-  mlir::sol::FuncOp getOrCreateHelperFn(
-      llvm::StringRef symbol, mlir::TypeRange argTys, mlir::TypeRange resTys,
-      llvm::function_ref<void(mlir::ValueRange, mlir::Location)> genBody);
+  /// Returns a fresh memory copy of the value of type \p ty at \p src in
+  /// \p srcDataLoc (storage or calldata). An array clone that needs a loop,
+  /// every struct clone and a storage string clone are emitted once per type
+  /// as the `clone_array`, `clone_struct` and `clone_string` helpers. The
+  /// copy itself is genCopyInline with a null destination.
+  Value genCloneToMemory(Type ty, Value src, sol::DataLocation srcDataLoc,
+                         std::optional<Location> locArg = std::nullopt);
+
+  /// Calls the helper named \p symbol with \p args, creating it on first
+  /// request with the types of \p args as its argument types and no
+  /// results. \p genBody emits the body from the
+  /// entry-block arguments and the body location. The terminating
+  /// `sol.return` is emitted here.
+  void genHelperCall(
+      llvm::StringRef symbol, mlir::ValueRange args,
+      llvm::function_ref<void(mlir::ValueRange, mlir::Location)> genBody,
+      std::optional<mlir::Location> locArg = std::nullopt);
+  /// Same for a helper with the single result type \p resTy. \p genBody
+  /// returns the value the helper returns, and the call's result is returned.
+  mlir::Value genHelperCall(
+      llvm::StringRef symbol, mlir::ValueRange args, mlir::Type resTy,
+      llvm::function_ref<mlir::Value(mlir::ValueRange, mlir::Location)> genBody,
+      std::optional<mlir::Location> locArg = std::nullopt);
+  /// Same for a helper with the result types \p resTys. \p genBody returns
+  /// the values the helper returns, and the call's results are returned.
+  SmallVector<Value> genHelperCall(
+      llvm::StringRef symbol, mlir::ValueRange args, mlir::TypeRange resTys,
+      llvm::function_ref<SmallVector<Value>(mlir::ValueRange, mlir::Location)>
+          genBody,
+      std::optional<mlir::Location> locArg = std::nullopt);
 
   /// Generates the 'push' of a value to string.
   void genPushToString(mlir::Value srcAddr, mlir::Value value,
@@ -557,10 +654,13 @@ public:
   /// Encodes `vals` of `tys` into memory at `startAddr`. Returns the address
   /// just past the last written byte. Singleton ranges are valid (e.g.
   /// indexed-event keccak input).
+  ///
+  /// A non-empty tuple is encoded by `helpersym::abiEncodeTuple`, which
+  /// never reads the free pointer: the caller takes the head start from it
+  /// before the call and advances it from the returned end after.
   Value genABIEncoding(TypeRange tys, ValueRange vals, Value startAddr,
                        ABIEncodingOptions opts,
                        std::optional<Location> locArg = std::nullopt);
-
   /// Standard ABI encoding (`abi.encode` shape).
   Value genABIEncoding(TypeRange tys, ValueRange vals, Value startAddr,
                        std::optional<Location> locArg = std::nullopt);
@@ -572,19 +672,26 @@ public:
   Value genABITupleEncoding(std::string const &str, Value headStart,
                             std::optional<Location> locArg = std::nullopt);
 
-  Value genABITupleDecoding(Type ty, Value addr, bool fromMem, Value tupleStart,
-                            Value tupleEnd, bool topLevel,
+  /// Decodes one ABI value of type \p ty at \p addr, bounded by
+  /// \p tupleEnd. A value whose decoding needs a loop is decoded by
+  /// `helpersym::abiDecodeToMemory`.
+  Value genABITupleDecoding(Type ty, Value addr, bool fromMem, Value tupleEnd,
+                            bool topLevel,
                             std::optional<Location> locArg = std::nullopt);
-
   /// Generates the tuple decoder code as per the ABI and populates the results.
+  /// A non-empty tuple is decoded by `helpersym::abiDecodeTuple`, whose
+  /// results are the types \p tyConv gives \p tys.
   void genABITupleDecoding(TypeRange tys, Value tupleStart, Value tupleEnd,
                            std::vector<Value> &results, bool fromMem,
+                           const TypeConverter &tyConv,
                            std::optional<Location> locArg = std::nullopt);
-
-  /// Generates the panic code.
+  /// Generates a panic with \p code through `helpersym::panic`.
   void genPanic(PanicCode code, std::optional<Location> locArg = std::nullopt);
   void genPanic(PanicCode code, Value cond,
                 std::optional<Location> locArg = std::nullopt);
+  /// The panic itself: the selector and \p code stored at address 0 and the
+  /// revert.
+  void genPanicInline(Value code, Location loc);
 
   /// Generates a revert with message if compiler-generated debug revert strings
   /// should be emitted, otherwise generates a revert without message.
@@ -611,7 +718,8 @@ public:
   /// Generates a revert without message.
   void genRevert(Value cond, std::optional<Location> locArg = std::nullopt);
 
-  /// Generates a revert with the abi encoded args.
+  /// Generates a revert with the custom error \p signature and its encoded
+  /// \p vals of \p tys, through `helpersym::revertError`.
   void genRevert(Value cond, TypeRange tys, ValueRange vals,
                  StringRef signature,
                  std::optional<Location> locArg = std::nullopt);
