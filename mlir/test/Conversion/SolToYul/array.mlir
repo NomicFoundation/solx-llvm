@@ -9,7 +9,7 @@ module {
     // CHECK:         %[[OOB:.*]] = yul.cmp uge, %[[I]], %[[C3]]
     // CHECK:         yul.if %[[OOB]] {
     // CHECK:           %[[C50:.*]] = yul.constant 50
-    // CHECK:           yul.mstore %{{.*}}, %[[C50]]
+    // CHECK:           yul.func_call @__sol.panic(%[[C50]])
     // CHECK:         %[[OFF:.*]] = yul.mul %[[I]], %{{.*}}
     // CHECK:         %[[P:.*]] = yul.add %[[BASE]], %[[OFF]]
     // CHECK:         %[[V:.*]] = yul.mload %[[P]]
@@ -152,14 +152,22 @@ module {
 
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @stg_arr : (i256) -> (i256, i256)
-    // CHECK:         %[[LEN:.*]] = yul.sload
-    // CHECK:         %[[LEN2:.*]] = yul.sload %[[SLOT:.*]]
-    // CHECK:         yul.cmp uge, %{{.*}}, %[[LEN2]]
+    // Indexing a dynamic storage array goes through its type's helper: the
+    // bounds check against the length slot, then keccak(slot) + i.
+    // CHECK-LABEL: yul.func @__sol.index_storage_array.array$_dyn_ui256_$_Storage_$ : (i256, i256) -> !llvm.struct<(i256, i256)>
+    // CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %[[I:.*]]: i256):
+    // CHECK:         %[[LEN2:.*]] = yul.sload %[[SLOT]]
+    // CHECK:         yul.cmp uge, %[[I]], %[[LEN2]]
     // CHECK:         yul.mstore %{{.*}}, %[[SLOT]]
     // CHECK:         %[[DATA:.*]] = yul.keccak256
     // CHECK:         %[[ES:.*]] = yul.add %[[DATA]], %{{.*}}
-    // CHECK:         %[[W:.*]] = yul.sload
+    // CHECK:         llvm.insertvalue %[[ES]], %{{.*}}[0]
+    // CHECK-LABEL: yul.func @stg_arr : (i256) -> (i256, i256)
+    // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256):
+    // CHECK:         %[[LEN:.*]] = yul.sload %[[A]]
+    // CHECK:         %[[REF:.*]] = yul.func_call @__sol.index_storage_array.array$_dyn_ui256_$_Storage_$(%[[A]], %{{.*}})
+    // CHECK:         %[[ES:.*]] = llvm.extractvalue %[[REF]][0]
+    // CHECK:         %[[W:.*]] = yul.sload %[[ES]]
     // CHECK:         %[[V:.*]] = yul.arith_shr %[[W]], %{{.*}}
     // CHECK:         yul.func_return %[[LEN]], %[[V]] : i256, i256
     sol.func @stg_arr(%a: !sol.array<? x ui256, Storage>) -> (ui256, ui256) {

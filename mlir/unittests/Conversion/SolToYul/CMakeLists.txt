@@ -1,0 +1,9 @@
+add_mlir_unittest(MLIRSolToYulTests
+  HelperSymbolsTest.cpp
+)
+mlir_target_link_libraries(MLIRSolToYulTests
+  PRIVATE
+  MLIRCastInterfaces
+  MLIRSolDialect
+  MLIRSolToYul
+)

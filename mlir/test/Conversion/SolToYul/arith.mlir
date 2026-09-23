@@ -10,7 +10,7 @@ module {
     // CHECK:         %[[Z:.*]] = yul.cmp eq, %[[D:.*]], %{{.*}}
     // CHECK:         yul.if %[[Z]] {
     // CHECK:           %[[C18:.*]] = yul.constant 18{{$}}
-    // CHECK:           yul.mstore %{{.*}}, %[[C18]]
+    // CHECK:           yul.func_call @__sol.panic(%[[C18]])
     // CHECK:         yul.arith_div %{{.*}}, %[[D]]
     // CHECK:         yul.arith_mod
     // CHECK:         yul.shl
@@ -114,7 +114,7 @@ module {
     // CHECK:         %[[OV:.*]] = yul.cmp ugt, %[[X]], %[[S]]
     // CHECK:         yul.if %[[OV]] {
     // CHECK:           %[[C17:.*]] = yul.constant 17{{$}}
-    // CHECK:           yul.mstore %{{.*}}, %[[C17]]
+    // CHECK:           yul.func_call @__sol.panic(%[[C17]])
     // CHECK:         %[[D:.*]] = yul.sub %[[Y:.*]], %{{.*}}
     // CHECK:         yul.cmp ugt, %[[D]], %[[Y]]
     // CHECK:         %[[P:.*]] = yul.mul %[[MA:.*]], %[[MB:.*]]

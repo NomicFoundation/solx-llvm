@@ -5,14 +5,24 @@
 // CHECK-LABEL: yul.object @L_deployed {
 // CHECK:         case 3865590979 {
 // CHECK:           %[[C4:.*]] = yul.constant 4
-// CHECK:           %[[R:.*]] = yul.calldataload %[[C4]]
+// CHECK:           %[[R:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.i256(%[[C4]], %{{.*}}) : (i256, i256) -> i256
 // CHECK:           yul.func_call @f(%[[R]]) : (i256) -> i256
+
+// CHECK-LABEL: yul.func @__sol.abi_decode_tuple.calldata.i256 : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[HEAD:.*]]: i256, %{{.*}}: i256):
+// CHECK:         %[[WORD:.*]] = yul.calldataload %[[HEAD]]
+// CHECK:         yul.func_return %[[WORD]] : i256
+
+// CHECK-LABEL: yul.func @__sol.index_storage_array.array$_dyn_ui256_$_Storage_$ : (i256, i256) -> !llvm.struct<(i256, i256)>
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
+// CHECK:         yul.sload %[[SLOT]]
+// CHECK:         yul.mstore %{{.*}}, %[[SLOT]]
+// CHECK:         yul.keccak256
 
 // CHECK-LABEL: yul.func @f : (i256) -> i256
 // CHECK-NEXT:  ^bb0(%[[RV:.*]]: i256):
-// CHECK:         yul.sload %[[RV]]
-// CHECK:         yul.mstore %{{.*}}, %[[RV]]
-// CHECK:         yul.keccak256
+// CHECK:         yul.func_call @__sol.index_storage_array.array$_dyn_ui256_$_Storage_$(%[[RV]], %{{.*}})
+// CHECK:         yul.sload
 
 #Library = #sol<ContractKind Library>
 #View = #sol<StateMutability View>
@@ -29,12 +39,16 @@ module {
 
 // -----
 
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.i256 : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[V:.*]]: i256, %[[AT:.*]]: i256):
+// CHECK:         yul.mstore %[[AT]], %[[V]]
+
 // CHECK-LABEL: yul.func @g : () -> i256
 // CHECK:         %[[LIB:.*]] = yul.linkersymbol "library-storage-ref-abi.sol:L"
 // CHECK:         %[[RSLOT:.*]] = yul.constant 2
 // CHECK:         yul.constant 3865590979
 // CHECK:         %[[ARGS:.*]] = yul.add %{{.*}}, %{{.*}}
-// CHECK:         yul.mstore %[[ARGS]], %[[RSLOT]]
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.i256(%[[RSLOT]], %[[ARGS]])
 // CHECK:         yul.delegate_call
 
 #Contract = #sol<ContractKind Contract>

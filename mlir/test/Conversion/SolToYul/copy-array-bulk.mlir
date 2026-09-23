@@ -41,61 +41,109 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
   } {kind = #Contract, runtime}
 }
 
-// The dispatcher decodes a word array parameter with one calldatacopy and
-// encodes a word array result with one mcopy.
+// A copy whose elements need a loop is emitted once per type pair as a
+// `__sol.copy_array.*` helper, and the loop with its bulk copy lives in the
+// helper. A copy that is one bulk copy stays inline. A row of a memory
+// destination is a fresh allocation: the loop clones each row with one bulk
+// copy and stores its pointer in the row slot. The dispatcher's decoder of a
+// word array and its encoder of a word array result are one bulk copy too.
+
 // CHECK-LABEL: yul.object @C_deployed
-// CHECK:         case 2 {
+// CHECK-LABEL:   yul.func @__sol.abi_encode_tuple.padded.tail.array$_4_ui256_$_Memory_$
+// CHECK-NOT:       yul.for
+// CHECK:           yul.mcopy %arg1, %arg0
+// CHECK-NOT:       yul.for
+// CHECK:           yul.func_return
+
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.array$_4_ui256_$_Memory_$
+// CHECK-NOT:       yul.for
+// CHECK:           yul.calldatacopy %{{.*}}, %arg0
+// CHECK-NOT:       yul.for
+// CHECK:           yul.func_return
+
+// CHECK-LABEL:   yul.func @__sol.abi_decode.calldata.memory.array$_4_ui8_$_Memory_$
+// CHECK:           yul.for
+// CHECK:             yul.calldataload
+// CHECK-NOT:         yul.calldatacopy
+// CHECK:           yul.func_return
+
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.array$_4_fixedbytes$_32_$_$_CallData_$.array$_4_fixedbytes$_32_$_$_Memory_$
 // CHECK-NOT:       yul.for
 // CHECK:           yul.calldatacopy
 // CHECK-NOT:       yul.for
-// CHECK:           yul.func_call @cd2m_flat
-// CHECK:         case 7 {
+// CHECK:           yul.func_return
+
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.array$_4_si256_$_CallData_$.array$_4_si256_$_Memory_$
 // CHECK-NOT:       yul.for
 // CHECK:           yul.calldatacopy
 // CHECK-NOT:       yul.for
-// CHECK:           %[[RET:.*]] = yul.func_call @ret
+// CHECK:           yul.func_return
+
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.array$_4_ui256_$_CallData_$.array$_4_ui256_$_Memory_$
 // CHECK-NOT:       yul.for
-// CHECK:           yul.mcopy %{{.*}}, %[[RET]]
+// CHECK:           yul.calldatacopy
 // CHECK-NOT:       yul.for
-// CHECK:           yul.return
+// CHECK:           yul.func_return
 
-// CHECK-LABEL: yul.func @cd2m_narrow
-// CHECK:         yul.for
-// CHECK:           yul.calldataload
-// CHECK:           yul.mstore
-// CHECK-NOT:     yul.calldatacopy
-// CHECK:         yul.func_return
+// The nested decoder loops per row and copies each row in bulk.
+// CHECK-LABEL:   yul.func @__sol.abi_decode.calldata.memory.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$
+// CHECK:           yul.for
+// CHECK-NOT:         yul.calldataload
+// CHECK:             yul.calldatacopy
+// CHECK-NOT:         yul.calldataload
+// CHECK:           yul.func_return
 
-// CHECK-LABEL: yul.func @m2m_nested
-// CHECK:         yul.for
-// CHECK:           %[[SRC_ROW:.*]] = yul.mload
-// CHECK-NEXT:      %[[DST_ROW:.*]] = yul.mload
-// CHECK:           %[[M2M_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
-// CHECK-NEXT:      yul.mcopy %[[DST_ROW]], %[[SRC_ROW]], %[[M2M_SIZE]]
-// CHECK-NOT:     yul.mstore
-// CHECK:         yul.func_return
+// CHECK-LABEL:   yul.func @__sol.copy_array.calldata.memory.array$_4_ui8_$_CallData_$.array$_4_ui8_$_Memory_$
+// CHECK:           yul.for
+// CHECK:             yul.calldataload
+// CHECK:             yul.mstore
+// CHECK-NOT:       yul.calldatacopy
+// CHECK:           yul.func_return
 
-// CHECK-LABEL: yul.func @cd2m_bytes32
-// CHECK-NOT:     yul.for
-// CHECK:         yul.calldatacopy %arg1, %arg0
-// CHECK-NEXT:    yul.func_return
+// CHECK-LABEL:   yul.func @__sol.copy_array.memory.memory.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$
+// CHECK:           yul.for
+// CHECK:             %[[SRC_ROW:.*]] = yul.mload
+// CHECK:             %[[DST_ROW:.*]] = yul.mload %c64_i256
+// CHECK:             %[[M2M_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
+// CHECK-NEXT:        yul.mcopy %[[DST_ROW]], %[[SRC_ROW]], %[[M2M_SIZE]]
+// CHECK-NEXT:        yul.mstore {{.*}}, %[[DST_ROW]]
+// CHECK:           yul.func_return
 
-// CHECK-LABEL: yul.func @cd2m_signed
-// CHECK-NOT:     yul.for
-// CHECK:         yul.calldatacopy %arg1, %arg0
-// CHECK-NEXT:    yul.func_return
+// CHECK-LABEL:   yul.func @__sol.copy_array.calldata.memory.array$_4_array$_4_ui256_$_CallData_$_$_CallData_$.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$
+// CHECK:           yul.for
+// CHECK:             %[[CD_ROW:.*]] = yul.add %arg0
+// CHECK:             %[[MEM_ROW:.*]] = yul.mload %c64_i256
+// CHECK:             %[[CD_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
+// CHECK-NEXT:        yul.calldatacopy %[[MEM_ROW]], %[[CD_ROW]], %[[CD_SIZE]]
+// CHECK-NEXT:        yul.mstore {{.*}}, %[[MEM_ROW]]
+// CHECK-NOT:       yul.calldataload
+// CHECK:           yul.func_return
 
-// CHECK-LABEL: yul.func @cd2m_flat
-// CHECK-NOT:     yul.for
-// CHECK:         %[[FLAT_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
-// CHECK-NEXT:    yul.calldatacopy %arg1, %arg0, %[[FLAT_SIZE]]
-// CHECK-NEXT:    yul.func_return
+// CHECK-LABEL:   yul.func @cd2m_narrow
+// CHECK:           yul.func_call @__sol.copy_array.calldata.memory.array$_4_ui8_$_CallData_$.array$_4_ui8_$_Memory_$(%arg0, %arg1)
+// CHECK-NEXT:      yul.func_return
 
-// CHECK-LABEL: yul.func @cd2m_nested
-// CHECK:         yul.for
-// CHECK:           %[[CD_ROW:.*]] = yul.add %arg0
-// CHECK:           %[[MEM_ROW:.*]] = yul.mload
-// CHECK:           %[[CD_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
-// CHECK-NEXT:      yul.calldatacopy %[[MEM_ROW]], %[[CD_ROW]], %[[CD_SIZE]]
-// CHECK-NOT:     yul.calldataload
-// CHECK:         yul.func_return
+// CHECK-LABEL:   yul.func @m2m_nested
+// CHECK:           yul.func_call @__sol.copy_array.memory.memory.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$(%arg0, %arg1)
+// CHECK-NEXT:      yul.func_return
+
+// A flat word array is one calldatacopy and gets no helper.
+// CHECK-LABEL:   yul.func @cd2m_bytes32
+// CHECK-NOT:       yul.func_call
+// CHECK:           yul.calldatacopy %arg1, %arg0
+// CHECK-NEXT:      yul.func_return
+
+// CHECK-LABEL:   yul.func @cd2m_signed
+// CHECK-NOT:       yul.func_call
+// CHECK:           yul.calldatacopy %arg1, %arg0
+// CHECK-NEXT:      yul.func_return
+
+// CHECK-LABEL:   yul.func @cd2m_flat
+// CHECK-NOT:       yul.func_call
+// CHECK:           %[[FLAT_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
+// CHECK-NEXT:      yul.calldatacopy %arg1, %arg0, %[[FLAT_SIZE]]
+// CHECK-NEXT:      yul.func_return
+
+// CHECK-LABEL:   yul.func @cd2m_nested
+// CHECK:           yul.func_call @__sol.copy_array.calldata.memory.array$_4_array$_4_ui256_$_CallData_$_$_CallData_$.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$(%arg0, %arg1)
+// CHECK-NEXT:      yul.func_return

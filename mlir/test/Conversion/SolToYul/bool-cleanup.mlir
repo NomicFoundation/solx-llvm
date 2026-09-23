@@ -3,20 +3,26 @@
 // Decoded bool[] elements are validated; the returned bool is normalized.
 // CHECK-LABEL: yul.object @C_deployed {
 // CHECK:         case 114889333 {
-// CHECK:           yul.for
-// CHECK:             %[[V:.*]] = yul.calldataload %{{.*}}
-// CHECK:             %[[B:.*]] = yul.cmp ne, %[[V]], %{{.*}}
-// CHECK:             %[[BAD:.*]] = yul.cmp ne, %[[V]], %[[B]]
-// CHECK:             yul.if %[[BAD]] {
-// CHECK:               yul.revert
-// CHECK:             yul.mstore %{{.*}}, %[[B]]
-// CHECK:           %[[R:.*]] = yul.func_call @mem_bool(%{{.*}}) : (i256) -> i256
-// CHECK:           %[[RB:.*]] = yul.cmp ne, %[[R]], %{{.*}}
-// CHECK:           yul.mstore %{{.*}}, %[[RB]]
+// CHECK:           %[[ARR:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_i1_$_Memory_$(
+// CHECK:           %[[R:.*]] = yul.func_call @mem_bool(%[[ARR]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.i1(%[[R]],
+
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.i1 : (i256, i256) -> i256
+// CHECK:         %[[RB:.*]] = yul.cmp ne, %arg0, %{{.*}}
+// CHECK:         yul.mstore %arg1, %[[RB]]
+
+// CHECK-LABEL: yul.func @__sol.abi_decode.calldata.memory.array$_dyn_i1_$_Memory_$
+// CHECK:         yul.for
+// CHECK:           %[[V:.*]] = yul.calldataload %{{.*}}
+// CHECK:           %[[B:.*]] = yul.cmp ne, %[[V]], %{{.*}}
+// CHECK:           %[[BAD:.*]] = yul.cmp ne, %[[V]], %[[B]]
+// CHECK:           yul.if %[[BAD]] {
+// CHECK:             yul.revert
+// CHECK:           yul.mstore %{{.*}}, %[[B]]
 
 // CHECK-LABEL: yul.func @mem_bool : (i256) -> i256
 // CHECK:         yul.cmp uge
-// CHECK:         yul.revert
+// CHECK:         yul.func_call @__sol.panic
 // CHECK:         %[[V:.*]] = yul.mload
 // CHECK-NOT:     yul.cmp ne
 // CHECK:         yul.func_return %[[V]] : i256
@@ -36,11 +42,13 @@ module {
 
 // -----
 
-// CHECK-LABEL: yul.func @encode_array_bool : (i256) -> i256
+// CHECK-LABEL: yul.func @__sol.abi_encode_array.memory.padded.tail.array$_dyn_i1_$_Memory_$
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.mload
 // CHECK:           %[[B:.*]] = yul.cmp ne, %[[V]], %{{.*}}
 // CHECK:           yul.mstore %{{.*}}, %[[B]]
+// CHECK-LABEL: yul.func @encode_array_bool : (i256) -> i256
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_dyn_i1_$_Memory_$(%arg0,
 
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>

@@ -17,9 +17,8 @@
 // CHECK:           llvm.insertvalue %[[OFF2]], %{{.*}}[1]
 // CHECK:           %[[ADDR:.*]] = yul.and %{{.*}}, %c1461501637330902918203684832716283019655932542975_i256
 // CHECK:           %[[SSLOT:.*]] = yul.add %[[BASE]], %c5_i256{{(_[0-9]+)?$}}
-// CHECK:           %[[STR:.*]] = yul.mload
-// CHECK:           yul.func_call @__sol.copy_string_data.storage.memory(%[[SSLOT]],
-// CHECK:           yul.func_return %[[A]], %[[SMALL]], %[[FLAG]], %[[ADDR]], %[[STR]]
+// CHECK-NEXT:      %[[STR:.*]] = yul.func_call @__sol.clone_string.storage.memory(%[[SSLOT]]) : (i256) -> i256
+// CHECK-NEXT:      yul.func_return %[[A]], %[[SMALL]], %[[FLAG]], %[[ADDR]], %[[STR]]
 
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>

@@ -128,7 +128,7 @@ void populateFuncBoundaryPats(RewritePatternSet &pats, TypeConverter &tyConv);
 void populateFuncOpPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
 /// Adds the conversion pattern of sol.contract.
-void populateContractPat(RewritePatternSet &pats);
+void populateContractPat(RewritePatternSet &pats, const TypeConverter &tyConv);
 
 /// Adds patterns for sol.inline_asm and related ops.
 void populateInlineAsmPats(RewritePatternSet &pats, TypeConverter &tyConv);
@@ -136,7 +136,7 @@ void populateInlineAsmPats(RewritePatternSet &pats, TypeConverter &tyConv);
 void populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv,
                         InternalDispatch &dispatch);
 
-void populateStage2Pats(RewritePatternSet &pats);
+void populateStage2Pats(RewritePatternSet &pats, const TypeConverter &tyConv);
 
 } // namespace evm
 } // namespace mlir

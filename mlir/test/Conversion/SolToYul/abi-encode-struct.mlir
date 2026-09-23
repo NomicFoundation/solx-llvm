@@ -3,7 +3,8 @@
 #Contract = #sol<ContractKind Contract>
 #Pure = #sol<StateMutability Pure>
 
-// CHECK-LABEL: yul.func @mem_nested : (i256) -> i256
+// The uint[2] and uint[] members are rows of words and are copied whole.
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_Memory_$_$_array$_2_ui256_$_Memory_$_$_array$_dyn_ui256_$_Memory_$_$_$_Memory_$_$_ui256_$_$_Memory_$ : (i256, i256) -> i256
 // CHECK:         %[[C96:.*]] = yul.constant 96{{$}}
 // CHECK:         %[[ITAIL:.*]] = yul.add %[[HEAD:.*]], %[[C96]]
 // CHECK:         %[[IOFF:.*]] = yul.sub %[[ITAIL]], %[[HEAD]]
@@ -17,15 +18,17 @@
 // CHECK:         %[[SLEN:.*]] = yul.mload
 // CHECK:         yul.mcopy %{{.*}}, %{{.*}}, %[[SLEN]]
 // CHECK:         yul.mstore %[[TAIL]], %[[SLEN]]
-// The uint256[2] and uint256[] members are word arrays: one mcopy each, no
-// element loop.
 // CHECK:         %[[C2:.*]] = yul.constant 2{{$}}
-// CHECK:         %[[FSZ:.*]] = yul.mul %[[C2]], %c32
-// CHECK:         yul.mcopy %{{.*}}, %{{.*}}, %[[FSZ]]
-// CHECK-NOT:     yul.for
+// CHECK:         %[[FSZ:.*]] = yul.mul %[[C2]],
+// CHECK-NEXT:    yul.mcopy %{{.*}}, %{{.*}}, %[[FSZ]]
+// CHECK:         %[[DARR:.*]] = yul.mload
+// CHECK:         %[[DLEN:.*]] = yul.mload %[[DARR]]
+// CHECK:         yul.mstore %{{.*}}, %[[DLEN]]
+// CHECK:         yul.mul %[[DLEN]],
 // CHECK:         yul.mcopy
 // CHECK-NOT:     yul.for
-// CHECK:         yul.func_return
+// CHECK-LABEL: yul.func @mem_nested : (i256) -> i256
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_Memory_$_$_array$_2_ui256_$_Memory_$_$_array$_dyn_ui256_$_Memory_$_$_$_Memory_$_$_ui256_$_$_Memory_$(%arg0,
 module {
   sol.contract @C {
     sol.func @mem_nested(%arg0: !sol.struct<(ui256, !sol.struct<(ui256, ui256, !sol.string<Memory>, !sol.array<2 x ui256, Memory>, !sol.array<? x ui256, Memory>), Memory>, ui256), Memory>) -> !sol.string<Memory> attributes {state_mutability = #Pure} {
@@ -41,7 +44,7 @@ module {
 #Pure = #sol<StateMutability Pure>
 
 // Calldata members are bounds-checked, then bulk-copied.
-// CHECK-LABEL: yul.func @cd_nested : (i256) -> i256
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_CallData_$_$_array$_2_ui256_$_CallData_$_$_array$_dyn_ui256_$_CallData_$_$_$_CallData_$_$_ui256_$_$_CallData_$ : (i256, i256) -> i256
 // CHECK:         %[[C96:.*]] = yul.constant 96{{$}}
 // CHECK:         yul.add %{{.*}}, %[[C96]]
 // CHECK:         yul.cmp sge
@@ -61,6 +64,8 @@ module {
 // CHECK:         %[[DREL:.*]] = yul.calldataload
 // CHECK:         yul.cmp sge, %[[DREL]], %{{.*}}
 // CHECK:         yul.calldatacopy
+// CHECK-LABEL: yul.func @cd_nested : (i256) -> i256
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_CallData_$_$_array$_2_ui256_$_CallData_$_$_array$_dyn_ui256_$_CallData_$_$_$_CallData_$_$_ui256_$_$_CallData_$(%arg0,
 module {
   sol.contract @C {
     sol.func @cd_nested(%arg0: !sol.struct<(ui256, !sol.struct<(ui256, ui256, !sol.string<CallData>, !sol.array<2 x ui256, CallData>, !sol.array<? x ui256, CallData>), CallData>, ui256), CallData>) -> !sol.string<Memory> attributes {state_mutability = #Pure} {
@@ -76,7 +81,7 @@ module {
 #Pure = #sol<StateMutability Pure>
 
 // S[2] in calldata is static: copied word by word, 64 bytes per element.
-// CHECK-LABEL: yul.func @enc_struct : (i256) -> i256
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_2_struct$_$_ui256_$_ui256_$_$_CallData_$_$_CallData_$ : (i256, i256) -> i256
 // CHECK:         %[[C128:.*]] = yul.constant 128{{$}}
 // CHECK:         yul.add %{{.*}}, %[[C128]]
 // CHECK:         yul.for
@@ -84,6 +89,8 @@ module {
 // CHECK:           yul.mstore %{{.*}}, %[[A]]
 // CHECK:           %[[B:.*]] = yul.calldataload
 // CHECK:           yul.mstore %{{.*}}, %[[B]]
+// CHECK-LABEL: yul.func @enc_struct : (i256) -> i256
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_2_struct$_$_ui256_$_ui256_$_$_CallData_$_$_CallData_$(%arg0,
 module {
   sol.contract @C {
     sol.func @enc_struct(%arg0: !sol.array<2 x !sol.struct<(ui256, ui256), CallData>, CallData>) -> !sol.string<Memory> attributes {state_mutability = #Pure} {
@@ -98,13 +105,14 @@ module {
 #Contract = #sol<ContractKind Contract>
 #View = #sol<StateMutability View>
 
-// CHECK-LABEL: yul.func @__sol.copy_string_data.storage.memory
+// CHECK-LABEL: yul.func @__sol.copy_string_bytes.storage.memory
+// CHECK-LABEL: yul.func @__sol.storage_string_length
 
 // The dynamic inner Big is behind an offset and starts at slot 7; its
-// string is decoded from the storage length encoding and copied with the
-// helper; extra sits at slot 6 + 7.
-// CHECK-LABEL: yul.func @storage_big_nested : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 6{{$}}
+// string length is decoded from the slot word and its bytes copied with the
+// helpers; extra sits at slot 6 + 7.
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_Storage_$_$_array$_2_ui256_$_Storage_$_$_array$_dyn_ui256_$_Storage_$_$_$_Storage_$_$_ui256_$_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[C96:.*]] = yul.constant 96{{$}}
 // CHECK:         %[[ITAIL:.*]] = yul.add %[[HEAD:.*]], %[[C96]]
 // CHECK:         %[[ONE:.*]] = yul.constant 1{{$}}
@@ -116,7 +124,9 @@ module {
 // CHECK:         %[[C2:.*]] = yul.constant 2{{$}}
 // CHECK:         %[[SS:.*]] = yul.add %[[INNER]], %[[C2]]
 // CHECK:         %[[SW:.*]] = yul.sload %[[SS]]
-// CHECK:         yul.func_call @__sol.copy_string_data.storage.memory(%[[SS]], %[[SW]], %{{.*}}, %{{.*}})
+// CHECK:         %[[SLEN:.*]] = yul.func_call @__sol.storage_string_length(%[[SW]])
+// CHECK:         yul.func_call @__sol.copy_string_bytes.storage.memory(%[[SS]], %[[SW]], %[[SLEN]], %{{.*}})
+// CHECK:         yul.mstore %{{.*}}, %[[SLEN]]
 // CHECK:         yul.for
 // CHECK:           yul.sload
 // CHECK:         %[[C5:.*]] = yul.constant 5{{$}}
@@ -130,6 +140,9 @@ module {
 // CHECK:         %[[ES:.*]] = yul.add %[[SLOT]], %[[C7]]
 // CHECK:         %[[E:.*]] = yul.sload %[[ES]]
 // CHECK:         yul.mstore %{{.*}}, %[[E]]
+// CHECK-LABEL: yul.func @storage_big_nested : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 6{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_Storage_$_$_array$_2_ui256_$_Storage_$_$_array$_dyn_ui256_$_Storage_$_$_$_Storage_$_$_ui256_$_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @storageBigNested slot 6 offset 0 : !sol.struct<(ui256, !sol.struct<(ui256, ui256, !sol.string<Storage>, !sol.array<2 x ui256, Storage>, !sol.array<? x ui256, Storage>), Storage>, ui256), Storage>
@@ -148,8 +161,8 @@ module {
 
 // The static struct is encoded in place: a and d whole, b and c shifted
 // out of slot 22 and masked.
-// CHECK-LABEL: yul.func @storage_packed : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 22{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.struct$_$_ui128_$_ui64_$_i1_$_ui256_$_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[C128:.*]] = yul.constant 128{{$}}
 // CHECK:         yul.add %{{.*}}, %[[C128]]
 // CHECK:         %[[W:.*]] = yul.sload
@@ -168,6 +181,9 @@ module {
 // CHECK:         %[[DS:.*]] = yul.add %[[SLOT]], %[[ONE]]
 // CHECK:         %[[D:.*]] = yul.sload %[[DS]]
 // CHECK:         yul.mstore %{{.*}}, %[[D]]
+// CHECK-LABEL: yul.func @storage_packed : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 22{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.struct$_$_ui128_$_ui64_$_i1_$_ui256_$_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @storagePacked slot 22 offset 0 : !sol.struct<(ui128, ui64, i1, ui256), Storage>

@@ -2,7 +2,10 @@
 
 // zero_init bumps the free pointer, then zeroes value elements by copying from
 // past calldata, points dynamic-array/string elements at the zero slot (0x60)
-// and gives static-array/struct elements a fresh zeroed allocation.
+// and gives static-array/struct elements a fresh zeroed allocation. A constant
+// size allocates inline. A runtime size goes through `__sol.alloc`, and an
+// array whose elements need a row loop is allocated by its own
+// `__sol.alloc_array.zeroed.memory.<ty>` helper.
 
 module {
   sol.contract @C {
@@ -23,7 +26,7 @@ module {
 
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @static_2d : () -> i256
+    // CHECK-LABEL: yul.func @__sol.alloc_array.zeroed.memory.array$_4_array$_3_ui256_$_Memory_$_$_Memory_$ : () -> i256
     // CHECK:         %[[SZ:.*]] = yul.constant 128{{$}}
     // CHECK:         %[[P:.*]] = yul.mload
     // CHECK:         yul.for
@@ -36,6 +39,10 @@ module {
     // CHECK:           yul.calldatacopy %[[IP]], %[[CDS]], %[[ISZ]]
     // CHECK:           yul.mstore %[[SLOT]], %[[IP]]
     // CHECK:         } step {
+    // CHECK:         yul.func_return %[[P]] : i256
+    // CHECK-LABEL: yul.func @static_2d : () -> i256
+    // CHECK:         %[[A:.*]] = yul.func_call @__sol.alloc_array.zeroed.memory.array$_4_array$_3_ui256_$_Memory_$_$_Memory_$() : () -> i256
+    // CHECK:         yul.func_return %[[A]] : i256
     sol.func @static_2d() -> !sol.array<4 x !sol.array<3 x ui256, Memory>, Memory> {
       %0 = sol.malloc zero_init : () -> !sol.array<4 x !sol.array<3 x ui256, Memory>, Memory>
       sol.return %0 : !sol.array<4 x !sol.array<3 x ui256, Memory>, Memory>
@@ -48,7 +55,7 @@ module {
 module {
   sol.contract @C {
     // A static array has no length word: the element slots start at the base.
-    // CHECK-LABEL: yul.func @static_of_dyn : () -> i256
+    // CHECK-LABEL: yul.func @__sol.alloc_array.zeroed.memory.array$_2_array$_dyn_ui256_$_Memory_$_$_Memory_$ : () -> i256
     // CHECK:         %[[SZ:.*]] = yul.constant 64{{$}}
     // CHECK:         %[[P:.*]] = yul.mload
     // CHECK:         yul.for
@@ -59,6 +66,9 @@ module {
     // CHECK:           yul.mstore %[[E]], %[[ZERO]]
     // CHECK:         } step {
     // CHECK:         yul.func_return %[[P]] : i256
+    // CHECK-LABEL: yul.func @static_of_dyn : () -> i256
+    // CHECK:         %[[A:.*]] = yul.func_call @__sol.alloc_array.zeroed.memory.array$_2_array$_dyn_ui256_$_Memory_$_$_Memory_$() : () -> i256
+    // CHECK:         yul.func_return %[[A]] : i256
     sol.func @static_of_dyn() -> !sol.array<2 x !sol.array<? x ui256, Memory>, Memory> {
       %0 = sol.malloc zero_init : () -> !sol.array<2 x !sol.array<? x ui256, Memory>, Memory>
       sol.return %0 : !sol.array<2 x !sol.array<? x ui256, Memory>, Memory>
@@ -70,11 +80,17 @@ module {
 
 module {
   sol.contract @C {
+    // CHECK-LABEL: yul.func @__sol.alloc : (i256) -> i256
+    // CHECK:         %[[FP:.*]] = yul.mload %c64_i256
+    // CHECK:         %[[END:.*]] = yul.add %[[FP]], %{{.*}}
+    // CHECK:         yul.mstore %c64_i256{{.*}}, %[[END]]
+    // CHECK:         yul.func_return %[[FP]] : i256
     // CHECK-LABEL: yul.func @dyn_1d : () -> i256
     // CHECK:         %[[C5:.*]] = yul.constant 5{{$}}
     // CHECK:         %[[LEN:.*]] = yul.and %[[C5]], %{{.*}}
     // CHECK:         %[[DSZ:.*]] = yul.mul %[[LEN]], %{{.*}}
-    // CHECK:         %[[P:.*]] = yul.mload
+    // CHECK:         %[[SZ:.*]] = yul.add %[[DSZ]], %{{.*}}
+    // CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc(%[[SZ]])
     // CHECK:         yul.mstore %[[P]], %[[LEN]]
     // CHECK:         %[[DATA:.*]] = yul.add %[[P]], %{{.*}}
     // CHECK:         %[[CDS:.*]] = yul.calldatasize
@@ -92,10 +108,10 @@ module {
 
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @dyn_2d : (i256) -> i256
+    // CHECK-LABEL: yul.func @__sol.alloc_array.zeroed.memory.array$_dyn_array$_dyn_ui256_$_Memory_$_$_Memory_$ : (i256) -> i256
     // CHECK-NEXT:  ^bb0(%[[N:.*]]: i256):
     // CHECK:         %[[DSZ:.*]] = yul.mul %[[N]], %{{.*}}
-    // CHECK:         %[[P:.*]] = yul.mload
+    // CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc
     // CHECK:         yul.mstore %[[P]], %[[N]]
     // CHECK:         %[[DATA:.*]] = yul.add %[[P]], %{{.*}}
     // CHECK:         yul.for
@@ -106,6 +122,10 @@ module {
     // CHECK:           yul.mstore %[[E]], %[[ZERO]]
     // CHECK:         } step {
     // CHECK:         yul.func_return %[[P]] : i256
+    // CHECK-LABEL: yul.func @dyn_2d : (i256) -> i256
+    // CHECK-NEXT:  ^bb0(%[[N:.*]]: i256):
+    // CHECK:         %[[A:.*]] = yul.func_call @__sol.alloc_array.zeroed.memory.array$_dyn_array$_dyn_ui256_$_Memory_$_$_Memory_$(%[[N]])
+    // CHECK:         yul.func_return %[[A]] : i256
     sol.func @dyn_2d(%n: ui256) -> !sol.array<? x !sol.array<? x ui256, Memory>, Memory> {
       %0 = sol.malloc %n zero_init : (ui256) -> !sol.array<? x !sol.array<? x ui256, Memory>, Memory>
       sol.return %0 : !sol.array<? x !sol.array<? x ui256, Memory>, Memory>
@@ -117,10 +137,10 @@ module {
 
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @dyn_of_struct : (i256) -> i256
+    // CHECK-LABEL: yul.func @__sol.alloc_array.zeroed.memory.array$_dyn_struct$_$_ui256_$_string$_Memory_$_$_array$_dyn_ui256_$_Memory_$_$_$_Memory_$_$_Memory_$ : (i256) -> i256
     // CHECK-NEXT:  ^bb0(%[[N:.*]]: i256):
     // CHECK:         %[[DSZ:.*]] = yul.mul %[[N]], %{{.*}}
-    // CHECK:         %[[P:.*]] = yul.mload
+    // CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc
     // CHECK:         yul.mstore %[[P]], %[[N]]
     // CHECK:         %[[DATA:.*]] = yul.add %[[P]], %{{.*}}
     // CHECK:         yul.for
@@ -139,6 +159,10 @@ module {
     // CHECK:           yul.mstore %[[F2]], %[[Z2]]
     // CHECK:           yul.mstore %[[E]], %[[S]]
     // CHECK:         } step {
+    // CHECK-LABEL: yul.func @dyn_of_struct : (i256) -> i256
+    // CHECK-NEXT:  ^bb0(%[[N:.*]]: i256):
+    // CHECK:         %[[A:.*]] = yul.func_call @__sol.alloc_array.zeroed.memory.array$_dyn_struct$_$_ui256_$_string$_Memory_$_$_array$_dyn_ui256_$_Memory_$_$_$_Memory_$_$_Memory_$(%[[N]])
+    // CHECK:         yul.func_return %[[A]] : i256
     sol.func @dyn_of_struct(%n: ui256) -> !sol.array<? x !sol.struct<(ui256, !sol.string<Memory>, !sol.array<? x ui256, Memory>), Memory>, Memory> {
       %0 = sol.malloc %n zero_init : (ui256) -> !sol.array<? x !sol.struct<(ui256, !sol.string<Memory>, !sol.array<? x ui256, Memory>), Memory>, Memory>
       sol.return %0 : !sol.array<? x !sol.struct<(ui256, !sol.string<Memory>, !sol.array<? x ui256, Memory>), Memory>, Memory>
@@ -174,12 +198,10 @@ module {
 module {
   sol.contract @C {
     // bytes(n) reserves round_up(n, 32) data bytes after the length word and
-    // zero-fills all of them; a free-pointer overflow panics with 0x41.
-    // CHECK-LABEL: yul.func @bytes : (i256) -> i256
-    // CHECK-NEXT:  ^bb0(%[[N:.*]]: i256):
-    // CHECK:         %[[N31:.*]] = yul.add %[[N]], %c31_i256
-    // CHECK:         %[[DSZ:.*]] = yul.and %[[N31]], %c-32_i256
-    // CHECK:         %[[SZ:.*]] = yul.add %[[DSZ]], %c32_i256
+    // zero-fills all of them; the shared allocator panics with 0x41 on a
+    // free-pointer overflow.
+    // CHECK-LABEL: yul.func @__sol.alloc : (i256) -> i256
+    // CHECK-NEXT:  ^bb0(%[[SZ:.*]]: i256):
     // CHECK:         %[[P:.*]] = yul.mload %c64_i256
     // CHECK:         %[[SZ31:.*]] = yul.add %[[SZ]], %c31_i256
     // CHECK:         %[[ASZ:.*]] = yul.and %[[SZ31]], %c-32_i256
@@ -188,8 +210,15 @@ module {
     // CHECK:         %[[WRAP:.*]] = yul.cmp ult, %[[END]], %[[P]]
     // CHECK:         %[[BAD:.*]] = yul.or %[[OVF]], %[[WRAP]]
     // CHECK:         yul.if %[[BAD]] {
-    // CHECK:           yul.mstore %{{.*}}, %c65_i256
+    // CHECK:           yul.func_call @__sol.panic(%c65_i256)
     // CHECK:         yul.mstore %c64_i256{{.*}}, %[[END]]
+    // CHECK:         yul.func_return %[[P]] : i256
+    // CHECK-LABEL: yul.func @bytes : (i256) -> i256
+    // CHECK-NEXT:  ^bb0(%[[N:.*]]: i256):
+    // CHECK:         %[[N31:.*]] = yul.add %[[N]], %c31_i256
+    // CHECK:         %[[DSZ:.*]] = yul.and %[[N31]], %c-32_i256
+    // CHECK:         %[[SZ:.*]] = yul.add %[[DSZ]], %c32_i256
+    // CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc(%[[SZ]])
     // CHECK:         yul.mstore %[[P]], %[[N]]
     // CHECK:         %[[DATA:.*]] = yul.add %[[P]], %c32_i256
     // CHECK:         %[[CDS:.*]] = yul.calldatasize
