@@ -15,7 +15,7 @@
  file = #file, isOptimized = false, emissionKind = Full>
 
 // CHECK-LABEL: yul.object @C_deployed {
-// CHECK:         yul.func_call @[[DISPATCH:__sol\.internal_dispatch[^(]*]](%{{.*}}) : (i256) -> () loc("C.sol":5:5)
+// CHECK:         yul.func_call @[[DISPATCH:__sol\.dispatch_internal_call[^(]*]](%{{.*}}) : (i256) -> () loc("C.sol":5:5)
 // CHECK:         yul.func @[[DISPATCH]] : (i256) -> () {
 // CHECK-NEXT:    ^bb0(%arg0: i256 loc("C.sol":0:0)):
 // CHECK-NEXT:      yul.switch %arg0 : i256

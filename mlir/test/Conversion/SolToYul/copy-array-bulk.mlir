@@ -33,35 +33,49 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
   } {kind = #Contract}
 }
 
-// The lowered helpers appear in reverse definition order.
+// A copy whose elements need a loop is emitted once per type pair as a
+// `__sol.copy_array.*` helper and every site calls it; the loop and its bulk
+// copy live in the helper. A copy that is a single bulk copy stays inline.
+// A row of a memory destination is a fresh allocation: the loop clones each
+// row with one bulk copy and stores its pointer in the row slot.
 
-// CHECK-LABEL: yul.func @cd2m_narrow
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.memory.array$_4_ui8_$_CallData_$.array$_4_ui8_$_Memory_$
 // CHECK:         yul.for
 // CHECK:           yul.calldataload
 // CHECK:           yul.mstore
 // CHECK-NOT:     yul.calldatacopy
 // CHECK:         yul.func_return
 
-// CHECK-LABEL: yul.func @m2m_nested
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.memory.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$
 // CHECK:         yul.for
 // CHECK:           %[[SRC_ROW:.*]] = yul.mload
-// CHECK-NEXT:      %[[DST_ROW:.*]] = yul.mload
+// CHECK:           %[[DST_ROW:.*]] = yul.mload %c64_i256
 // CHECK:           %[[M2M_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
 // CHECK-NEXT:      yul.mcopy %[[DST_ROW]], %[[SRC_ROW]], %[[M2M_SIZE]]
-// CHECK-NOT:     yul.mstore
+// CHECK-NEXT:      yul.mstore {{.*}}, %[[DST_ROW]]
 // CHECK:         yul.func_return
 
+// The nested calldata copy loops per row and copies each row in bulk.
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.memory.array$_4_array$_4_ui256_$_CallData_$_$_CallData_$.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$
+// CHECK:         yul.for
+// CHECK:           %[[CD_ROW:.*]] = yul.add %arg0
+// CHECK:           %[[MEM_ROW:.*]] = yul.mload %c64_i256
+// CHECK:           %[[CD_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
+// CHECK-NEXT:      yul.calldatacopy %[[MEM_ROW]], %[[CD_ROW]], %[[CD_SIZE]]
+// CHECK-NEXT:      yul.mstore {{.*}}, %[[MEM_ROW]]
+// CHECK-NOT:     yul.calldataload
+// CHECK:         yul.func_return
+
+// The copying functions are calls; the flat one keeps its inline bulk copy.
+// CHECK-LABEL: yul.func @cd2m_narrow
+// CHECK:         yul.func_call @__sol.copy_array.calldata.memory.array$_4_ui8_$_CallData_$.array$_4_ui8_$_Memory_$(%arg0, %arg1)
+// CHECK-NEXT:    yul.func_return
+
+// A flat word array is one calldatacopy and gets no helper: it stays in the
+// function itself.
 // CHECK-LABEL: yul.func @cd2m_flat
 // CHECK-NOT:     yul.for
+// CHECK-NOT:     yul.func_call
 // CHECK:         %[[FLAT_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
 // CHECK-NEXT:    yul.calldatacopy %arg1, %arg0, %[[FLAT_SIZE]]
 // CHECK-NEXT:    yul.func_return
-
-// CHECK-LABEL: yul.func @cd2m_nested
-// CHECK:         yul.for
-// CHECK:           %[[CD_ROW:.*]] = yul.add %arg0
-// CHECK:           %[[MEM_ROW:.*]] = yul.mload
-// CHECK:           %[[CD_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
-// CHECK-NEXT:      yul.calldatacopy %[[MEM_ROW]], %[[CD_ROW]], %[[CD_SIZE]]
-// CHECK-NOT:     yul.calldataload
-// CHECK:         yul.func_return
