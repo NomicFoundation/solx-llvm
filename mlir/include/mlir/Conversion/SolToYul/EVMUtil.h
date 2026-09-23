@@ -104,6 +104,15 @@ struct ABIEncodingOptions {
 /// spelling, the parts are separated by '.', and no field may contain '.'
 /// (asserted). Solidity identifiers cannot contain '.' either, so no user
 /// symbol can collide with a helper symbol.
+/// Marks a function as a compiler-generated helper, i.e. one created by
+/// `evm::Builder::getOrCreateHelperFn`. It travels to LLVM as a function
+/// attribute (through the `passthrough` array built by the Yul lowering),
+/// where `EVMAlwaysInline` uses it to decide whether a helper shared by
+/// several call sites should stay out of line. Helpers are identified by this
+/// attribute rather than by their symbol spelling, so the name scheme below
+/// stays a frontend detail.
+constexpr llvm::StringLiteral kHelperFnAttrName = "evm.sol_helper";
+
 namespace helpersym {
 /// Deep copy between data locations: `__sol.copy.<src>.<dst>.<type name>`.
 std::string copy(mlir::sol::DataLocation src, mlir::sol::DataLocation dst,
@@ -122,6 +131,31 @@ std::string copyStringData(mlir::sol::DataLocation src,
 /// `__sol.internal_dispatch.<rt|cr>.<id>...`.
 std::string internalDispatch(bool runtime,
                              llvm::ArrayRef<int64_t> candidateIds);
+
+/// '.'-free spelling of a type for use as a helper symbol field. The printed
+/// type is kept letter for letter with the punctuation escaped by '$'
+/// sequences, so two different types never spell the same.
+std::string typeName(mlir::Type ty);
+/// Array copy into storage: `__sol.copy_array.<src>.<dst>.<src ty>.<dst ty>`.
+std::string copyArray(mlir::sol::DataLocation src, mlir::sol::DataLocation dst,
+                      mlir::Type srcTy, mlir::Type dstTy);
+/// Deep copy of a literal (unnamed) struct:
+/// `__sol.copy_struct.<src>.<dst>.<ty>`.
+std::string copyLiteralStruct(mlir::sol::DataLocation src,
+                              mlir::sol::DataLocation dst, mlir::Type ty);
+/// Zeroes a storage array or literal struct: `__sol.clear_storage_ty.<ty>`.
+std::string clearStorageOfType(mlir::Type ty);
+/// Allocates and initializes a memory array with reference-typed elements:
+/// `__sol.malloc.<zero|raw>.<ty>`.
+std::string mallocOf(bool zeroInit, mlir::Type ty);
+/// ABI-decodes one value of an aggregate type into fresh memory:
+/// `__sol.decode.<cd|mem>.<ty>`.
+std::string decode(bool fromMem, mlir::Type ty);
+/// ABI-encodes one memory array: `__sol.encode.<std|packed|...>.<ty>`.
+std::string encode(bool padded, bool dynamicInplace, mlir::Type ty);
+/// Storage array push / pop: `__sol.push.<ty>`, `__sol.pop.<ty>`.
+std::string push(mlir::Type ty);
+std::string pop(mlir::Type ty);
 } // namespace helpersym
 
 /// IR Builder for EVM specific lowering.
@@ -234,9 +268,18 @@ private:
   /// (the public overload above does this).
   ///
   /// The allocation spans are word-rounded centrally in genFreePtrUpd.
+  ///
+  /// Arrays with reference-typed elements (nested arrays, arrays of structs or
+  /// strings) allocate their rows in a loop; that loop is emitted once per
+  /// type as the out-of-line helper `helpersym::mallocOf` and called here.
   Value genMemAlloc(Type ty, bool zeroInit, ValueRange initVals, Value sizeVar,
                     int64_t recDepth,
                     std::optional<Location> locArg = std::nullopt);
+  /// The inline expansion behind genMemAlloc. Element allocations go back
+  /// through genMemAlloc, so nested rows share their helper.
+  Value genMemAllocInline(Type ty, bool zeroInit, ValueRange initVals,
+                          Value sizeVar, int64_t recDepth,
+                          std::optional<Location> locArg = std::nullopt);
 
   /// Recursive primitive for `genABIEncoding` covering the full type taxonomy
   /// parameterised by `opts`. `dstAddrInTail`, `tupleStart`, `tailAddr` are
@@ -245,6 +288,19 @@ private:
                            ABIEncodingOptions opts, bool dstAddrInTail,
                            Value tupleStart, Value tailAddr, Location loc,
                            std::optional<sol::DataLocation> srcDataLoc);
+  /// The inline expansion behind genABIEncodingImpl. Memory arrays whose
+  /// elements need a loop (nested arrays, narrow elements) are encoded by
+  /// the out-of-line helper `helpersym::encode`; elements recurse through
+  /// genABIEncodingImpl so rows share their helper.
+  /// \p arrayLength, when set, is the length of the dynamic array \p src and
+  /// is used instead of loading it; the encode helper takes it as an
+  /// argument so that a compile-time constant length still folds after the
+  /// helper is inlined back.
+  Value genABIEncodingImplInline(Type ty, Value src, Value dstAddr,
+                                 ABIEncodingOptions opts, bool dstAddrInTail,
+                                 Value tupleStart, Value tailAddr, Location loc,
+                                 std::optional<sol::DataLocation> srcDataLoc,
+                                 Value arrayLength = {});
 
   /// Zeroes storage slots in the out-of-place data area of a storage
   /// string/bytes at \p dstAddr that are no longer needed when the content
@@ -481,10 +537,10 @@ public:
 
   /// Zeros the storage occupied by a value of type \p ty at \p slot.
   ///
-  /// Identified (self-referential) structs are cleared via an out-of-line
-  /// helper function that recurses at runtime. Every other type is expanded
-  /// inline. Recursing inline on a self-referential struct (e.g.
-  /// `struct S { S[] arr; }`) would never terminate in the compiler.
+  /// Structs and arrays are cleared via an out-of-line helper function, one
+  /// per type, that recurses at runtime (a self-referential struct such as
+  /// `struct S { S[] arr; }` could not be expanded inline anyway). Scalars
+  /// and strings are expanded inline.
   void genClearStorageValue(mlir::Type ty, mlir::Value slot,
                             mlir::Location loc);
 
@@ -505,10 +561,19 @@ public:
   /// StringType (any->Stg or any->Mem), StructType (any->Stg only, memory
   /// copies must be lowered by DataLocCastOpLowering first), and arrays of
   /// any element type with any packing combination.
+  ///
+  /// Array copies into storage are emitted once per (source, destination)
+  /// type pair as the out-of-line helper `helpersym::copyArray` and called
+  /// here; nested rows recurse through genCopy and share their helper.
   void genCopy(mlir::Type srcTy, mlir::Type dstTy, mlir::Value srcAddr,
                mlir::Value dstAddr, mlir::sol::DataLocation srcDataLoc,
                mlir::sol::DataLocation dstDataLoc,
                std::optional<mlir::Location> locArg = std::nullopt);
+  /// The inline expansion behind genCopy.
+  void genCopyInline(mlir::Type srcTy, mlir::Type dstTy, mlir::Value srcAddr,
+                     mlir::Value dstAddr, mlir::sol::DataLocation srcDataLoc,
+                     mlir::sol::DataLocation dstDataLoc,
+                     std::optional<mlir::Location> locArg = std::nullopt);
 
   /// Returns the helper function named \p symbol in the enclosing contract,
   /// creating it on first request: a `sol.func` with signature
@@ -529,6 +594,13 @@ public:
   /// which is fine because no contract object can reach that code. This
   /// support exists only for standalone free functions and is a subject of
   /// future removal, see the comment in the implementation.
+  /// Splits a value into its i256 words: an i256 is itself, an LLVM struct of
+  /// i256 (a calldata fat pointer) becomes its fields. Used at helper
+  /// boundaries, where every argument and result is a word.
+  SmallVector<Value> flattenWords(Value val, Location loc);
+  /// Inverse of flattenWords for a value of type \p ty.
+  Value rebuildWords(Type ty, ValueRange words, Location loc);
+
   mlir::sol::FuncOp getOrCreateHelperFn(
       llvm::StringRef symbol, mlir::TypeRange argTys, mlir::TypeRange resTys,
       llvm::function_ref<void(mlir::ValueRange)> genBody, mlir::Location loc);
@@ -574,7 +646,16 @@ public:
   Value genABITupleEncoding(std::string const &str, Value headStart,
                             std::optional<Location> locArg = std::nullopt);
 
+  /// Decodes one ABI value of type \p ty at \p addr. Aggregates decoded
+  /// into memory whose decoding needs a loop (nested arrays, arrays of
+  /// narrow elements, structs containing them) are decoded by the
+  /// out-of-line helper `helpersym::decode`, one per type.
   Value genABITupleDecoding(Type ty, Value addr, bool fromMem, Value tupleStart,
+                            Value tupleEnd, bool topLevel,
+                            std::optional<Location> locArg = std::nullopt);
+  /// The inline expansion behind genABITupleDecoding.
+  Value
+  genABITupleDecodingInline(Type ty, Value addr, bool fromMem, Value tupleStart,
                             Value tupleEnd, bool topLevel,
                             std::optional<Location> locArg = std::nullopt);
 

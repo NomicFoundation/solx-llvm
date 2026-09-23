@@ -223,10 +223,13 @@ struct FuncOpLowering : public OpRewritePattern<yul::FuncOp> {
           LLVM::LinkageAttr::get(r.getContext(), LLVM::Linkage::Private)));
 
     // Add the nofree and null_pointer_is_valid attributes of llvm via the
-    // passthrough attribute.
+    // passthrough attribute. A compiler-generated helper also carries its
+    // marker into LLVM, where the inlining policy reads it.
     std::vector<Attribute> passthroughAttrs;
     passthroughAttrs.push_back(r.getStringAttr("nofree"));
     passthroughAttrs.push_back(r.getStringAttr("null_pointer_is_valid"));
+    if (op->hasAttr(evm::kHelperFnAttrName))
+      passthroughAttrs.push_back(r.getStringAttr(evm::kHelperFnAttrName));
     attrs.push_back(r.getNamedAttr(
         "passthrough", ArrayAttr::get(r.getContext(), passthroughAttrs)));
 

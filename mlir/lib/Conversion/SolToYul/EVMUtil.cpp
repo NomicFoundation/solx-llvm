@@ -19,6 +19,7 @@
 #include "mlir/Conversion/SolToYul/Util.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1123,11 +1124,85 @@ Value evm::Builder::genMemAllocForDynArray(Value sizeVar, Value sizeInBytes,
   return memPtr;
 }
 
-/// Recursively generates the memory allocation and initialization code for
-/// the memory-located aggregate type \p ty.
+// Returns true when \p v is a compile-time constant, possibly wrapped in the
+// cleanup arithmetic that the allocation entry applies to a narrow literal
+// (`new T[](3)` reaches the allocator as `and(3, 0xff)`).
+static bool isConstantValue(Value v) {
+  // yul.constant is not ConstantLike, so it is matched by kind.
+  return v.getDefiningOp<yul::ConstantOp>() || matchPattern(v, m_Constant());
+}
+static bool isConstantLength(Value v) {
+  for (unsigned depth = 0; depth < 4; ++depth) {
+    if (isConstantValue(v))
+      return true;
+    Operation *def = v.getDefiningOp();
+    // Only pure arithmetic is looked through: a load or an alloca with a
+    // constant operand is not a constant.
+    if (!def || def->getNumResults() != 1 || def->getNumOperands() == 0 ||
+        !isMemoryEffectFree(def))
+      return false;
+    Value next;
+    for (Value operand : def->getOperands()) {
+      if (isConstantValue(operand))
+        continue;
+      if (next)
+        return false;
+      next = operand;
+    }
+    if (!next)
+      return true; // every operand is a constant
+    v = next;
+  }
+  return false;
+}
+
 Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
                                 Value sizeVar, int64_t recDepth,
                                 std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+
+  // Arrays with reference-typed elements allocate one row per element in a
+  // loop. Emit that once per type. A dynamic array is allocated only at the
+  // outermost dimension (recDepth + 1 == 0), where the length is a runtime
+  // value; deeper dynamic arrays are the zero-pointer sentinel.
+  if (auto arrTy = dyn_cast<sol::ArrayType>(ty); arrTy && initVals.empty()) {
+    Type eltTy = arrTy.getEltType();
+    bool refElt = isa<sol::StructType, sol::ArrayType, sol::StringType>(eltTy);
+    bool dynTop = arrTy.isDynSized() && sizeVar && recDepth + 1 == 0;
+    // A dynamic array with a constant length (`new T[](3)`) is left inline:
+    // the optimizer unrolls and folds the row loop against the constant, which
+    // a helper boundary would hide.
+    bool constLen = dynTop && isConstantLength(sizeVar);
+    if (refElt && (!arrTy.isDynSized() || dynTop) && !constLen) {
+      auto i256Ty = b.getIntegerType(256);
+      SmallVector<Type> argTys;
+      SmallVector<Value> args;
+      if (dynTop) {
+        argTys.push_back(i256Ty);
+        args.push_back(sizeVar);
+      }
+      sol::FuncOp fn = getOrCreateHelperFn(
+          helpersym::mallocOf(zeroInit, ty), argTys, {i256Ty},
+          [&](ValueRange a) {
+            Value ptr =
+                genMemAllocInline(ty, zeroInit, /*initVals=*/{},
+                                  dynTop ? a[0] : Value(), recDepth, loc);
+            b.create<sol::ReturnOp>(loc, ValueRange{ptr});
+          },
+          loc);
+      return b.create<sol::CallOp>(loc, fn, args).getResult(0);
+    }
+  }
+
+  return genMemAllocInline(ty, zeroInit, initVals, sizeVar, recDepth, loc);
+}
+
+/// Recursively generates the memory allocation and initialization code for
+/// the memory-located aggregate type \p ty.
+Value evm::Builder::genMemAllocInline(Type ty, bool zeroInit,
+                                      ValueRange initVals, Value sizeVar,
+                                      int64_t recDepth,
+                                      std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
@@ -2119,8 +2194,22 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
   // Route self-referential structures through an out-of-line helper that
   // recurses at runtime instead. Every other type (including literal structs,
   // which cannot be self-referential) is expanded inline.
-  if (auto structTy = dyn_cast<sol::StructType>(ty);
-      structTy && structTy.isIdentified()) {
+  auto structTy = dyn_cast<sol::StructType>(ty);
+  if (isa<sol::ArrayType>(ty) || (structTy && !structTy.isIdentified())) {
+    // One helper per type. Element and member clears recurse through
+    // genClearStorageValue, so nested rows share their helper.
+    auto i256Ty = b.getIntegerType(256);
+    sol::FuncOp fn = getOrCreateHelperFn(
+        helpersym::clearStorageOfType(ty), {i256Ty}, {},
+        [&](ValueRange args) {
+          genClearStorageValueInline(ty, args[0], loc);
+          b.create<sol::ReturnOp>(loc);
+        },
+        loc);
+    b.create<sol::CallOp>(loc, fn, ValueRange{slot});
+    return;
+  }
+  if (structTy && structTy.isIdentified()) {
     // Emit (or reuse) a `sol.func` that clears the struct and call it. The
     // struct name is the only key field: identified structs are uniqued by
     // (name, data location), but only the Storage variant is ever cleared, so
@@ -2193,6 +2282,120 @@ std::string evm::helpersym::internalDispatch(bool runtime,
   return makeHelperSymbol("internal_dispatch", fields);
 }
 
+std::string evm::helpersym::typeName(Type ty) {
+  std::string printed;
+  {
+    llvm::raw_string_ostream os(printed);
+    ty.print(os);
+  }
+  // Letters, digits and '_' are kept. Punctuation becomes a '$' escape so the
+  // spelling stays injective; the "!sol." prefixes, quotes and blanks carry
+  // no information and are dropped.
+  std::string out;
+  for (char c : printed) {
+    if (llvm::isAlnum(c) || c == '_') {
+      out += c;
+      continue;
+    }
+    switch (c) {
+    case '<':
+      out += "$L";
+      break;
+    case '>':
+      out += "$R";
+      break;
+    case ',':
+      out += "$C";
+      break;
+    case '(':
+      out += "$P";
+      break;
+    case ')':
+      out += "$Q";
+      break;
+    case '?':
+      out += "$D";
+      break;
+    case '!':
+    case '.':
+    case ' ':
+    case '"':
+      break;
+    default:
+      out += '$';
+      out += llvm::utohexstr(static_cast<unsigned char>(c));
+      break;
+    }
+  }
+  return out;
+}
+
+std::string evm::helpersym::copyArray(sol::DataLocation src,
+                                      sol::DataLocation dst, Type srcTy,
+                                      Type dstTy) {
+  return makeHelperSymbol("copy_array",
+                          {sol::stringifyDataLocation(src).lower(),
+                           sol::stringifyDataLocation(dst).lower(),
+                           typeName(srcTy), typeName(dstTy)});
+}
+
+std::string evm::helpersym::copyLiteralStruct(sol::DataLocation src,
+                                              sol::DataLocation dst, Type ty) {
+  return makeHelperSymbol(
+      "copy_struct", {sol::stringifyDataLocation(src).lower(),
+                      sol::stringifyDataLocation(dst).lower(), typeName(ty)});
+}
+
+std::string evm::helpersym::clearStorageOfType(Type ty) {
+  return makeHelperSymbol("clear_storage_ty", {typeName(ty)});
+}
+
+std::string evm::helpersym::mallocOf(bool zeroInit, Type ty) {
+  return makeHelperSymbol("malloc", {zeroInit ? "zero" : "raw", typeName(ty)});
+}
+
+std::string evm::helpersym::decode(bool fromMem, Type ty) {
+  return makeHelperSymbol("decode", {fromMem ? "mem" : "cd", typeName(ty)});
+}
+
+std::string evm::helpersym::encode(bool padded, bool dynamicInplace, Type ty) {
+  std::string mode = std::string(padded ? "padded" : "packed") +
+                     (dynamicInplace ? "_inplace" : "_tail");
+  return makeHelperSymbol("encode", {mode, typeName(ty)});
+}
+
+std::string evm::helpersym::push(Type ty) {
+  return makeHelperSymbol("push", {typeName(ty)});
+}
+
+std::string evm::helpersym::pop(Type ty) {
+  return makeHelperSymbol("pop", {typeName(ty)});
+}
+
+SmallVector<Value> evm::Builder::flattenWords(Value val, Location loc) {
+  auto i256Ty = b.getIntegerType(256);
+  if (auto structTy = dyn_cast<LLVM::LLVMStructType>(val.getType())) {
+    SmallVector<Value> words;
+    for (auto [i, eltTy] : llvm::enumerate(structTy.getBody())) {
+      assert(eltTy == i256Ty && "expected a struct of i256 words");
+      words.push_back(b.create<LLVM::ExtractValueOp>(
+          loc, i256Ty, val, b.getDenseI64ArrayAttr({static_cast<int64_t>(i)})));
+    }
+    return words;
+  }
+  assert(val.getType() == i256Ty && "expected an i256 word");
+  return {val};
+}
+
+Value evm::Builder::rebuildWords(Type ty, ValueRange words, Location loc) {
+  if (isa<LLVM::LLVMStructType>(ty)) {
+    mlir::solgen::BuilderExt bExt(b, loc);
+    return bExt.genLLVMStruct(words, loc);
+  }
+  assert(words.size() == 1);
+  return words[0];
+}
+
 sol::FuncOp evm::Builder::getOrCreateHelperFn(
     StringRef symbol, TypeRange argTys, TypeRange resTys,
     llvm::function_ref<void(ValueRange)> genBody, Location loc) {
@@ -2211,11 +2414,20 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
   // functions compilable and is a subject of future removal. The pipeline
   // should stop lowering free functions that no contract references, matching
   // the upstream solc pipeline, which generates no code for them.
-  auto contract =
-      b.getInsertionBlock()->getParentOp()->getParentOfType<sol::ContractOp>();
-  Operation *host = contract ? contract.getOperation() : mod.getOperation();
-  Block *hostBlock =
-      contract ? &contract.getBodyRegion().front() : mod.getBody();
+  // Code emitted by the contract lowering itself (the dispatcher and the
+  // constructor prologue) no longer has an enclosing contract: it lives in a
+  // yul.object, which is a symbol table of its own. A helper created there is
+  // hosted by that object, so it ends up in the same module as its callers.
+  Operation *ip = b.getInsertionBlock()->getParentOp();
+  auto contract = ip->getParentOfType<sol::ContractOp>();
+  auto object =
+      contract ? yul::ObjectOp() : ip->getParentOfType<yul::ObjectOp>();
+  Operation *host = contract ? contract.getOperation()
+                    : object ? object.getOperation()
+                             : mod.getOperation();
+  Block *hostBlock = contract ? &contract.getBodyRegion().front()
+                     : object ? &object.getBody().front()
+                              : mod.getBody();
 
   auto fnTy = FunctionType::get(b.getContext(), argTys, resTys);
 
@@ -2233,6 +2445,9 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
   b.setInsertionPointToEnd(hostBlock);
 
   auto fn = b.create<sol::FuncOp>(loc, symbol, fnTy);
+  fn->setAttr(kHelperFnAttrName, b.getUnitAttr());
+  if (object && object.getName().ends_with("_deployed"))
+    fn.setRuntimeAttr(b.getUnitAttr());
   Block *entry = &fn.getBody().emplaceBlock();
   SmallVector<Location> argLocs(argTys.size(), loc);
   entry->addArguments(argTys, argLocs);
@@ -2888,6 +3103,40 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
                            sol::DataLocation dstDataLoc,
                            std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
+
+  // Compile-time SSA identity check.
+  if (srcAddr == dstAddr)
+    return;
+
+  // Array copies into storage are loops over the elements (plus the length
+  // update and the tail clear). Emit them once per type pair and call.
+  if (isa<sol::ArrayType>(dstTy) && dstDataLoc == sol::DataLocation::Storage) {
+    SmallVector<Value> args = flattenWords(srcAddr, loc);
+    args.push_back(dstAddr);
+    SmallVector<Type> argTys(
+        llvm::map_range(args, [](Value v) { return v.getType(); }));
+    Type srcValTy = srcAddr.getType();
+    sol::FuncOp fn = getOrCreateHelperFn(
+        helpersym::copyArray(srcDataLoc, dstDataLoc, srcTy, dstTy), argTys, {},
+        [&](ValueRange a) {
+          Value src = rebuildWords(srcValTy, a.drop_back(), loc);
+          genCopyInline(srcTy, dstTy, src, a.back(), srcDataLoc, dstDataLoc,
+                        loc);
+          b.create<sol::ReturnOp>(loc);
+        },
+        loc);
+    b.create<sol::CallOp>(loc, fn, args);
+    return;
+  }
+
+  genCopyInline(srcTy, dstTy, srcAddr, dstAddr, srcDataLoc, dstDataLoc, loc);
+}
+
+void evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
+                                 Value dstAddr, sol::DataLocation srcDataLoc,
+                                 sol::DataLocation dstDataLoc,
+                                 std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
   assert(!isa<sol::MappingType>(srcTy) && !isa<sol::MappingType>(dstTy));
@@ -3223,15 +3472,20 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
           "struct -> memory copy must be lowered by DataLocCastOpLowering");
     auto srcStructTy = cast<sol::StructType>(srcTy);
 
-    // For recursive structures out-of-line the per-struct copy into a helper
-    // that recurses at runtime (nested struct members/elements call back into
-    // genCopy, which dispatches to the same helper).
-    if (dstStructTy.isIdentified()) {
+    // Out-of-line the per-struct copy into a helper, one per struct type.
+    // For recursive structures the helper also recurses at runtime (nested
+    // struct members/elements call back into genCopy, which dispatches to
+    // the same helper).
+    {
       auto i256Ty = b.getIntegerType(256);
+      std::string sym =
+          dstStructTy.isIdentified()
+              ? helpersym::copy(srcDataLoc, sol::DataLocation::Storage,
+                                dstStructTy.getName())
+              : helpersym::copyLiteralStruct(srcDataLoc,
+                                             sol::DataLocation::Storage, dstTy);
       sol::FuncOp fn = getOrCreateHelperFn(
-          helpersym::copy(srcDataLoc, sol::DataLocation::Storage,
-                          dstStructTy.getName()),
-          {i256Ty, i256Ty}, {},
+          sym, {i256Ty, i256Ty}, {},
           [&](ValueRange args) {
             genStructToStorageCopyInline(srcStructTy, dstStructTy, args[0],
                                          args[1], srcDataLoc, loc);
@@ -3239,9 +3493,6 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
           },
           loc);
       b.create<sol::CallOp>(loc, fn, ValueRange{srcAddr, dstAddr});
-    } else {
-      genStructToStorageCopyInline(srcStructTy, dstStructTy, srcAddr, dstAddr,
-                                   srcDataLoc, loc);
     }
   } else {
     llvm_unreachable("Unexpected type to copy");
@@ -3340,6 +3591,47 @@ Value evm::Builder::genABIEncodingImpl(
     Type ty, Value src, Value dstAddr, ABIEncodingOptions opts,
     bool dstAddrInTail, Value tupleStart, Value tailAddr, Location loc,
     std::optional<sol::DataLocation> srcDataLoc) {
+  // A memory array whose elements cannot be bulk copied is encoded by a
+  // per-element loop. Emit it once per type and mode. The helper writes the
+  // array at `dst` and returns the end of what it wrote. A dynamic array
+  // always sits in the tail, so `dst` is the tail; a static array with static
+  // elements sits in the head and leaves the caller's tail untouched.
+  // The length of a dynamic array is loaded by the caller and passed as an
+  // argument: when the array was allocated with a constant length in the same
+  // function, the optimizer folds the load to that constant, and once a
+  // single-use helper is inlined back the loop bound is constant again.
+  auto arrTy = dyn_cast<sol::ArrayType>(ty);
+  if (arrTy && arrTy.getDataLocation() == sol::DataLocation::Memory &&
+      !canFastCopyCalldataArray(arrTy.getEltType())) {
+    auto i256Ty = b.getIntegerType(256);
+    bool dyn = arrTy.isDynSized();
+    SmallVector<Type> argTys(dyn ? 3 : 2, i256Ty);
+    SmallVector<Value> args{src, dstAddr};
+    if (dyn)
+      args.push_back(genDynSize(src, arrTy, loc));
+    sol::FuncOp fn = getOrCreateHelperFn(
+        helpersym::encode(opts.padded, opts.dynamicInplace, ty), argTys,
+        {i256Ty},
+        [&](ValueRange a) {
+          Value end = genABIEncodingImplInline(
+              ty, a[0], a[1], opts, /*dstAddrInTail=*/true,
+              /*tupleStart=*/a[1], /*tailAddr=*/a[1], loc, srcDataLoc,
+              /*arrayLength=*/dyn ? a[2] : Value());
+          b.create<sol::ReturnOp>(loc, ValueRange{end});
+        },
+        loc);
+    Value end = b.create<sol::CallOp>(loc, fn, args).getResult(0);
+    return (dstAddrInTail || opts.dynamicInplace) ? end : tailAddr;
+  }
+
+  return genABIEncodingImplInline(ty, src, dstAddr, opts, dstAddrInTail,
+                                  tupleStart, tailAddr, loc, srcDataLoc);
+}
+
+Value evm::Builder::genABIEncodingImplInline(
+    Type ty, Value src, Value dstAddr, ABIEncodingOptions opts,
+    bool dstAddrInTail, Value tupleStart, Value tailAddr, Location loc,
+    std::optional<sol::DataLocation> srcDataLoc, Value arrayLength) {
   mlir::solgen::BuilderExt bExt(b, loc);
 
   // Scalar
@@ -3485,7 +3777,7 @@ Value evm::Builder::genABIEncodingImpl(
     // Path C doesn't use dstStride: its single-cursor loop advances by the
     // recursive call's return (variable per element), not by a fixed stride.
     if (arrTy.isDynSized()) {
-      size = genDynSize(src, arrTy, loc);
+      size = arrayLength ? arrayLength : genDynSize(src, arrTy, loc);
       srcArrAddr = genDataAddrPtr(src, arrTy, loc);
     } else {
       size = bExt.genI256Const(arrTy.getSize());
@@ -3713,10 +4005,49 @@ Value evm::Builder::genABITupleEncoding(std::string const &str, Value headStart,
   return b.create<yul::AddOp>(loc, tailAddr, stringSize);
 }
 
+// Returns true when decoding \p ty into memory emits a loop: an array whose
+// elements cannot be bulk copied, or a struct containing such an array.
+static bool decodeNeedsLoop(Type ty) {
+  if (auto arrTy = dyn_cast<sol::ArrayType>(ty))
+    return arrTy.getDataLocation() == sol::DataLocation::Memory &&
+           !canFastCopyCalldataArray(arrTy.getEltType());
+  if (auto structTy = dyn_cast<sol::StructType>(ty))
+    return structTy.getDataLocation() == sol::DataLocation::Memory &&
+           llvm::any_of(structTy.getMemberTypes(), decodeNeedsLoop);
+  return false;
+}
+
 Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
                                         Value tupleStart, Value tupleEnd,
                                         bool topLevel,
                                         std::optional<mlir::Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+
+  // Loop-carrying decoders are emitted once per type and called. The body
+  // needs the value address and the tuple end for its bounds checks; the
+  // tuple start is only used by scalar and calldata-resident cases.
+  if (decodeNeedsLoop(ty)) {
+    auto i256Ty = b.getIntegerType(256);
+    sol::FuncOp fn = getOrCreateHelperFn(
+        helpersym::decode(fromMem, ty), {i256Ty, i256Ty}, {i256Ty},
+        [&](ValueRange a) {
+          Value res = genABITupleDecodingInline(ty, a[0], fromMem,
+                                                /*tupleStart=*/a[0], a[1],
+                                                /*topLevel=*/false, loc);
+          b.create<sol::ReturnOp>(loc, ValueRange{res});
+        },
+        loc);
+    return b.create<sol::CallOp>(loc, fn, ValueRange{addr, tupleEnd})
+        .getResult(0);
+  }
+
+  return genABITupleDecodingInline(ty, addr, fromMem, tupleStart, tupleEnd,
+                                   topLevel, loc);
+}
+
+Value evm::Builder::genABITupleDecodingInline(
+    Type ty, Value addr, bool fromMem, Value tupleStart, Value tupleEnd,
+    bool topLevel, std::optional<mlir::Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
   ABIDecodeGuards guards(*this, b, loc, tupleEnd);

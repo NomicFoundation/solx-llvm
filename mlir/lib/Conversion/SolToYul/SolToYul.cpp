@@ -1600,12 +1600,6 @@ struct PushOpLowering : public OpConversionPattern<sol::PushOp> {
       return success();
     }
 
-    Value slot = adaptor.getInp();
-    Value oldSize = r.create<yul::SLoadOp>(loc, slot);
-    Value newSize = r.create<yul::AddOp>(loc, oldSize, bExt.genI256Const(1));
-    r.create<yul::SStoreOp>(loc, slot, newSize);
-    Value dataSlot = evmB.genDataAddrPtr(slot, sol::DataLocation::Storage);
-
     // Get element type from the input type.
     Type eltTy;
     if (auto arrTy = dyn_cast<sol::ArrayType>(inpTy)) {
@@ -1614,14 +1608,38 @@ struct PushOpLowering : public OpConversionPattern<sol::PushOp> {
       llvm_unreachable("");
     }
 
-    if (sol::canBePacked(eltTy)) {
-      r.replaceOp(op, evmB.genPackedStorageAddr(dataSlot, oldSize, eltTy));
-    } else {
+    // The push body (length update, data slot hashing, packed addressing) is
+    // emitted once per array type as a helper taking the array slot and
+    // returning the address of the new element.
+    auto genPush = [&](Value slot) -> Value {
+      Value oldSize = r.create<yul::SLoadOp>(loc, slot);
+      Value newSize = r.create<yul::AddOp>(loc, oldSize, bExt.genI256Const(1));
+      r.create<yul::SStoreOp>(loc, slot, newSize);
+      Value dataSlot = evmB.genDataAddrPtr(slot, sol::DataLocation::Storage);
+      if (sol::canBePacked(eltTy))
+        return evmB.genPackedStorageAddr(dataSlot, oldSize, eltTy);
       // Slot-aligned layout.
       Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
       Value scaledIdx = r.create<yul::MulOp>(loc, oldSize, stride);
-      r.replaceOp(op, r.create<yul::AddOp>(loc, dataSlot, scaledIdx));
-    }
+      return r.create<yul::AddOp>(loc, dataSlot, scaledIdx);
+    };
+
+    auto i256Ty = r.getIntegerType(256);
+    Type resTy = getTypeConverter()->convertType(op.getType());
+    SmallVector<Type> resWordTys(
+        isa<LLVM::LLVMStructType>(resTy)
+            ? cast<LLVM::LLVMStructType>(resTy).getBody().size()
+            : 1,
+        i256Ty);
+    sol::FuncOp fn = evmB.getOrCreateHelperFn(
+        evm::helpersym::push(inpTy), {i256Ty}, resWordTys,
+        [&](ValueRange args) {
+          Value addr = genPush(args[0]);
+          r.create<sol::ReturnOp>(loc, evmB.flattenWords(addr, loc));
+        },
+        loc);
+    auto call = r.create<sol::CallOp>(loc, fn, ValueRange{adaptor.getInp()});
+    r.replaceOp(op, evmB.rebuildWords(resTy, call.getResults(), loc));
     return success();
   }
 };
@@ -1661,33 +1679,47 @@ struct PopOpLowering : public OpConversionPattern<sol::PopOp> {
 
     Type inpTy = op.getInp().getType();
     Value slot = adaptor.getInp();
-    Value data = evmB.genLoad(slot, sol::DataLocation::Storage, loc);
-    Value oldSize = isa<sol::StringType>(inpTy)
-                        ? evmB.genStorageStringLength(data, loc)
-                        : data;
-
-    // Generate the empty array panic check.
-    Value panicCond =
-        bExt.genCmp(yul::CmpPredicate::eq, oldSize, bExt.genI256Const(0));
-    evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond);
 
     if (isa<sol::StringType>(inpTy)) {
+      Value data = evmB.genLoad(slot, sol::DataLocation::Storage, loc);
+      Value oldSize = evmB.genStorageStringLength(data, loc);
+      // Generate the empty array panic check.
+      Value panicCond =
+          bExt.genCmp(yul::CmpPredicate::eq, oldSize, bExt.genI256Const(0));
+      evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond);
       evmB.genPopString(slot, data, oldSize, loc);
       r.eraseOp(op);
       return success();
     }
-    Value newSize = r.create<yul::SubOp>(loc, oldSize, bExt.genI256Const(1));
     auto arrTy = cast<sol::ArrayType>(inpTy);
-    // Yul reference order. genClearStorageArrayTail handles both packed types
-    // and slot-aligned types (including multi-slot structs and nested
-    // dynamic arrays).
-    // isDecrement=true: newSize = oldSize-1, so the range is always non-empty
-    // and contains exactly one element; the range guard and loop are omitted.
-    evmB.genClearStorageArrayTail(slot, arrTy, newSize, oldSize,
-                                  /*isDecrement=*/true, loc);
-
-    // Write the decremented length after clearing the removed element.
-    r.create<yul::SStoreOp>(loc, slot, newSize);
+    // The array pop (length load, empty-array panic, clear of the removed
+    // element, length update) is emitted once per array type as a helper
+    // taking the array slot.
+    auto i256Ty = r.getIntegerType(256);
+    sol::FuncOp fn = evmB.getOrCreateHelperFn(
+        evm::helpersym::pop(inpTy), {i256Ty}, {},
+        [&](ValueRange args) {
+          Value slot = args[0];
+          Value oldSize = evmB.genLoad(slot, sol::DataLocation::Storage, loc);
+          Value panicCond =
+              bExt.genCmp(yul::CmpPredicate::eq, oldSize, bExt.genI256Const(0));
+          evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond);
+          Value newSize =
+              r.create<yul::SubOp>(loc, oldSize, bExt.genI256Const(1));
+          // Yul reference order. genClearStorageArrayTail handles both packed
+          // types and slot-aligned types (including multi-slot structs and
+          // nested dynamic arrays).
+          // isDecrement=true: newSize = oldSize-1, so the range is always
+          // non-empty and contains exactly one element; the range guard and
+          // loop are omitted.
+          evmB.genClearStorageArrayTail(slot, arrTy, newSize, oldSize,
+                                        /*isDecrement=*/true, loc);
+          // Write the decremented length after clearing the removed element.
+          r.create<yul::SStoreOp>(loc, slot, newSize);
+          r.create<sol::ReturnOp>(loc);
+        },
+        loc);
+    r.create<sol::CallOp>(loc, fn, ValueRange{slot});
 
     r.eraseOp(op);
     return success();
@@ -2278,6 +2310,42 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
   Value genAllocateAndCopy(ModuleOp mod, Value srcAddr, Type ty,
                            sol::DataLocation srcDataLoc, PatternRewriter &r,
                            Location loc) const {
+    // Array copies into memory that need a loop are emitted once per type and
+    // called: every storage source (sload per slot) and calldata sources whose
+    // elements are not plain 32-byte words (nested rows, narrow elements). A
+    // calldata array of words is a single calldatacopy and stays inline.
+    if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
+      Type eltTy = arrTy.getEltType();
+      bool wordElt = sol::canBePacked(eltTy) && sol::getNumBytes(eltTy) == 32;
+      bool outline = srcDataLoc == sol::DataLocation::Storage ||
+                     (srcDataLoc == sol::DataLocation::CallData && !wordElt);
+      if (outline) {
+        evm::Builder evmB(mod, r, loc);
+        auto i256Ty = r.getIntegerType(256);
+        SmallVector<Value> args = evmB.flattenWords(srcAddr, loc);
+        SmallVector<Type> argTys(
+            llvm::map_range(args, [](Value v) { return v.getType(); }));
+        Type srcValTy = srcAddr.getType();
+        sol::FuncOp fn = evmB.getOrCreateHelperFn(
+            evm::helpersym::copy(srcDataLoc, sol::DataLocation::Memory,
+                                 evm::helpersym::typeName(ty)),
+            argTys, {i256Ty},
+            [&](ValueRange a) {
+              Value src = evmB.rebuildWords(srcValTy, a, loc);
+              Value memPtr =
+                  genAllocateAndCopyInline(mod, src, ty, srcDataLoc, r, loc);
+              r.create<sol::ReturnOp>(loc, ValueRange{memPtr});
+            },
+            loc);
+        return r.create<sol::CallOp>(loc, fn, args).getResult(0);
+      }
+    }
+    return genAllocateAndCopyInline(mod, srcAddr, ty, srcDataLoc, r, loc);
+  }
+
+  Value genAllocateAndCopyInline(ModuleOp mod, Value srcAddr, Type ty,
+                                 sol::DataLocation srcDataLoc,
+                                 PatternRewriter &r, Location loc) const {
     mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(mod, r, loc);
 
@@ -2380,22 +2448,23 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       // recurse forever in the compiler. Out-of-line the per-struct copy into a
       // helper that recurses at runtime (nested struct members/elements call
       // back into genAllocateAndCopy, which dispatches to the same helper).
-      if (structTy.isIdentified()) {
-        auto i256Ty = r.getIntegerType(256);
-        sol::FuncOp fn = evmB.getOrCreateHelperFn(
-            evm::helpersym::copy(srcDataLoc, sol::DataLocation::Memory,
-                                 structTy.getName()),
-            {i256Ty}, {i256Ty},
-            [&](ValueRange args) {
-              Value memPtr = genStructToMemoryInline(mod, args[0], structTy,
-                                                     srcDataLoc, r, loc);
-              r.create<sol::ReturnOp>(loc, ValueRange{memPtr});
-            },
-            loc);
-        return r.create<sol::CallOp>(loc, fn, ValueRange{srcAddr}).getResult(0);
-      }
-      return genStructToMemoryInline(mod, srcAddr, structTy, srcDataLoc, r,
-                                     loc);
+      // Every struct type gets a helper, one per (type, source location).
+      auto i256Ty = r.getIntegerType(256);
+      std::string sym =
+          structTy.isIdentified()
+              ? evm::helpersym::copy(srcDataLoc, sol::DataLocation::Memory,
+                                     structTy.getName())
+              : evm::helpersym::copyLiteralStruct(
+                    srcDataLoc, sol::DataLocation::Memory, structTy);
+      sol::FuncOp fn = evmB.getOrCreateHelperFn(
+          sym, {i256Ty}, {i256Ty},
+          [&](ValueRange args) {
+            Value memPtr = genStructToMemoryInline(mod, args[0], structTy,
+                                                   srcDataLoc, r, loc);
+            r.create<sol::ReturnOp>(loc, ValueRange{memPtr});
+          },
+          loc);
+      return r.create<sol::CallOp>(loc, fn, ValueRange{srcAddr}).getResult(0);
     }
 
     assert(sol::canBePacked(ty));
@@ -3933,6 +4002,10 @@ struct FuncOpLowering : public OpConversionPattern<sol::FuncOp> {
       attrs.push_back(r.getNamedAttr(
           "llvm.linkage",
           LLVM::LinkageAttr::get(r.getContext(), LLVM::Linkage::Private)));
+
+    // Compiler-generated helpers stay recognizable down to LLVM.
+    if (auto helperAttr = op->getAttr(evm::kHelperFnAttrName))
+      attrs.push_back(r.getNamedAttr(evm::kHelperFnAttrName, helperAttr));
 
     auto convertedFuncTy = cast<FunctionType>(
         getTypeConverter()->convertType(op.getFunctionType()));
