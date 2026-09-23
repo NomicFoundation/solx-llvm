@@ -6,12 +6,15 @@ module {
   sol.contract @C {
     // Long storage bytes read their first word from keccak(slot); data shorter
     // than the target is masked to its length.
+    // CHECK-LABEL: yul.func @__sol.storage_string_length : (i256) -> i256
+    // CHECK:         %[[LEN:.*]] = yul.arith_select
+    // CHECK:         %[[PANIC:.*]] = yul.constant 34{{$}}
+    // CHECK:         yul.func_call @__sol.panic(%[[PANIC]])
+    // CHECK:         yul.func_return %[[LEN]] : i256
     // CHECK-LABEL: yul.func @fromStorage32 : (i256) -> i256
     // CHECK:         %[[M:.*]] = yul.constant -1{{$}}
     // CHECK:         %[[S:.*]] = yul.sload
-    // CHECK:         %[[LEN:.*]] = yul.arith_select
-    // CHECK:         %[[PANIC:.*]] = yul.constant 34{{$}}
-    // CHECK:         yul.mstore %{{.*}}, %[[PANIC]]
+    // CHECK:         %[[LEN:.*]] = yul.func_call @__sol.storage_string_length(%[[S]])
     // CHECK:         %[[LONG:.*]] = yul.cmp ugt, %[[LEN]], %{{.*}}
     // CHECK:         %[[W:.*]] = yul.if %[[LONG]] -> i256 {
     // CHECK:           yul.keccak256

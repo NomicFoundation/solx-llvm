@@ -76,20 +76,24 @@ module {
 #Pure = #sol<StateMutability Pure>
 module {
   sol.contract @C {
-    // The output word is cleared before the call: a failed recovery writes
-    // nothing, and must read back as address(0).
-    // CHECK-LABEL: yul.func @recover
-    // CHECK-NEXT:    ^bb0(%[[HASH:.*]]: i256, %[[V:.*]]: i256, %[[R:.*]]: i256, %[[S:.*]]: i256):
-    // CHECK:         %[[ZERO:.*]] = yul.constant 0{{$}}
-    // CHECK:         %[[OUTSZ:.*]] = yul.constant 32{{$}}
-    // CHECK:         %[[IN:.*]] = yul.mload
-    // CHECK:         %[[INSZ:.*]] = yul.constant 128{{$}}
+    // The four inputs are encoded by the tuple helper, with v cleaned to a
+    // byte. The output word is cleared before the call: a failed recovery
+    // writes nothing, and must read back as address(0).
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.fixedbytes$_32_$.ui8.fixedbytes$_32_$.fixedbytes$_32_$ : (i256, i256, i256, i256, i256) -> i256
+    // CHECK-NEXT:    ^bb0(%[[HASH:.*]]: i256, %[[V:.*]]: i256, %[[R:.*]]: i256, %[[S:.*]]: i256, %[[IN:.*]]: i256):
     // CHECK:         yul.mstore %[[IN]], %[[HASH]]
     // CHECK:         %[[C255:.*]] = yul.constant 255
     // CHECK:         %[[VC:.*]] = yul.and %[[V]], %[[C255]]
     // CHECK:         yul.mstore %{{.*}}, %[[VC]]
     // CHECK:         yul.mstore %{{.*}}, %[[R]]
     // CHECK:         yul.mstore %{{.*}}, %[[S]]
+    // CHECK-LABEL: yul.func @recover
+    // CHECK-NEXT:    ^bb0(%[[HASH:.*]]: i256, %[[V:.*]]: i256, %[[R:.*]]: i256, %[[S:.*]]: i256):
+    // CHECK:         %[[ZERO:.*]] = yul.constant 0{{$}}
+    // CHECK:         %[[OUTSZ:.*]] = yul.constant 32{{$}}
+    // CHECK:         %[[IN:.*]] = yul.mload
+    // CHECK:         %[[INSZ:.*]] = yul.constant 128{{$}}
+    // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.fixedbytes$_32_$.ui8.fixedbytes$_32_$.fixedbytes$_32_$(%[[HASH]], %[[V]], %[[R]], %[[S]], %[[IN]])
     // CHECK:         yul.mstore %[[ZERO]], %[[ZERO]]
     // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
     // CHECK:         %[[OK:.*]] = yul.static_call %{{.*}}, %[[C1]], %[[IN]], %[[INSZ]], %[[ZERO]], %[[OUTSZ]]

@@ -2,8 +2,8 @@
 
 #Contract = #sol<ContractKind Contract>
 
-// CHECK-LABEL: yul.func @dyn_u256 : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 0{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_dyn_ui256_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[OFF:.*]] = yul.sub
 // CHECK:         yul.mstore %{{.*}}, %[[OFF]]
 // CHECK:         %[[LEN:.*]] = yul.sload %[[SLOT]]
@@ -14,6 +14,9 @@
 // CHECK:           yul.cmp ult, %{{.*}}, %[[LEN]]
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.mstore %{{.*}}, %[[W]]
+// CHECK-LABEL: yul.func @dyn_u256 : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 0{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_dyn_ui256_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @dyn256 slot 0 offset 0 : !sol.array<? x ui256, Storage>
@@ -30,8 +33,8 @@ module {
 #Contract = #sol<ContractKind Contract>
 
 // uint8 elements are unpacked from the slot and padded to 32 bytes.
-// CHECK-LABEL: yul.func @static_u8x4 : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 1{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_4_ui8_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[C128:.*]] = yul.constant 128
 // CHECK:         yul.add %{{.*}}, %[[C128]]
 // CHECK:         %[[LEN:.*]] = yul.constant 4{{$}}
@@ -50,6 +53,9 @@ module {
 // CHECK:           %[[TW:.*]] = yul.sload
 // CHECK:             yul.arith_shr %[[TW]], %{{.*}}
 // CHECK:         } {full_unroll}
+// CHECK-LABEL: yul.func @static_u8x4 : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 1{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_4_ui8_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @static8x4 slot 1 offset 0 : !sol.array<4 x ui8, Storage>
@@ -65,8 +71,8 @@ module {
 
 #Contract = #sol<ContractKind Contract>
 
-// CHECK-LABEL: yul.func @dyn_u256x2 : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 10{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_dyn_array$_2_ui256_$_Storage_$_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[LEN:.*]] = yul.sload %[[SLOT]]
 // CHECK:         %[[DATA:.*]] = yul.keccak256
 // CHECK:         %[[C64:.*]] = yul.constant 64{{$}}
@@ -76,6 +82,9 @@ module {
 // CHECK:           yul.for
 // CHECK:             yul.sload
 // CHECK:           yul.add %{{.*}}, %[[SSTEP]]
+// CHECK-LABEL: yul.func @dyn_u256x2 : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 10{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_dyn_array$_2_ui256_$_Storage_$_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @dynRefStatic2x slot 10 offset 0 : !sol.array<? x !sol.array<2 x ui256, Storage>, Storage>
@@ -92,8 +101,8 @@ module {
 #Contract = #sol<ContractKind Contract>
 
 // Each dynamic element's data sits at keccak256 of its own slot.
-// CHECK-LABEL: yul.func @static2_dyn_u256 : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 11{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_2_array$_dyn_ui256_$_Storage_$_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         yul.for %{{.*}}, %{{.*}}, %[[SLOT]], %{{.*}} :
 // CHECK:           %[[OFF:.*]] = yul.sub
 // CHECK:           yul.mstore %{{.*}}, %[[OFF]]
@@ -103,6 +112,9 @@ module {
 // CHECK:           yul.mstore %{{.*}}, %[[ILEN]]
 // CHECK:           yul.for %{{.*}}, %{{.*}}, %[[IDATA]] :
 // CHECK:             yul.sload
+// CHECK-LABEL: yul.func @static2_dyn_u256 : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 11{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_2_array$_dyn_ui256_$_Storage_$_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @staticRefDyn256x2 slot 11 offset 0 : !sol.array<2 x !sol.array<? x ui256, Storage>, Storage>
@@ -120,12 +132,14 @@ module {
 
 // A static struct array is encoded in place; each struct reads slots +0
 // and +1 and advances by 2 slots.
-// CHECK-LABEL: yul.func @static2_pair : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 14{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_2_struct$_$_ui256_$_ui256_$_$_Storage_$_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[C128:.*]] = yul.constant 128
 // CHECK:         %[[TAIL:.*]] = yul.add %{{.*}}, %[[C128]]
+// CHECK:         %[[N:.*]] = yul.constant 2{{$}}
 // CHECK:         %[[SSTEP:.*]] = yul.constant 2{{$}}
 // CHECK:         yul.for %{{.*}}, %{{.*}}, %[[SLOT]], %[[TAIL]] :
+// CHECK:           yul.cmp ult, %{{.*}}, %[[N]]
 // CHECK:           %[[F0:.*]] = yul.sload
 // CHECK:           yul.mstore %{{.*}}, %[[F0]]
 // CHECK:           %[[ONE:.*]] = yul.constant 1{{$}}
@@ -133,6 +147,9 @@ module {
 // CHECK:           %[[F1:.*]] = yul.sload %[[S1]]
 // CHECK:           yul.mstore %{{.*}}, %[[F1]]
 // CHECK:           yul.add %{{.*}}, %[[SSTEP]]
+// CHECK-LABEL: yul.func @static2_pair : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 14{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_2_struct$_$_ui256_$_ui256_$_$_Storage_$_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @staticStructPair2 slot 14 offset 0 : !sol.array<2 x !sol.struct<(ui256, ui256), Storage>, Storage>
@@ -151,8 +168,8 @@ module {
 // Dynamic arrays read the length from the slot and the data from
 // keccak256(slot); packed mode stores no length prefix. Two uint128 per
 // slot, shifted by 128 bits.
-// CHECK-LABEL: yul.func @packed_dyn_u128 : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 18{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.packed.inplace.array$_dyn_ui128_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[LEN:.*]] = yul.sload %[[SLOT]]{{$}}
 // CHECK:         yul.mstore %{{.*}}, %[[SLOT]]
 // CHECK:         %[[DATA:.*]] = yul.keccak256
@@ -169,6 +186,9 @@ module {
 // CHECK:             yul.add %{{.*}}, %[[C128]]
 // CHECK:         yul.cmp ult, %{{.*}}, %[[LEN]]
 // CHECK:         yul.if %{{.*}} -> i256 {
+// CHECK-LABEL: yul.func @packed_dyn_u128 : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 18{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.packed.inplace.array$_dyn_ui128_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @dyn128 slot 18 offset 0 : !sol.array<? x ui128, Storage>
@@ -186,8 +206,8 @@ module {
 
 // Packed elements are unpacked per slot (whole slots, then the tail slot)
 // and each is padded to 32 bytes.
-// CHECK-LABEL: yul.func @packed_static_u8x33 : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 19{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.packed.inplace.array$_33_ui8_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[LEN:.*]] = yul.constant 33{{$}}
 // CHECK:         yul.mul %[[LEN]], %{{.*}}
 // CHECK:         %[[PER:.*]] = yul.constant 32{{$}}
@@ -206,6 +226,9 @@ module {
 // CHECK:           %[[TW:.*]] = yul.sload
 // CHECK:           yul.arith_shr %[[TW]], %{{.*}}
 // CHECK:         } {full_unroll}
+// CHECK-LABEL: yul.func @packed_static_u8x33 : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 19{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.packed.inplace.array$_33_ui8_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @static8x33 slot 19 offset 0 : !sol.array<33 x ui8, Storage>
@@ -222,7 +245,7 @@ module {
 #Contract = #sol<ContractKind Contract>
 
 // 16 uint16 share a slot: whole slots first, then the partial tail slot.
-// CHECK-LABEL: yul.func @packed_nested_u16 : () -> i256
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.packed.inplace.array$_3_array$_2_ui16_$_Storage_$_$_Storage_$ : (i256, i256) -> i256
 // CHECK:         yul.for
 // CHECK:         } body {
 // CHECK:           %[[PER:.*]] = yul.constant 16
@@ -240,6 +263,9 @@ module {
 // CHECK:               yul.arith_shr %[[TW]], %{{.*}}
 // CHECK:               yul.mstore
 // CHECK:             } {full_unroll}
+// CHECK-LABEL: yul.func @packed_nested_u16 : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 21{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.packed.inplace.array$_3_array$_2_ui16_$_Storage_$_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @nestedU16 slot 21 offset 0 : !sol.array<3 x !sol.array<2 x ui16, Storage>, Storage>
@@ -256,8 +282,8 @@ module {
 #Contract = #sol<ContractKind Contract>
 
 // Storage slots advance by 1, 4 and 20 per nesting level.
-// CHECK-LABEL: yul.func @packed_nested_u256 : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 24{{$}}
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.packed.inplace.array$_4_array$_5_array$_4_ui256_$_Storage_$_$_Storage_$_$_Storage_$ : (i256, i256) -> i256
+// CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[C640:.*]] = yul.constant 640
 // CHECK:         yul.mul %{{.*}}, %[[C640]]
 // CHECK:         %[[OSTEP:.*]] = yul.constant 20
@@ -271,6 +297,9 @@ module {
 // CHECK:               yul.add %{{.*}}, %[[ISTEP]]
 // CHECK:             yul.add %{{.*}}, %[[MSTEP]]
 // CHECK:         yul.add %{{.*}}, %[[OSTEP]]
+// CHECK-LABEL: yul.func @packed_nested_u256 : () -> i256
+// CHECK:         %[[S:.*]] = yul.constant 24{{$}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.packed.inplace.array$_4_array$_5_array$_4_ui256_$_Storage_$_$_Storage_$_$_Storage_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @nestedU256 slot 24 offset 0 : !sol.array<4 x !sol.array<5 x !sol.array<4 x ui256, Storage>, Storage>, Storage>

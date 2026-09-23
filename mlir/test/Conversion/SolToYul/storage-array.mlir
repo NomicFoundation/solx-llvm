@@ -4,7 +4,21 @@
 // 32 uint8 per slot.
 
 sol.contract @C {
-  // CHECK-LABEL: yul.func @dyn256 : (i256, i256) -> ()
+  // pop(): empty-pop panic 0x31.
+  // CHECK-LABEL: yul.func @__sol.pop_storage_array.array$_dyn_ui256_$_Storage_$ : (i256) -> ()
+  // CHECK:         %[[LEN:.*]] = yul.sload %arg0
+  // CHECK:         %[[EMPTY:.*]] = yul.cmp eq, %[[LEN]], %{{.*}}
+  // CHECK:         yul.if %[[EMPTY]] {
+  // CHECK:           %[[P49:.*]] = yul.constant 49{{$}}
+  // CHECK:           yul.func_call @__sol.panic(%[[P49]])
+  // CHECK:         %[[NLEN:.*]] = yul.sub %[[LEN]], %{{.*}}
+  // CHECK:         %[[PDATA:.*]] = yul.keccak256
+  // CHECK:         %[[E:.*]] = yul.add %[[PDATA]], %{{.*}}
+  // CHECK:         %[[Z:.*]] = yul.constant 0{{$}}
+  // CHECK-NEXT:    yul.sstore %[[E]], %[[Z]]
+  // CHECK:         yul.sstore %arg0, %[[NLEN]]
+
+  // CHECK-LABEL: yul.func @__sol.push_storage_array.array$_dyn_ui256_$_Storage_$ : (i256) -> !llvm.struct<(i256, i256)>
   // CHECK:         %[[LEN:.*]] = yul.sload %arg0
   // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
   // CHECK:         %[[NLEN:.*]] = yul.add %[[LEN]], %[[C1]]
@@ -13,21 +27,11 @@ sol.contract @C {
   // CHECK:         %[[PER:.*]] = yul.constant 1{{$}}
   // CHECK:         %[[Q:.*]] = yul.arith_div %[[LEN]], %[[PER]]
   // CHECK:         yul.add %[[DATA]], %[[Q]]
-  // CHECK:         yul.sstore
 
-  // pop(): empty-pop panic 0x31.
-  // CHECK:         %[[LEN:.*]] = yul.sload %arg0
-  // CHECK:         %[[EMPTY:.*]] = yul.cmp eq, %[[LEN]], %{{.*}}
-  // CHECK:         yul.if %[[EMPTY]] {
-  // CHECK:           %[[P49:.*]] = yul.constant 49{{$}}
-  // CHECK:           yul.mstore %{{.*}}, %[[P49]]
-  // CHECK:           yul.revert
-  // CHECK:         %[[NLEN:.*]] = yul.sub %[[LEN]], %{{.*}}
-  // CHECK:         %[[PDATA:.*]] = yul.keccak256
-  // CHECK:         %[[E:.*]] = yul.add %[[PDATA]], %{{.*}}
-  // CHECK:         %[[Z:.*]] = yul.constant 0{{$}}
-  // CHECK-NEXT:    yul.sstore %[[E]], %[[Z]]
-  // CHECK:         yul.sstore %arg0, %[[NLEN]]
+  // CHECK-LABEL: yul.func @dyn256 : (i256, i256) -> ()
+  // CHECK:         yul.func_call @__sol.push_storage_array.array$_dyn_ui256_$_Storage_$(%arg0)
+  // CHECK:         yul.sstore
+  // CHECK:         yul.func_call @__sol.pop_storage_array.array$_dyn_ui256_$_Storage_$(%arg0)
   sol.func @dyn256(%a: !sol.array<? x ui256, Storage>, %v: ui256) {
     %0 = sol.push %a : !sol.array<? x ui256, Storage> -> !sol.ptr<ui256, Storage>
     sol.store %v, %0 : ui256, !sol.ptr<ui256, Storage>
@@ -39,22 +43,11 @@ sol.contract @C {
 // -----
 
 sol.contract @C {
-  // CHECK-LABEL: yul.func @dyn8 : (i256, i256) -> ()
-  // CHECK:         %[[LEN:.*]] = yul.sload %arg0
-  // CHECK:         yul.sstore %arg0, %{{.*}}
-  // CHECK:         yul.keccak256
-  // CHECK:         %[[PER:.*]] = yul.constant 32{{$}}
-  // CHECK:         yul.arith_div %[[LEN]], %[[PER]]
-  // CHECK:         yul.arith_mod %[[LEN]], %[[PER]]
-  // CHECK:         %[[M:.*]] = yul.constant 255{{$}}
-  // CHECK:         yul.and %arg1, %[[M]]
-  // CHECK:         %[[FM:.*]] = yul.constant 255{{$}}
-  // CHECK:         yul.arith_shl %[[FM]], %{{.*}}
-  // CHECK:         yul.sstore
-
   // pop(): clear the popped byte of a partial last slot, else the slot.
+  // CHECK-LABEL: yul.func @__sol.pop_storage_array.array$_dyn_ui8_$_Storage_$ : (i256) -> ()
   // CHECK:         %[[LEN:.*]] = yul.sload %arg0
-  // CHECK:         yul.constant 49{{$}}
+  // CHECK:         %[[P49:.*]] = yul.constant 49{{$}}
+  // CHECK:         yul.func_call @__sol.panic(%[[P49]])
   // CHECK:         %[[NLEN:.*]] = yul.sub %[[LEN]], %{{.*}}
   // CHECK:         %[[REM:.*]] = yul.arith_mod %[[NLEN]], %{{.*}}
   // CHECK:         %[[PARTIAL:.*]] = yul.cmp ne, %[[REM]], %{{.*}}
@@ -68,6 +61,23 @@ sol.contract @C {
   // CHECK-NEXT:      yul.sstore %{{.*}}, %[[Z]]
   // CHECK:         }
   // CHECK:         yul.sstore %arg0, %[[NLEN]]
+
+  // CHECK-LABEL: yul.func @__sol.push_storage_array.array$_dyn_ui8_$_Storage_$ : (i256) -> !llvm.struct<(i256, i256)>
+  // CHECK:         %[[LEN:.*]] = yul.sload %arg0
+  // CHECK:         yul.sstore %arg0, %{{.*}}
+  // CHECK:         yul.keccak256
+  // CHECK:         %[[PER:.*]] = yul.constant 32{{$}}
+  // CHECK:         yul.arith_div %[[LEN]], %[[PER]]
+  // CHECK:         yul.arith_mod %[[LEN]], %[[PER]]
+
+  // CHECK-LABEL: yul.func @dyn8 : (i256, i256) -> ()
+  // CHECK:         yul.func_call @__sol.push_storage_array.array$_dyn_ui8_$_Storage_$(%arg0)
+  // CHECK:         %[[M:.*]] = yul.constant 255{{$}}
+  // CHECK:         yul.and %arg1, %[[M]]
+  // CHECK:         %[[FM:.*]] = yul.constant 255{{$}}
+  // CHECK:         yul.arith_shl %[[FM]], %{{.*}}
+  // CHECK:         yul.sstore
+  // CHECK:         yul.func_call @__sol.pop_storage_array.array$_dyn_ui8_$_Storage_$(%arg0)
   sol.func @dyn8(%a: !sol.array<? x ui8, Storage>, %v: ui8) {
     %0 = sol.push %a : !sol.array<? x ui8, Storage> -> !sol.ptr<ui8, Storage>
     sol.store %v, %0 : ui8, !sol.ptr<ui8, Storage>
@@ -80,12 +90,15 @@ sol.contract @C {
 
 sol.contract @C {
   // A non-packable element is slot-aligned: data + len * slots-per-element.
-  // CHECK-LABEL: yul.func @pushStruct : (i256) -> i256
+  // CHECK-LABEL: yul.func @__sol.push_storage_array.array$_dyn_struct$_$_ui256_$_ui256_$_$_Storage_$_$_Storage_$ : (i256) -> i256
   // CHECK:         %[[LEN:.*]] = yul.sload %arg0
   // CHECK:         %[[DATA:.*]] = yul.keccak256
   // CHECK:         %[[C2:.*]] = yul.constant 2{{$}}
   // CHECK:         %[[OFF:.*]] = yul.mul %[[LEN]], %[[C2]]
   // CHECK:         %[[R:.*]] = yul.add %[[DATA]], %[[OFF]]
+  // CHECK:         yul.func_return %[[R]] : i256
+  // CHECK-LABEL: yul.func @pushStruct : (i256) -> i256
+  // CHECK:         %[[R:.*]] = yul.func_call @__sol.push_storage_array.array$_dyn_struct$_$_ui256_$_ui256_$_$_Storage_$_$_Storage_$(%arg0)
   // CHECK:         yul.func_return %[[R]] : i256
   sol.func @pushStruct(%a: !sol.array<? x !sol.struct<(ui256, ui256), Storage>, Storage>) -> !sol.struct<(ui256, ui256), Storage> {
     %0 = sol.push %a : !sol.array<? x !sol.struct<(ui256, ui256), Storage>, Storage> -> !sol.struct<(ui256, ui256), Storage>
@@ -129,11 +142,13 @@ sol.contract @C {
 
 sol.contract @C {
   // 32 bools per slot.
-  // CHECK-LABEL: yul.func @dynBool : (i256, i256) -> i256
+  // CHECK-LABEL: yul.func @__sol.index_storage_array.array$_dyn_i1_$_Storage_$ : (i256, i256) -> !llvm.struct<(i256, i256)>
   // CHECK:         yul.keccak256
   // CHECK:         %[[C32:.*]] = yul.constant 32{{$}}
   // CHECK:         yul.arith_div %arg1, %[[C32]]
   // CHECK:         yul.arith_mod %arg1, %[[C32]]
+  // CHECK-LABEL: yul.func @dynBool : (i256, i256) -> i256
+  // CHECK:         yul.func_call @__sol.index_storage_array.array$_dyn_i1_$_Storage_$(%arg0, %arg1)
   // CHECK:         %[[S:.*]] = yul.sload
   // CHECK:         %[[SH:.*]] = yul.arith_shr %[[S]], %{{.*}}
   // CHECK:         %[[MASK:.*]] = yul.constant 255{{$}}

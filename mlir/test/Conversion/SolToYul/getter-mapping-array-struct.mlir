@@ -1,20 +1,27 @@
 // RUN: mlir-opt %s --convert-sol-to-yul | FileCheck %s
 
-// CHECK-LABEL:   yul.func @get_m : (i256, i256) -> (i256, i256)
-// CHECK:           %[[SLOT:.*]] = yul.constant 0
-// CHECK:           yul.mstore %{{.*}}, %arg0
-// CHECK:           yul.mstore %{{.*}}, %[[SLOT]]
-// CHECK:           %[[ARR:.*]] = yul.keccak256
+// The array index with the getter's bounds revert is outlined; the helper
+// takes the array's slot and the index and returns the element's slot.
+// CHECK-LABEL:   yul.func @__sol.index_storage_array.array$_dyn_struct$_$_ui256_$_ui256_$_$_Storage_$_$_Storage_$.nopanic : (i256, i256) -> i256
+// CHECK-NEXT:    ^bb0(%[[ARR:.*]]: i256, %[[IDX:.*]]: i256):
 // CHECK:           %[[LEN:.*]] = yul.sload %[[ARR]]
-// CHECK:           %[[OOB:.*]] = yul.cmp uge, %arg1, %[[LEN]]
+// CHECK:           %[[OOB:.*]] = yul.cmp uge, %[[IDX]], %[[LEN]]
 // CHECK:           yul.if %[[OOB]] {
 // CHECK-NEXT:        %[[Z:.*]] = yul.constant 0
 // CHECK-NEXT:        yul.revert %[[Z]], %[[Z]]
 // CHECK:           yul.mstore %{{.*}}, %[[ARR]]
 // CHECK:           %[[DATA:.*]] = yul.keccak256
 // CHECK:           %[[C2:.*]] = yul.constant 2
-// CHECK:           %[[OFF:.*]] = yul.mul %arg1, %[[C2]]
+// CHECK:           %[[OFF:.*]] = yul.mul %[[IDX]], %[[C2]]
 // CHECK:           %[[S:.*]] = yul.add %[[DATA]], %[[OFF]]
+// CHECK:           yul.func_return %[[S]] : i256
+
+// CHECK-LABEL:   yul.func @get_m : (i256, i256) -> (i256, i256)
+// CHECK:           %[[SLOT:.*]] = yul.constant 0
+// CHECK:           yul.mstore %{{.*}}, %arg0
+// CHECK:           yul.mstore %{{.*}}, %[[SLOT]]
+// CHECK:           %[[ARR:.*]] = yul.keccak256
+// CHECK:           %[[S:.*]] = yul.func_call @__sol.index_storage_array.array$_dyn_struct$_$_ui256_$_ui256_$_$_Storage_$_$_Storage_$.nopanic(%[[ARR]], %arg1)
 // CHECK:           yul.add %[[S]], %{{.*}}
 // CHECK:           %[[F0:.*]] = yul.arith_shr
 // CHECK:           yul.add %[[S]], %{{.*}}

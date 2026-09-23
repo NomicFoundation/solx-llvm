@@ -12,6 +12,7 @@
 
 #include "mlir/Conversion/SolToYul/EVMConstants.h"
 #include "mlir/Conversion/SolToYul/EVMUtil.h"
+#include "mlir/Conversion/SolToYul/HelperSymbols.h"
 #include "mlir/Conversion/SolToYul/SolToYul.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Sol/DebugInfo.h"
@@ -181,7 +182,12 @@ void evm::InternalDispatch::genDispatchFns() {
     }
 
     b.setInsertionPointToStart(&switchOp.getDefaultRegion().emplaceBlock());
-    evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
+    // The dispatch is built after stage 2, outside any contract, so no helper
+    // can serve it: the panic stays inline.
+    evmB.genPanicInline(
+        solgen::BuilderExt(b, loc).genI256Const(static_cast<int64_t>(
+            mlir::evm::PanicCode::InvalidInternalFunction)),
+        loc);
     b.create<yul::YieldOp>(loc, genUndefs(resTys, loc, b));
 
     b.setInsertionPointToEnd(entry);

@@ -3,25 +3,34 @@
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 
+// Every copy is outlined into a `__sol.copy_array` or `__sol.clone_array`
+// helper that takes the array references, so the packing loops are checked in
+// the helper and the user function only passes its slot.
+//
 // bytes15[2] elements are inline in calldata (64 bytes each) and each fills
-// one storage slot of two bytes16.
-// CHECK-LABEL: yul.func @cd2s_b15_b16_ds : (!llvm.struct<(i256, i256)>) -> ()
-// CHECK-NEXT:  ^bb0(%[[A:.*]]: !llvm.struct<(i256, i256)>):
+// one storage slot of two bytes16. The row copy is a helper of its own.
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_2_fixedbytes$_15_$_$_CallData_$.array$_2_fixedbytes$_16_$_$_Storage_$ : (i256, i256) -> ()
+// CHECK:         yul.for
+// CHECK:           yul.for
+// CHECK:             %[[V:.*]] = yul.calldataload
+// CHECK:             %[[M:.*]] = yul.constant -87112285931760246646623899502532662132736
+// CHECK:             %[[C:.*]] = yul.and %[[V]], %[[M]]
+// CHECK:             yul.cmp ne, %[[V]], %[[C]]
+// CHECK:             %[[C128:.*]] = yul.constant 128
+// CHECK:             yul.arith_shr %[[C]], %[[C128]]
+// CHECK:           yul.sstore
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_array$_2_fixedbytes$_15_$_$_CallData_$_$_CallData_$.array$_dyn_array$_2_fixedbytes$_16_$_$_Storage_$_$_Storage_$ : (!llvm.struct<(i256, i256)>, i256) -> ()
+// CHECK-NEXT:  ^bb0(%[[A:.*]]: !llvm.struct<(i256, i256)>, %[[SLOT:.*]]: i256):
 // CHECK:         %[[LEN:.*]] = llvm.extractvalue %[[A]][1]
-// CHECK:         yul.sstore %{{.*}}, %[[LEN]]
+// CHECK:         yul.sstore %[[SLOT]], %[[LEN]]
 // CHECK:         yul.for
 // CHECK:           yul.cmp ult, %{{.*}}, %[[LEN]]
 // CHECK:           %[[C64:.*]] = yul.constant 64{{$}}
 // CHECK:           yul.mul %{{.*}}, %[[C64]]
-// CHECK:           yul.for
-// CHECK:             yul.for
-// CHECK:               %[[V:.*]] = yul.calldataload
-// CHECK:               %[[M:.*]] = yul.constant -87112285931760246646623899502532662132736
-// CHECK:               %[[C:.*]] = yul.and %[[V]], %[[M]]
-// CHECK:               yul.cmp ne, %[[V]], %[[C]]
-// CHECK:               %[[C128:.*]] = yul.constant 128
-// CHECK:               yul.arith_shr %[[C]], %[[C128]]
-// CHECK:             yul.sstore
+// CHECK:           yul.func_call @__sol.copy_array.calldata.storage.array$_2_fixedbytes$_15_$_$_CallData_$.array$_2_fixedbytes$_16_$_$_Storage_$
+// CHECK-LABEL: yul.func @cd2s_b15_b16_ds : (!llvm.struct<(i256, i256)>) -> ()
+// CHECK:         %[[S:.*]] = yul.constant 6{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.calldata.storage.array$_dyn_array$_2_fixedbytes$_15_$_$_CallData_$_$_CallData_$.array$_dyn_array$_2_fixedbytes$_16_$_$_Storage_$_$_Storage_$(%arg0, %[[S]])
 module {
   sol.contract @C {
     sol.state_var @sb16ds slot 6 offset 0 : !sol.array<? x !sol.array<2 x !sol.fixedbytes<16>, Storage>, Storage>
@@ -40,9 +49,18 @@ module {
 
 // Inner calldata arrays are located by offset and validated before the
 // per-element copy.
-// CHECK-LABEL: yul.func @cd2s_b15_b16_dd : (!llvm.struct<(i256, i256)>) -> ()
-// CHECK-NEXT:  ^bb0(%[[A:.*]]: !llvm.struct<(i256, i256)>):
-// CHECK:         %[[SLOT:.*]] = yul.constant 3{{$}}
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_fixedbytes$_15_$_$_CallData_$.array$_dyn_fixedbytes$_16_$_$_Storage_$ : (!llvm.struct<(i256, i256)>, i256) -> ()
+// CHECK-NEXT:  ^bb0(%[[IA:.*]]: !llvm.struct<(i256, i256)>, %[[ISLOT:.*]]: i256):
+// CHECK:         %[[ILEN:.*]] = llvm.extractvalue %[[IA]][1]
+// CHECK:         yul.sstore %[[ISLOT]], %[[ILEN]]
+// CHECK:         yul.for
+// CHECK:           yul.for
+// CHECK:             %[[V:.*]] = yul.calldataload
+// CHECK:             %[[M:.*]] = yul.constant -87112285931760246646623899502532662132736
+// CHECK:             yul.and %[[V]], %[[M]]
+// CHECK:           yul.sstore
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_array$_dyn_fixedbytes$_15_$_$_CallData_$_$_CallData_$.array$_dyn_array$_dyn_fixedbytes$_16_$_$_Storage_$_$_Storage_$ : (!llvm.struct<(i256, i256)>, i256) -> ()
+// CHECK-NEXT:  ^bb0(%[[A:.*]]: !llvm.struct<(i256, i256)>, %[[SLOT:.*]]: i256):
 // CHECK:         %[[LEN:.*]] = llvm.extractvalue %[[A]][1]
 // CHECK:         %[[BASE:.*]] = llvm.extractvalue %[[A]][0]
 // CHECK:         yul.sstore %[[SLOT]], %[[LEN]]
@@ -50,14 +68,11 @@ module {
 // CHECK:           %[[REL:.*]] = yul.calldataload
 // CHECK:           yul.cmp sge, %[[REL]], %{{.*}}
 // CHECK:           %[[INNER:.*]] = yul.add %[[BASE]], %[[REL]]
-// CHECK:           %[[ILEN:.*]] = yul.calldataload %[[INNER]]
-// CHECK:           yul.sstore %{{.*}}, %{{.*}}
-// CHECK:           yul.for
-// CHECK:             yul.for
-// CHECK:               %[[V:.*]] = yul.calldataload
-// CHECK:               %[[M:.*]] = yul.constant -87112285931760246646623899502532662132736
-// CHECK:               yul.and %[[V]], %[[M]]
-// CHECK:             yul.sstore
+// CHECK:           yul.calldataload %[[INNER]]
+// CHECK:           yul.func_call @__sol.copy_array.calldata.storage.array$_dyn_fixedbytes$_15_$_$_CallData_$.array$_dyn_fixedbytes$_16_$_$_Storage_$
+// CHECK-LABEL: yul.func @cd2s_b15_b16_dd : (!llvm.struct<(i256, i256)>) -> ()
+// CHECK:         %[[S:.*]] = yul.constant 3{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.calldata.storage.array$_dyn_array$_dyn_fixedbytes$_15_$_$_CallData_$_$_CallData_$.array$_dyn_array$_dyn_fixedbytes$_16_$_$_Storage_$_$_Storage_$(%arg0, %[[S]])
 module {
   sol.contract @C {
     sol.state_var @sb16dd slot 3 offset 0 : !sol.array<? x !sol.array<? x !sol.fixedbytes<16>, Storage>, Storage>
@@ -75,14 +90,16 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // bytes17 takes a whole slot, stored right-aligned.
-// CHECK-LABEL: yul.func @m2s_b17s_135 : (i256) -> ()
-// CHECK:         %[[SLOT:.*]] = yul.constant 9{{$}}
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_3_fixedbytes$_17_$_$_Memory_$.array$_3_fixedbytes$_17_$_$_Storage_$ : (i256, i256) -> ()
 // CHECK:         yul.for
-// CHECK:           %[[S:.*]] = yul.add %[[SLOT]], %{{.*}}
+// CHECK:           %[[S:.*]] = yul.add %arg1, %{{.*}}
 // CHECK:           %[[V:.*]] = yul.mload
 // CHECK:           %[[C120:.*]] = yul.constant 120
 // CHECK:           %[[R:.*]] = yul.arith_shr %[[V]], %[[C120]]
 // CHECK:           yul.sstore %[[S]], %[[R]]
+// CHECK-LABEL: yul.func @m2s_b17s_135 : (i256) -> ()
+// CHECK:         %[[SLOT:.*]] = yul.constant 9{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.memory.storage.array$_3_fixedbytes$_17_$_$_Memory_$.array$_3_fixedbytes$_17_$_$_Storage_$(%arg0, %[[SLOT]])
 module {
   sol.contract @C {
     sol.state_var @sb17s slot 9 offset 0 : !sol.array<3 x !sol.fixedbytes<17>, Storage>
@@ -99,17 +116,19 @@ module {
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 
-// CHECK-LABEL: yul.func @s2s_b17d_123 : () -> ()
-// CHECK:         %[[SRC:.*]] = yul.constant 12{{$}}
-// CHECK:         %[[DST:.*]] = yul.constant 13{{$}}
-// CHECK:         yul.cmp ne, %[[SRC]], %[[DST]]
-// CHECK:         %[[LEN:.*]] = yul.sload %[[SRC]]
-// CHECK:         yul.sstore %[[DST]], %[[LEN]]
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_fixedbytes$_17_$_$_Storage_$.array$_dyn_fixedbytes$_17_$_$_Storage_$ : (i256, i256) -> ()
+// CHECK:         yul.cmp ne, %arg0, %arg1
+// CHECK:         %[[LEN:.*]] = yul.sload %arg0
+// CHECK:         yul.sstore %arg1, %[[LEN]]
 // CHECK:         yul.for
 // CHECK:           yul.sstore
 // CHECK:         yul.for
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.sstore %{{.*}}, %[[W]]
+// CHECK-LABEL: yul.func @s2s_b17d_123 : () -> ()
+// CHECK:         %[[SRC:.*]] = yul.constant 12{{$}}
+// CHECK:         %[[DST:.*]] = yul.constant 13{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_dyn_fixedbytes$_17_$_$_Storage_$.array$_dyn_fixedbytes$_17_$_$_Storage_$(%[[SRC]], %[[DST]])
 module {
   sol.contract @C {
     sol.state_var @sb17d_a slot 12 offset 0 : !sol.array<? x !sol.fixedbytes<17>, Storage>
@@ -130,9 +149,8 @@ module {
 
 // Storage-to-storage packed copy moves whole slots, masking the last
 // partial one (10 bytes3 per slot).
-// CHECK-LABEL: yul.func @s2s_b3_115 : () -> ()
-// CHECK:         %[[DST:.*]] = yul.constant 5{{$}}
-// CHECK:         yul.sstore %[[DST]], %{{.*}}
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_5_fixedbytes$_3_$_$_Storage_$.array$_dyn_fixedbytes$_3_$_$_Storage_$ : (i256, i256) -> ()
+// CHECK:         yul.sstore %arg1, %{{.*}}
 // CHECK:         %[[M:.*]] = yul.constant 1766847064778384329583297500742918515827483896875618958121606201292619775
 // CHECK:         %[[MW:.*]] = yul.and %{{.*}}, %[[M]]
 // CHECK:           yul.sstore %{{.*}}, %[[MW]]
@@ -143,6 +161,10 @@ module {
 // CHECK:         %[[TM:.*]] = yul.sub %[[SH]], %{{.*}}
 // CHECK:         %[[TV:.*]] = yul.and %[[TW]], %[[TM]]
 // CHECK:         yul.sstore %{{.*}}, %[[TV]]
+// CHECK-LABEL: yul.func @s2s_b3_115 : () -> ()
+// CHECK:         %[[SRC:.*]] = yul.constant 4{{$}}
+// CHECK:         %[[DST:.*]] = yul.constant 5{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_5_fixedbytes$_3_$_$_Storage_$.array$_dyn_fixedbytes$_3_$_$_Storage_$(%[[SRC]], %[[DST]])
 module {
   sol.contract @C {
     sol.state_var @sb3s_a slot 4 offset 0 : !sol.array<5 x !sol.fixedbytes<3>, Storage>
@@ -163,7 +185,8 @@ module {
 
 // Calldata elements are validated against their type's mask before the
 // memory store.
-// CHECK-LABEL: yul.func @cd2m_b16s_107 : (i256) -> i256
+// CHECK-LABEL: yul.func @__sol.clone_array.calldata.memory.array$_3_fixedbytes$_16_$_$_CallData_$ : (i256) -> i256
+// CHECK:         %[[P:.*]] = yul.mload %c64
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.calldataload
 // CHECK:           %[[M:.*]] = yul.constant -340282366920938463463374607431768211456
@@ -171,6 +194,10 @@ module {
 // CHECK:           %[[BAD:.*]] = yul.cmp ne, %[[V]], %[[C]]
 // CHECK:           yul.if %[[BAD]] {
 // CHECK:           yul.mstore %{{.*}}, %[[C]]
+// CHECK:         yul.func_return %[[P]] : i256
+// CHECK-LABEL: yul.func @cd2m_b16s_107 : (i256) -> i256
+// CHECK:         %[[R:.*]] = yul.func_call @__sol.clone_array.calldata.memory.array$_3_fixedbytes$_16_$_$_CallData_$(%arg0)
+// CHECK:         yul.func_return %[[R]] : i256
 module {
   sol.contract @C {
     sol.func @cd2m_b16s_107(%arg0: !sol.array<3 x !sol.fixedbytes<16>, CallData>) -> !sol.array<3 x !sol.fixedbytes<16>, Memory> attributes {state_mutability = #Pure} {
@@ -185,10 +212,9 @@ module {
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 
-// CHECK-LABEL: yul.func @cd2s_b3s_93 : (i256) -> ()
-// CHECK:         %[[SLOT:.*]] = yul.constant 4{{$}}
+// CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_5_fixedbytes$_3_$_$_CallData_$.array$_5_fixedbytes$_3_$_$_Storage_$ : (i256, i256) -> ()
 // CHECK:         %[[PER:.*]] = yul.constant 10{{$}}
-// CHECK:         yul.for %{{.*}}, %{{.*}}, %[[SLOT]], %{{.*}} :
+// CHECK:         yul.for %{{.*}}, %arg0, %arg1, %{{.*}} :
 // CHECK:           yul.for
 // CHECK:             %[[V:.*]] = yul.calldataload
 // CHECK:             %[[M:.*]] = yul.constant -6901746346790563787434755862277025452451108972170386555162524223799296
@@ -203,6 +229,9 @@ module {
 // CHECK:         yul.if
 // CHECK:         } {full_unroll}
 // CHECK:         yul.sstore
+// CHECK-LABEL: yul.func @cd2s_b3s_93 : (i256) -> ()
+// CHECK:         %[[SLOT:.*]] = yul.constant 4{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.calldata.storage.array$_5_fixedbytes$_3_$_$_CallData_$.array$_5_fixedbytes$_3_$_$_Storage_$(%arg0, %[[SLOT]])
 module {
   sol.contract @C {
     sol.state_var @sb3s_a slot 4 offset 0 : !sol.array<5 x !sol.fixedbytes<3>, Storage>
@@ -219,10 +248,11 @@ module {
 #Contract = #sol<ContractKind Contract>
 #View = #sol<StateMutability View>
 
-// CHECK-LABEL: yul.func @s2m_b16d_81 : () -> i256
-// CHECK:         %[[SLOT:.*]] = yul.constant 8{{$}}
-// CHECK:         %[[LEN:.*]] = yul.sload %[[SLOT]]
+// CHECK-LABEL: yul.func @__sol.clone_array.storage.memory.array$_dyn_fixedbytes$_16_$_$_Storage_$ : (i256) -> i256
+// CHECK:         %[[LEN:.*]] = yul.sload %arg0
 // CHECK:         yul.keccak256
+// CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc
+// CHECK:         yul.mstore %[[P]], %[[LEN]]
 // CHECK:         yul.for
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
@@ -231,6 +261,11 @@ module {
 // CHECK:             %[[L:.*]] = yul.arith_shl %[[E]], %[[C128]]
 // CHECK:             yul.mstore %{{.*}}, %[[L]]
 // CHECK:         yul.if %{{.*}} -> i256 {
+// CHECK:         yul.func_return %[[P]] : i256
+// CHECK-LABEL: yul.func @s2m_b16d_81 : () -> i256
+// CHECK:         %[[SLOT:.*]] = yul.constant 8{{$}}
+// CHECK:         %[[R:.*]] = yul.func_call @__sol.clone_array.storage.memory.array$_dyn_fixedbytes$_16_$_$_Storage_$(%[[SLOT]])
+// CHECK:         yul.func_return %[[R]] : i256
 module {
   sol.contract @C {
     sol.state_var @sb16d_a slot 8 offset 0 : !sol.array<? x !sol.fixedbytes<16>, Storage>
@@ -247,9 +282,10 @@ module {
 #Contract = #sol<ContractKind Contract>
 #View = #sol<StateMutability View>
 
-// CHECK-LABEL: yul.func @s2m_b3s_72 : () -> i256
+// CHECK-LABEL: yul.func @__sol.clone_array.storage.memory.array$_5_fixedbytes$_3_$_$_Storage_$ : (i256) -> i256
+// CHECK:         %[[P:.*]] = yul.mload %c64
 // CHECK:         %[[PER:.*]] = yul.constant 10{{$}}
-// CHECK:         yul.for %{{.*}}, %{{.*}}, %[[SLOT:.*]], %{{.*}} :
+// CHECK:         yul.for %{{.*}}, %[[P]], %arg0, %{{.*}} :
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
 // CHECK:             %[[E:.*]] = yul.arith_shr %[[W]], %{{.*}}
@@ -257,6 +293,11 @@ module {
 // CHECK:             %[[L:.*]] = yul.arith_shl %[[E]], %[[C232]]
 // CHECK:             yul.mstore %{{.*}}, %[[L]]
 // CHECK:         yul.if %{{.*}} -> i256 {
+// CHECK:         yul.func_return %[[P]] : i256
+// CHECK-LABEL: yul.func @s2m_b3s_72 : () -> i256
+// CHECK:         %[[SLOT:.*]] = yul.constant 4{{$}}
+// CHECK:         %[[R:.*]] = yul.func_call @__sol.clone_array.storage.memory.array$_5_fixedbytes$_3_$_$_Storage_$(%[[SLOT]])
+// CHECK:         yul.func_return %[[R]] : i256
 module {
   sol.contract @C {
     sol.state_var @sb3s_a slot 4 offset 0 : !sol.array<5 x !sol.fixedbytes<3>, Storage>
@@ -277,9 +318,8 @@ module {
 // off and the remaining old slots are zeroed, before the packed copy.
 // bytes16 elements are shifted down from the left-aligned memory word
 // before masking.
-// CHECK-LABEL: yul.func @m2s_b16d_62 : (i256) -> ()
-// CHECK-NEXT:  ^bb0(%[[ARR:.*]]: i256):
-// CHECK:         %[[SLOT:.*]] = yul.constant 8{{$}}
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_dyn_fixedbytes$_16_$_$_Memory_$.array$_dyn_fixedbytes$_16_$_$_Storage_$ : (i256, i256) -> ()
+// CHECK-NEXT:  ^bb0(%[[ARR:.*]]: i256, %[[SLOT:.*]]: i256):
 // CHECK:         %[[LEN:.*]] = yul.mload %[[ARR]]
 // CHECK:         %[[OLD:.*]] = yul.sload %[[SLOT]]
 // CHECK:         yul.sstore %[[SLOT]], %[[LEN]]
@@ -306,6 +346,9 @@ module {
 // CHECK-NEXT:        %[[E:.*]] = yul.and %[[R]], %[[M]]
 // CHECK:             yul.arith_shl %[[E]], %{{.*}}
 // CHECK:           yul.sstore
+// CHECK-LABEL: yul.func @m2s_b16d_62 : (i256) -> ()
+// CHECK:         %[[S:.*]] = yul.constant 8{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.memory.storage.array$_dyn_fixedbytes$_16_$_$_Memory_$.array$_dyn_fixedbytes$_16_$_$_Storage_$(%arg0, %[[S]])
 module {
   sol.contract @C {
     sol.state_var @sb16d_a slot 8 offset 0 : !sol.array<? x !sol.fixedbytes<16>, Storage>
@@ -322,11 +365,11 @@ module {
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 
-// CHECK-LABEL: yul.func @m2s_u8s_51 : (i256) -> ()
+// CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_33_ui8_$_Memory_$.array$_33_ui8_$_Storage_$ : (i256, i256) -> ()
 // CHECK:         %[[LEN:.*]] = yul.constant 33{{$}}
 // CHECK:         %[[PER:.*]] = yul.constant 32{{$}}
 // CHECK:         yul.cmp uge, %[[LEN]], %[[PER]]
-// CHECK:         yul.for
+// CHECK:         yul.for %{{.*}}, %arg0, %arg1, %{{.*}} :
 // CHECK:           yul.for
 // CHECK:             %[[V:.*]] = yul.mload
 // CHECK:             %[[M:.*]] = yul.constant 255
@@ -336,6 +379,9 @@ module {
 // CHECK:         yul.cmp ult, %{{.*}}, %[[LEN]]
 // CHECK:         } {full_unroll}
 // CHECK:         yul.sstore
+// CHECK-LABEL: yul.func @m2s_u8s_51 : (i256) -> ()
+// CHECK:         %[[S:.*]] = yul.constant 0{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.memory.storage.array$_33_ui8_$_Memory_$.array$_33_ui8_$_Storage_$(%arg0, %[[S]])
 module {
   sol.contract @C {
     sol.state_var @su8s_a slot 0 offset 0 : !sol.array<33 x ui8, Storage>

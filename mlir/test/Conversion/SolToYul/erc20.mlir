@@ -5,18 +5,20 @@
 #NonPayable = #sol<StateMutability NonPayable>
 
 // The two string constructor args are decoded from the appended code into
-// fresh memory copies.
+// fresh memory copies by the tuple decoder helper.
 // CHECK-LABEL: yul.object @ERC20 {
 // CHECK:         yul.codecopy
-// CHECK:         yul.mcopy
-// CHECK:         yul.mcopy
-// CHECK:         yul.func_call @ctor(%{{.*}}, %{{.*}}) : (i256, i256) -> ()
+// CHECK:         %[[ARGS:.*]]:2 = yul.func_call @__sol.abi_decode_tuple.memory.string$_Memory_$.string$_Memory_$(%{{.*}}, %{{.*}}) : (i256, i256) -> (i256, i256)
+// CHECK:         yul.func_call @ctor(%[[ARGS]]#0, %[[ARGS]]#1) : (i256, i256) -> ()
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.memory.string$_Memory_$.string$_Memory_$ : (i256, i256) -> (i256, i256)
+// CHECK:           yul.mcopy
+// CHECK:           yul.mcopy
 // CHECK-LABEL:   yul.func @ctor : (i256, i256) -> ()
 // CHECK:         ^bb0(%[[NAME:.*]]: i256, %[[SYM:.*]]: i256):
 // CHECK:           %[[S1:.*]] = yul.constant 1{{$}}
-// CHECK:           yul.func_call @__sol.copy.memory.storage.string(%[[NAME]], %[[S1]])
+// CHECK:           yul.func_call @__sol.copy_string.memory.storage(%[[NAME]], %[[S1]])
 // CHECK:           %[[S2:.*]] = yul.constant 2{{$}}
-// CHECK:           yul.func_call @__sol.copy.memory.storage.string(%[[SYM]], %[[S2]])
+// CHECK:           yul.func_call @__sol.copy_string.memory.storage(%[[SYM]], %[[S2]])
 module {
   sol.contract @ERC20 {
     sol.state_var @name slot 1 offset 0 : !sol.string<Storage>
@@ -54,6 +56,7 @@ module {
 // CHECK:             %[[TOPIC:.*]] = yul.constant -15402802100530019096323380498944738953123845089667699673314898783681816316945{{$}}
 // CHECK:             %[[T1:.*]] = yul.and %[[FROM]],
 // CHECK:             %[[T2:.*]] = yul.and %[[TO]],
+// CHECK:             yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%[[AMT]],
 // CHECK:             yul.log %{{.*}}, %{{.*}} topics(%[[TOPIC]], %[[T1]], %[[T2]])
 module {
   sol.contract @ERC20 {

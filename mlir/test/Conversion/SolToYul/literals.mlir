@@ -58,7 +58,7 @@ module {
   // CHECK-LABEL: yul.object @Test_deployed {
   // CHECK-LABEL: yul.func @longLit : () -> i256
   // CHECK:         %[[LEN:.*]] = yul.constant 129
-  // CHECK:         %[[MEM:.*]] = yul.mload
+  // CHECK:         %[[MEM:.*]] = yul.func_call @__sol.alloc(
   // CHECK:         yul.mstore %[[MEM]], %[[LEN]]
   // CHECK:         %[[G:.*]] = llvm.mlir.addressof @__data_in_code__0 : !llvm.ptr<4>
   // CHECK:         %[[GI:.*]] = llvm.ptrtoint %[[G]] : !llvm.ptr<4> to i256

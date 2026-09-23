@@ -1,29 +1,41 @@
 // RUN: mlir-opt %s --split-input-file --convert-sol-to-yul | FileCheck %s
 
-// S is two slots (a, b); each copy or clear of the S[] field recurses per
-// element at keccak(slot of b) + 2 * i.
+// S is two slots (a, b); each copy or clear of the S[] field goes through the
+// array helper, which recurses into the struct helper per element at
+// keccak(slot of b) + 2 * i.
 
 !S =!sol.struct<"S", Storage, (ui256, !sol.array<? x !sol.struct<"S", Storage>, Storage>)>
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @__sol.copy.storage.storage.S : (i256, i256) -> ()
+    // CHECK-LABEL: yul.func @__sol.clear_storage_struct.S : (i256) -> ()
+    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
+    // CHECK:         %[[B:.*]] = yul.add %arg0, %[[C1]]
+    // CHECK:         yul.func_call @__sol.clear_storage_array.array$_dyn_struct$_S_$_Storage_$_$_{{.*}}(%[[B]]) : (i256) -> ()
+
+    // The array copy moves the length, clears the old tail and copies each
+    // element through the struct helper, which comes back here for its b.
+    // CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_struct$_S_$_Storage_$_$_{{.*}} : (i256, i256) -> ()
+    // CHECK:         %[[NE:.*]] = yul.cmp ne, %arg0, %arg1
+    // CHECK:         yul.if %[[NE]] {
+    // CHECK:           %[[LEN:.*]] = yul.sload %arg0
+    // CHECK:           yul.sstore %arg1, %[[LEN]]
+    // CHECK:           yul.for
+    // CHECK:             yul.func_call @__sol.clear_storage_struct.S(
+    // CHECK:           yul.for
+    // CHECK:             yul.func_call @__sol.copy_struct.storage.storage.S.S(%{{.*}}, %{{.*}}) : (i256, i256) -> ()
+
+    // CHECK-LABEL: yul.func @__sol.copy_struct.storage.storage.S.S : (i256, i256) -> ()
     // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
     // CHECK:         %[[SB:.*]] = yul.add %arg0, %[[C1]]
     // CHECK:         %[[C1D:.*]] = yul.constant 1{{$}}
     // CHECK:         %[[DB:.*]] = yul.add %arg1, %[[C1D]]
-    // CHECK:         %[[NE:.*]] = yul.cmp ne, %[[SB]], %[[DB]]
-    // CHECK:         yul.if %[[NE]] {
-    // CHECK:           %[[LEN:.*]] = yul.sload %[[SB]]
-    // CHECK:           yul.sstore %[[DB]], %[[LEN]]
-    // CHECK:           yul.func_call @__sol.clear_storage.S(
-    // CHECK:           yul.for
-    // CHECK:             yul.func_call @__sol.copy.storage.storage.S(%{{.*}}, %{{.*}}) : (i256, i256) -> ()
+    // CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_dyn_struct$_S_$_Storage_$_$_{{.*}}(%[[SB]], %[[DB]]) : (i256, i256) -> ()
 
     // CHECK-LABEL: yul.func @stoToSto : (i256, i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256, %[[B:.*]]: i256):
     // CHECK:         %[[NE:.*]] = yul.cmp ne, %[[A]], %[[B]]
     // CHECK:         yul.if %[[NE]] {
-    // CHECK:           yul.func_call @__sol.copy.storage.storage.S(%[[A]], %[[B]]) : (i256, i256) -> ()
+    // CHECK:           yul.func_call @__sol.copy_struct.storage.storage.S.S(%[[A]], %[[B]]) : (i256, i256) -> ()
     sol.func @stoToSto(%a: !S, %b: !S) {
       sol.copy %a, %b : !S, !S
       sol.return
@@ -37,24 +49,31 @@ module {
 !Smem = !sol.struct<"S", Memory, (ui256, !sol.array<? x !sol.struct<"S", Memory>, Memory>)>
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @__sol.copy.storage.memory.S : (i256) -> i256
-    // CHECK:         %[[M:.*]] = yul.mload
-    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
-    // CHECK:         %[[BSLOT:.*]] = yul.add %arg0, %[[C1]]
-    // CHECK:         %[[LEN:.*]] = yul.sload %[[BSLOT]]
-    // CHECK:         yul.mstore %{{.*}}, %[[BSLOT]]
+    // CHECK-LABEL: yul.func @__sol.clone_array.storage.memory.array$_dyn_struct$_S_$_Storage_$_$_{{.*}} : (i256) -> i256
+    // CHECK:         %[[LEN:.*]] = yul.sload %arg0
+    // CHECK:         yul.mstore %{{.*}}, %arg0
     // CHECK:         %[[DATA:.*]] = yul.keccak256
+    // CHECK:         %[[ARR:.*]] = yul.func_call @__sol.alloc(
+    // CHECK:         yul.mstore %[[ARR]], %[[LEN]]
     // CHECK:         yul.for
     // CHECK:           %[[C2:.*]] = yul.constant 2{{$}}
     // CHECK:           %[[OFF:.*]] = yul.mul %arg1, %[[C2]]
     // CHECK:           %[[SRC:.*]] = yul.add %[[DATA]], %[[OFF]]
-    // CHECK:           %[[ELT:.*]] = yul.func_call @__sol.copy.storage.memory.S(%[[SRC]]) : (i256) -> i256
+    // CHECK:           %[[ELT:.*]] = yul.func_call @__sol.clone_struct.storage.memory.S(%[[SRC]]) : (i256) -> i256
     // CHECK:           yul.mstore %{{.*}}, %[[ELT]]
+    // CHECK:         yul.func_return %[[ARR]] : i256
+
+    // CHECK-LABEL: yul.func @__sol.clone_struct.storage.memory.S : (i256) -> i256
+    // CHECK:         %[[M:.*]] = yul.mload
+    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
+    // CHECK:         %[[BSLOT:.*]] = yul.add %arg0, %[[C1]]
+    // CHECK:         %[[B:.*]] = yul.func_call @__sol.clone_array.storage.memory.array$_dyn_struct$_S_$_Storage_$_$_{{.*}}(%[[BSLOT]]) : (i256) -> i256
+    // CHECK:         yul.mstore %{{.*}}, %[[B]]
     // CHECK:         yul.func_return %[[M]] : i256
 
     // CHECK-LABEL: yul.func @stoToMem : (i256) -> i256
     // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256):
-    // CHECK:         %[[R:.*]] = yul.func_call @__sol.copy.storage.memory.S(%[[A]]) : (i256) -> i256
+    // CHECK:         %[[R:.*]] = yul.func_call @__sol.clone_struct.storage.memory.S(%[[A]]) : (i256) -> i256
     // CHECK:         yul.func_return %[[R]]
     sol.func @stoToMem(%a: !S) -> !Smem {
       %0 = sol.data_loc_cast %a : !S, !Smem
@@ -69,31 +88,35 @@ module {
 !Smem = !sol.struct<"S", Memory, (ui256, !sol.array<? x !sol.struct<"S", Memory>, Memory>)>
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @__sol.copy.memory.storage.S : (i256, i256) -> ()
-    // CHECK:         yul.mload %arg0
-    // CHECK:         %[[AV:.*]] = yul.or %{{.*}}, %{{.*}}
-    // CHECK:         yul.sstore %{{.*}}, %[[AV]]
-    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
-    // CHECK:         %[[BSLOT:.*]] = yul.add %arg1, %[[C1]]
-    // CHECK:         %[[LEN:.*]] = yul.mload
-    // CHECK:         %[[OLDLEN:.*]] = yul.sload %[[BSLOT]]
-    // CHECK:         yul.sstore %[[BSLOT]], %[[LEN]]
+    // CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_dyn_struct$_S_$_Memory_$_$_{{.*}} : (i256, i256) -> ()
+    // CHECK:         %[[LEN:.*]] = yul.mload %arg0
+    // CHECK:         %[[OLDLEN:.*]] = yul.sload %arg1
+    // CHECK:         yul.sstore %arg1, %[[LEN]]
     // CHECK:         %[[SHRINK:.*]] = yul.cmp ult, %[[LEN]], %[[OLDLEN]]
     // CHECK:         yul.if %[[SHRINK]] {
     // CHECK:           yul.for
-    // CHECK:             yul.func_call @__sol.clear_storage.S(
-    // CHECK:         yul.mstore %{{.*}}, %[[BSLOT]]
+    // CHECK:             yul.func_call @__sol.clear_storage_struct.S(
+    // CHECK:         yul.mstore %{{.*}}, %arg1
     // CHECK:         %[[DATA:.*]] = yul.keccak256
     // CHECK:         yul.for
+    // CHECK:           %[[SRC:.*]] = yul.mload
     // CHECK:           %[[C2:.*]] = yul.constant 2{{$}}
     // CHECK:           %[[OFF:.*]] = yul.mul %arg2, %[[C2]]
     // CHECK:           %[[DST:.*]] = yul.add %[[DATA]], %[[OFF]]
-    // CHECK:           %[[SRC:.*]] = yul.mload
-    // CHECK:           yul.func_call @__sol.copy.memory.storage.S(%[[SRC]], %[[DST]]) : (i256, i256) -> ()
+    // CHECK:           yul.func_call @__sol.copy_struct.memory.storage.S.S(%[[SRC]], %[[DST]]) : (i256, i256) -> ()
+
+    // CHECK-LABEL: yul.func @__sol.copy_struct.memory.storage.S.S : (i256, i256) -> ()
+    // CHECK:         yul.mload %arg0
+    // CHECK:         %[[AV:.*]] = yul.or %{{.*}}, %{{.*}}
+    // CHECK:         yul.sstore %{{.*}}, %[[AV]]
+    // CHECK:         %[[ARR:.*]] = yul.mload
+    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
+    // CHECK:         %[[BSLOT:.*]] = yul.add %arg1, %[[C1]]
+    // CHECK:         yul.func_call @__sol.copy_array.memory.storage.array$_dyn_struct$_S_$_Memory_$_$_{{.*}}(%[[ARR]], %[[BSLOT]]) : (i256, i256) -> ()
 
     // CHECK-LABEL: yul.func @memToSto : (i256, i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[M:.*]]: i256, %[[S:.*]]: i256):
-    // CHECK:         yul.func_call @__sol.copy.memory.storage.S(%[[M]], %[[S]]) : (i256, i256) -> ()
+    // CHECK:         yul.func_call @__sol.copy_struct.memory.storage.S.S(%[[M]], %[[S]]) : (i256, i256) -> ()
     sol.func @memToSto(%m: !Smem, %s: !S) {
       sol.copy %m, %s : !Smem, !S
       sol.return
@@ -106,30 +129,33 @@ module {
 !S =!sol.struct<"S", Storage, (ui256, !sol.array<? x !sol.struct<"S", Storage>, Storage>)>
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @__sol.clear_storage.S : (i256) -> ()
-    // CHECK:         %[[C0:.*]] = yul.constant 0{{$}}
-    // CHECK:         %[[ASLOT:.*]] = yul.add %arg0, %[[C0]]
-    // CHECK:         yul.sstore %[[ASLOT]], %{{.*}}
-    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
-    // CHECK:         %[[BSLOT:.*]] = yul.add %arg0, %[[C1]]
-    // CHECK:         %[[LEN:.*]] = yul.sload %[[BSLOT]]
-    // CHECK:         yul.sstore %[[BSLOT]], %{{.*}}
+    // CHECK-LABEL: yul.func @__sol.clear_storage_array.array$_dyn_struct$_S_$_Storage_$_$_{{.*}} : (i256) -> ()
+    // CHECK:         %[[LEN:.*]] = yul.sload %arg0
+    // CHECK:         yul.sstore %arg0, %{{.*}}
     // CHECK:         %[[NONEMPTY:.*]] = yul.cmp ult, %{{.*}}, %[[LEN]]
     // CHECK:         yul.if %[[NONEMPTY]] {
-    // CHECK:           yul.mstore %{{.*}}, %[[BSLOT]]
+    // CHECK:           yul.mstore %{{.*}}, %arg0
     // CHECK:           %[[DATA:.*]] = yul.keccak256
     // CHECK:           yul.mul %[[LEN]], %{{.*}}
     // CHECK:           %[[STRIDE:.*]] = yul.constant 2{{$}}
     // CHECK-NEXT:      yul.for
     // CHECK:           } body {
     // CHECK:             %[[ELT:.*]] = yul.add %{{.*}}, %arg1
-    // CHECK:             yul.func_call @__sol.clear_storage.S(%[[ELT]]) : (i256) -> ()
+    // CHECK:             yul.func_call @__sol.clear_storage_struct.S(%[[ELT]]) : (i256) -> ()
     // CHECK:           } step {
     // CHECK:             yul.add %arg1, %[[STRIDE]]
 
+    // CHECK-LABEL: yul.func @__sol.clear_storage_struct.S : (i256) -> ()
+    // CHECK:         %[[C0:.*]] = yul.constant 0{{$}}
+    // CHECK:         %[[ASLOT:.*]] = yul.add %arg0, %[[C0]]
+    // CHECK:         yul.sstore %[[ASLOT]], %{{.*}}
+    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
+    // CHECK:         %[[BSLOT:.*]] = yul.add %arg0, %[[C1]]
+    // CHECK:         yul.func_call @__sol.clear_storage_array.array$_dyn_struct$_S_$_Storage_$_$_{{.*}}(%[[BSLOT]]) : (i256) -> ()
+
     // CHECK-LABEL: yul.func @del : (i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[S:.*]]: i256):
-    // CHECK:         yul.func_call @__sol.clear_storage.S(%[[S]]) : (i256) -> ()
+    // CHECK:         yul.func_call @__sol.clear_storage_struct.S(%[[S]]) : (i256) -> ()
     sol.func @del(%s: !S) {
       sol.delete %s : !S
       sol.return
@@ -144,7 +170,11 @@ module {
   sol.contract @C {
     // P's v (bits 0-15) and w (bits 16-47) share slot 0. They are repacked and
     // merged into the destination slot, preserving its bits above 48.
-    // CHECK-LABEL: yul.func @__sol.copy.storage.storage.P : (i256, i256) -> ()
+    // CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_struct$_P_$_Storage_$_$_{{.*}} : (i256, i256) -> ()
+    // CHECK:         yul.for
+    // CHECK:           yul.func_call @__sol.copy_struct.storage.storage.P.P(%{{.*}}, %{{.*}}) : (i256, i256) -> ()
+
+    // CHECK-LABEL: yul.func @__sol.copy_struct.storage.storage.P.P : (i256, i256) -> ()
     // CHECK:         %[[SRC:.*]] = yul.sload
     // CHECK:         %[[V:.*]] = yul.and %[[SRC]], %c65535_i256
     // CHECK:         %[[VP:.*]] = yul.or %c0_i256{{.*}}, %[[V]]
@@ -157,12 +187,11 @@ module {
     // CHECK:         %[[KEEP:.*]] = yul.and %[[DST]], %c-281474976710656_i256
     // CHECK:         %[[NEW:.*]] = yul.or %[[KEEP]], %[[VWP]]
     // CHECK:         yul.sstore %[[DSLOT]], %[[NEW]]
-    // CHECK:         yul.for
-    // CHECK:           yul.func_call @__sol.copy.storage.storage.P(%{{.*}}, %{{.*}}) : (i256, i256) -> ()
+    // CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_dyn_struct$_P_$_Storage_$_$_{{.*}}(%{{.*}}, %{{.*}}) : (i256, i256) -> ()
 
     // CHECK-LABEL: yul.func @stoToStoPacked : (i256, i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256, %[[B:.*]]: i256):
-    // CHECK:         yul.func_call @__sol.copy.storage.storage.P(%[[A]], %[[B]]) : (i256, i256) -> ()
+    // CHECK:         yul.func_call @__sol.copy_struct.storage.storage.P.P(%[[A]], %[[B]]) : (i256, i256) -> ()
     sol.func @stoToStoPacked(%a: !P, %b: !P) {
       sol.copy %a, %b : !P, !P
       sol.return
@@ -175,19 +204,25 @@ module {
 !A = !sol.struct<"A", Storage, (ui256, !sol.array<? x !sol.struct<"B", Storage, (ui256, !sol.array<? x !sol.struct<"A", Storage>, Storage>)>, Storage>)>
 module {
   sol.contract @C {
-    // A's array field holds Bs and B's holds As: each clear helper recurses into
-    // the other's.
-    // CHECK-LABEL: yul.func @__sol.clear_storage.B : (i256) -> ()
+    // A's array field holds Bs and B's holds As: each struct helper clears its
+    // array through the array helper, which recurses into the other struct's.
+    // CHECK-LABEL: yul.func @__sol.clear_storage_array.array$_dyn_struct$_A_$_Storage_$_$_{{.*}} : (i256) -> ()
     // CHECK:         yul.for
-    // CHECK:           yul.func_call @__sol.clear_storage.A(%{{.*}}) : (i256) -> ()
+    // CHECK:           yul.func_call @__sol.clear_storage_struct.A(%{{.*}}) : (i256) -> ()
 
-    // CHECK-LABEL: yul.func @__sol.clear_storage.A : (i256) -> ()
+    // CHECK-LABEL: yul.func @__sol.clear_storage_struct.B : (i256) -> ()
+    // CHECK:         yul.func_call @__sol.clear_storage_array.array$_dyn_struct$_A_$_Storage_$_$_{{.*}}(%{{.*}}) : (i256) -> ()
+
+    // CHECK-LABEL: yul.func @__sol.clear_storage_array.array$_dyn_struct$_B_$_Storage_$_$_{{.*}} : (i256) -> ()
     // CHECK:         yul.for
-    // CHECK:           yul.func_call @__sol.clear_storage.B(%{{.*}}) : (i256) -> ()
+    // CHECK:           yul.func_call @__sol.clear_storage_struct.B(%{{.*}}) : (i256) -> ()
+
+    // CHECK-LABEL: yul.func @__sol.clear_storage_struct.A : (i256) -> ()
+    // CHECK:         yul.func_call @__sol.clear_storage_array.array$_dyn_struct$_B_$_Storage_$_$_{{.*}}(%{{.*}}) : (i256) -> ()
 
     // CHECK-LABEL: yul.func @delMutual : (i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256):
-    // CHECK:         yul.func_call @__sol.clear_storage.A(%[[A]]) : (i256) -> ()
+    // CHECK:         yul.func_call @__sol.clear_storage_struct.A(%[[A]]) : (i256) -> ()
     sol.func @delMutual(%a: !A) {
       sol.delete %a : !A
       sol.return
@@ -202,7 +237,7 @@ module {
   sol.contract @C {
     // Delete stops at the mapping: only the scalar is cleared, masked in its
     // slot, no recursion.
-    // CHECK-LABEL: yul.func @__sol.clear_storage.M : (i256) -> ()
+    // CHECK-LABEL: yul.func @__sol.clear_storage_struct.M : (i256) -> ()
     // CHECK:         %[[SLOT:.*]] = yul.add %arg0, %c0_i256
     // CHECK:         %[[OLD:.*]] = yul.sload %[[SLOT]]
     // CHECK:         %[[KEEP:.*]] = yul.and %[[OLD]], %c-4294967296_i256
@@ -212,7 +247,7 @@ module {
 
     // CHECK-LABEL: yul.func @delMapping : (i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[M:.*]]: i256):
-    // CHECK:         yul.func_call @__sol.clear_storage.M(%[[M]]) : (i256) -> ()
+    // CHECK:         yul.func_call @__sol.clear_storage_struct.M(%[[M]]) : (i256) -> ()
     sol.func @delMapping(%m: !M) {
       sol.delete %m : !M
       sol.return

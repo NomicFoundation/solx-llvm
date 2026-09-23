@@ -7,31 +7,39 @@
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 
-// An ABI-decoded word must have its low 64 bits clear. A top-level argument is
-// split into the pair; an array element is stored as the raw word.
+// An ABI-decoded word must have its low 64 bits clear. The dispatcher decodes
+// each argument tuple through its helper. A top-level argument is split into
+// the pair; an array element is stored as the raw word.
 // CHECK:         case 286331153 {
-// CHECK:           %[[W:.*]] = yul.calldataload
-// CHECK:           %[[HI:.*]] = yul.constant -18446744073709551616
-// CHECK:           %[[CLEAN:.*]] = yul.and %[[W]], %[[HI]]
-// CHECK:           %[[BAD:.*]] = yul.cmp ne, %[[W]], %[[CLEAN]]
-// CHECK:           yul.if %[[BAD]] {
-// CHECK:             yul.revert
-// CHECK:           %[[A:.*]] = yul.arith_shr %[[W]], %c96_i256
-// CHECK:           %[[S:.*]] = yul.arith_shr %[[W]], %c64_i256
-// CHECK:           %[[SEL:.*]] = yul.and %[[S]], %c4294967295_i256
-// CHECK:           %[[R0:.*]] = llvm.insertvalue %[[A]], %{{.*}}[0]
-// CHECK:           %[[FP:.*]] = llvm.insertvalue %[[SEL]], %[[R0]][1]
+// CHECK:           %[[FP:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ext_func_ref$_$_ui256_$returnsui256_$(
 // CHECK:           yul.func_call @setExtFn(%[[FP]])
 // CHECK:         case 572662306 {
-// CHECK:           yul.for
-// CHECK:             %[[EW:.*]] = yul.calldataload
-// CHECK:             %[[EHI:.*]] = yul.constant -18446744073709551616
-// CHECK:             %[[ECLEAN:.*]] = yul.and %[[EW]], %[[EHI]]
-// CHECK:             %[[EBAD:.*]] = yul.cmp ne, %[[EW]], %[[ECLEAN]]
-// CHECK:             yul.if %[[EBAD]] {
-// CHECK-NOT:         yul.arith_shr
-// CHECK:             yul.mstore %{{.*}}, %[[EW]]
-// CHECK:           yul.func_call @setArr(
+// CHECK:           %[[ARR:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_ext_func_ref$_$_ui256_$returnsui256_$_$_Memory_$(
+// CHECK:           yul.func_call @setArr(%[[ARR]])
+
+// CHECK-LABEL: yul.func @__sol.abi_decode.calldata.memory.array$_dyn_ext_func_ref$_$_ui256_$returnsui256_$_$_Memory_$ : (i256, i256) -> i256
+// CHECK:         yul.for
+// CHECK:           %[[EW:.*]] = yul.calldataload
+// CHECK:           %[[EHI:.*]] = yul.constant -18446744073709551616
+// CHECK:           %[[ECLEAN:.*]] = yul.and %[[EW]], %[[EHI]]
+// CHECK:           %[[EBAD:.*]] = yul.cmp ne, %[[EW]], %[[ECLEAN]]
+// CHECK:           yul.if %[[EBAD]] {
+// CHECK-NOT:       yul.arith_shr
+// CHECK:           yul.mstore %{{.*}}, %[[EW]]
+
+// CHECK-LABEL: yul.func @__sol.abi_decode_tuple.calldata.ext_func_ref$_$_ui256_$returnsui256_$ : (i256, i256) -> !llvm.struct<(i256, i256)>
+// CHECK:         %[[W:.*]] = yul.calldataload
+// CHECK:         %[[HI:.*]] = yul.constant -18446744073709551616
+// CHECK:         %[[CLEAN:.*]] = yul.and %[[W]], %[[HI]]
+// CHECK:         %[[BAD:.*]] = yul.cmp ne, %[[W]], %[[CLEAN]]
+// CHECK:         yul.if %[[BAD]] {
+// CHECK:           yul.revert
+// CHECK:         %[[A:.*]] = yul.arith_shr %[[W]], %c96_i256
+// CHECK:         %[[S:.*]] = yul.arith_shr %[[W]], %c64_i256
+// CHECK:         %[[SEL:.*]] = yul.and %[[S]], %c4294967295_i256
+// CHECK:         %[[R0:.*]] = llvm.insertvalue %[[A]], %{{.*}}[0]
+// CHECK:         %[[FP:.*]] = llvm.insertvalue %[[SEL]], %[[R0]][1]
+// CHECK:         yul.func_return %[[FP]] : !llvm.struct<(i256, i256)>
 
 // CHECK-LABEL: yul.func @setExtFn : (!llvm.struct<(i256, i256)>) -> ()
 // CHECK-NEXT:  ^bb0(%[[FP:.*]]: !llvm.struct<(i256, i256)>):

@@ -19,11 +19,17 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 module {
   sol.contract @C {
-    // An indexed string is logged as the keccak of its contents.
+    // An indexed string is logged as the keccak of its contents, packed in
+    // place by the encoder helper.
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.packed.inplace.string$_Memory_$ : (i256, i256) -> i256
+    // CHECK:         yul.mcopy %arg1,
     // CHECK-LABEL: yul.func @emitR : (i256) -> ()
+    // CHECK:       ^bb0(%[[S:.*]]: i256):
     // CHECK:         %[[SIG:.*]] = yul.constant 34354843262229843807123348806149206935067866475963268020757943107646077459833{{$}}
-    // CHECK:         yul.mcopy
-    // CHECK:         %[[HASH:.*]] = yul.keccak256
+    // CHECK:         %[[BUF:.*]] = yul.mload
+    // CHECK:         %[[END:.*]] = yul.func_call @__sol.abi_encode_tuple.packed.inplace.string$_Memory_$(%[[S]], %[[BUF]])
+    // CHECK:         %[[SIZE:.*]] = yul.sub %[[END]], %[[BUF]]
+    // CHECK:         %[[HASH:.*]] = yul.keccak256 %[[BUF]], %[[SIZE]]
     // CHECK:         yul.log %{{.*}}, %{{.*}} topics(%[[SIG]], %[[HASH]])
     sol.func @emitR(%arg0: !sol.string<Memory>) attributes {state_mutability = #NonPayable} {
       sol.emit "R(string)" indexed = [%arg0] : !sol.string<Memory>
@@ -38,18 +44,24 @@ module {
 module {
   sol.contract @C {
     // An indexed struct is logged as the keccak of its in-place encoding, string
-    // members padded to a word.
-    // CHECK-LABEL: yul.func @emitStatic : (i256) -> ()
-    // CHECK:       ^bb0(%[[S:.*]]: i256):
-    // CHECK:         %[[SIG:.*]] = yul.constant 22992739540827417338739692891253355298809991475767957404135938865693038621146{{$}}
-    // CHECK:         %[[BUF:.*]] = yul.mload
+    // members padded to a word. The encoder helper takes the struct and the
+    // buffer and returns the end.
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.packed.inplace.struct$_$_ui16_$_$_Memory_$ : (i256, i256) -> i256
+    // CHECK:       ^bb0(%[[S:.*]]: i256, %[[BUF:.*]]: i256):
     // CHECK-NOT:     yul.mcopy
     // CHECK:         %[[X:.*]] = yul.mload %[[S]]
     // CHECK:         %[[M:.*]] = yul.constant 65535
     // CHECK:         %[[B:.*]] = yul.and %[[X]], %[[M]]
     // CHECK:         yul.mstore %[[BUF]], %[[B]]
     // CHECK-NOT:     yul.mcopy
-    // CHECK:         %[[H:.*]] = yul.keccak256 %[[BUF]],
+    // CHECK:         yul.func_return
+    // CHECK-LABEL: yul.func @emitStatic : (i256) -> ()
+    // CHECK:       ^bb0(%[[S:.*]]: i256):
+    // CHECK:         %[[SIG:.*]] = yul.constant 22992739540827417338739692891253355298809991475767957404135938865693038621146{{$}}
+    // CHECK:         %[[BUF:.*]] = yul.mload
+    // CHECK:         %[[END:.*]] = yul.func_call @__sol.abi_encode_tuple.packed.inplace.struct$_$_ui16_$_$_Memory_$(%[[S]], %[[BUF]])
+    // CHECK:         %[[SIZE:.*]] = yul.sub %[[END]], %[[BUF]]
+    // CHECK:         %[[H:.*]] = yul.keccak256 %[[BUF]], %[[SIZE]]
     // CHECK:         yul.log %{{.*}}, %{{.*}} topics(%[[SIG]], %[[H]])
     sol.func @emitStatic(%arg0: !sol.struct<(ui16), Memory>) attributes {state_mutability = #NonPayable} {
       sol.emit "EStatic((uint16))" indexed = [%arg0] : !sol.struct<(ui16), Memory>
@@ -63,10 +75,8 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @emitDynamic : (i256) -> ()
-    // CHECK:       ^bb0(%[[S:.*]]: i256):
-    // CHECK:         %[[SIG:.*]] = yul.constant 20419421517794169989111501949961529592723745139203314723394321486472158066767{{$}}
-    // CHECK:         %[[BUF:.*]] = yul.mload
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.packed.inplace.struct$_$_string$_Memory_$_$_$_Memory_$ : (i256, i256) -> i256
+    // CHECK:       ^bb0(%[[S:.*]]: i256, %[[BUF:.*]]: i256):
     // CHECK:         %[[STR:.*]] = yul.mload %[[S]]
     // CHECK:         %[[LEN:.*]] = yul.mload %[[STR]]
     // CHECK:         %[[DATA:.*]] = yul.add %[[STR]],
@@ -74,6 +84,12 @@ module {
     // CHECK:         %[[MASK:.*]] = yul.constant -32
     // CHECK:         %[[PAD:.*]] = yul.and %{{.*}}, %[[MASK]]
     // CHECK:         %[[END:.*]] = yul.add %[[BUF]], %[[PAD]]
+    // CHECK:         yul.func_return %[[END]]
+    // CHECK-LABEL: yul.func @emitDynamic : (i256) -> ()
+    // CHECK:       ^bb0(%[[S:.*]]: i256):
+    // CHECK:         %[[SIG:.*]] = yul.constant 20419421517794169989111501949961529592723745139203314723394321486472158066767{{$}}
+    // CHECK:         %[[BUF:.*]] = yul.mload
+    // CHECK:         %[[END:.*]] = yul.func_call @__sol.abi_encode_tuple.packed.inplace.struct$_$_string$_Memory_$_$_$_Memory_$(%[[S]], %[[BUF]])
     // CHECK:         %[[SIZE:.*]] = yul.sub %[[END]], %[[BUF]]
     // CHECK:         %[[H:.*]] = yul.keccak256 %[[BUF]], %[[SIZE]]
     // CHECK:         yul.log %{{.*}}, %{{.*}} topics(%[[SIG]], %[[H]])
@@ -104,12 +120,15 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 module {
   sol.contract @C {
+    // The non-indexed string is ABI-encoded with a tail by the encoder helper.
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.string$_Memory_$ : (i256, i256) -> i256
+    // CHECK:         yul.mcopy
     // CHECK-LABEL: yul.func @emitMixed : (i256, i256) -> ()
-    // CHECK:       ^bb0(%[[I:.*]]: i256, %{{.*}}: i256):
+    // CHECK:       ^bb0(%[[I:.*]]: i256, %[[STR:.*]]: i256):
     // CHECK:         %[[SIG:.*]] = yul.constant 56223025768741404677931981242731356084606262024008358662602253767454331384788{{$}}
     // CHECK:         %[[HEAD:.*]] = yul.mload
-    // CHECK:         yul.mcopy
-    // CHECK:         %[[SIZE:.*]] = yul.sub %{{.*}}, %[[HEAD]]
+    // CHECK:         %[[END:.*]] = yul.func_call @__sol.abi_encode_tuple.padded.tail.string$_Memory_$(%[[STR]], %[[HEAD]])
+    // CHECK:         %[[SIZE:.*]] = yul.sub %[[END]], %[[HEAD]]
     // CHECK:         yul.log %[[HEAD]], %[[SIZE]] topics(%[[SIG]], %[[I]])
     sol.func @emitMixed(%arg0: ui256, %arg1: !sol.string<Memory>) attributes {state_mutability = #NonPayable} {
       sol.emit "Mixed(uint256,string)" indexed = [%arg0] non_indexed = [%arg1] : ui256, !sol.string<Memory>
