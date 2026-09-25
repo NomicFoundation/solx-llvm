@@ -2286,8 +2286,8 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
       // reads zero and a fixed-size array has length slot, so there is nothing
       // to clear.
       return;
-    } else if (sol::hasDynamicallySizedElt(arrTy.getEltType())) {
-      // Fixed-size array with complex element type (dyn array, string,
+    } else if (!sol::canBePacked(arrTy.getEltType())) {
+      // Fixed-size array with an aggregate element type (array, string,
       // struct): clear each element in a runtime loop. No full unroll here,
       // the elements are aggregates and their clearing code is not small.
       Type eltTy = arrTy.getEltType();
@@ -2320,20 +2320,47 @@ void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
   }
 
   if (auto structTy = dyn_cast<sol::StructType>(ty)) {
-    // Packed members can share a slot, dedup their zeroing. Members with
-    // dynamically-sized elements always recurse, regardless of slot sharing.
-    llvm::SmallDenseSet<APInt, 8> clearedSlots;
-    for (unsigned m = 0; m < structTy.getMemberTypes().size(); ++m) {
-      Type memberTy = structTy.getMemberTypes()[m];
+    // Legacy clears a struct member by member, each at its own byte offset and
+    // width, so the bytes of a packed slot that no member occupies survive the
+    // delete.
+    ArrayRef<Type> memberTys = structTy.getMemberTypes();
+    ArrayRef<APInt> slotOffsets = structTy.getMemberSlotOffsets();
+    APInt accumMask = APInt::getZero(256);
+    for (unsigned m = 0; m < memberTys.size(); ++m) {
+      Type memberTy = memberTys[m];
       auto [slotOff, byteOff] = structTy.getStorageMemberOffset(m);
-      (void)byteOff;
-      if (!sol::hasDynamicallySizedElt(memberTy) &&
-          !clearedSlots.insert(slotOff).second)
+
+      // Anything that is not a packable scalar owns whole slots, so it clears
+      // through the recursion.
+      if (!sol::canBePacked(memberTy)) {
+        Value memberSlot =
+            b.create<yul::AddOp>(loc, slot, bExt.genI256Const(slotOff));
+        genClearStorageValue(memberTy, memberSlot, loc);
+        continue;
+      }
+
+      // Collect the bits this member occupies and flush once the slot is
+      // complete.
+      accumMask |= APInt::getLowBitsSet(256, sol::getNumBytes(memberTy) * 8)
+                       .shl(byteOff * 8);
+      unsigned nextMemberIdx = m + 1;
+      if (nextMemberIdx != memberTys.size() &&
+          slotOffsets[nextMemberIdx] == slotOff)
         continue;
 
       Value memberSlot =
           b.create<yul::AddOp>(loc, slot, bExt.genI256Const(slotOff));
-      genClearStorageValue(memberTy, memberSlot, loc);
+      if (accumMask.isAllOnes()) {
+        // The members fill the slot, so there is nothing to preserve and the
+        // old value need not be read.
+        b.create<yul::SStoreOp>(loc, memberSlot, bExt.genI256Const(0, loc));
+      } else {
+        Value oldSlot = genLoad(memberSlot, sol::DataLocation::Storage, loc);
+        Value preserved =
+            b.create<yul::AndOp>(loc, oldSlot, bExt.genI256Const(~accumMask));
+        genStore(preserved, memberSlot, sol::DataLocation::Storage, loc);
+      }
+      accumMask = APInt::getZero(256);
     }
     return;
   }
