@@ -3941,6 +3941,10 @@ struct FuncOpLowering : public OpConversionPattern<sol::FuncOp> {
         r.create<yul::FuncOp>(op.getLoc(), op.getName(), convertedFuncTy);
     for (NamedAttribute attr : attrs)
       newOp->setAttr(attr.getName(), attr.getValue());
+    if (auto visibility = op.getSymVisibilityAttr())
+      newOp.setSymVisibilityAttr(visibility);
+    if (op.getUnsafeAsm())
+      newOp.setUnsafeAsm(true);
     r.inlineRegionBefore(op.getBody(), newOp.getBody(), newOp.getBody().end());
     r.eraseOp(op);
     return success();
@@ -4428,7 +4432,6 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     r.setInsertionPointToStart(runtimeObj.getEntryBlock());
 
     // Generate the memory init.
-    // TODO: Confirm if this should be the same as in the creation context.
     genFreePtrInit(r, loc);
 
     // Generate the dispatch to interface functions.
@@ -4639,6 +4642,28 @@ namespace {
 struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
   using OpConversionPattern<sol::InlineAsmOp>::OpConversionPattern;
 
+  /// Upstream solc's InlineAssemblyAnnotation::hasMemoryEffects: a builtin
+  /// that reads or writes memory, or an assignment to a Solidity memory
+  /// variable.
+  static bool hasMemoryEffects(Operation *op) {
+    if (auto effectOp = dyn_cast<MemoryEffectOpInterface>(op)) {
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      effectOp.getEffectsOnResource(yul::MemoryResource::get(), effects);
+      if (!effects.empty())
+        return true;
+    }
+
+    auto store = dyn_cast<yul::StoreOp>(op);
+    if (!store)
+      return false;
+    auto ptrCast = store.getPtr().getDefiningOp<sol::YulPtrCastOp>();
+    if (!ptrCast)
+      return false;
+    auto ptrTy = cast<sol::PointerType>(ptrCast.getSrc().getType());
+    return sol::getDataLocation(ptrTy.getPointeeType()) ==
+           sol::DataLocation::Memory;
+  }
+
   LogicalResult matchAndRewrite(sol::InlineAsmOp op, OpAdaptor,
                                 ConversionPatternRewriter &r) const override {
     Operation *dest = SymbolTable::getNearestSymbolTable(op->getParentOp());
@@ -4646,6 +4671,16 @@ struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
     Block &destBlock = dest->getRegion(0).front();
     Block &block = op.getBody().front();
     MLIRContext *ctx = r.getContext();
+
+    auto unsafeAsmWalk = op.getBody().walk([](Operation *inner) {
+      return hasMemoryEffects(inner) ? WalkResult::interrupt()
+                                     : WalkResult::advance();
+    });
+    if (!op.getMemorySafe() && unsafeAsmWalk.wasInterrupted()) {
+      auto fn = op->getParentOfType<sol::FuncOp>();
+      assert(fn && "inline_asm must be within a sol.func");
+      r.modifyOpInPlace(fn, [&] { fn.setUnsafeAsm(true); });
+    }
 
     auto fns = llvm::to_vector(block.getOps<yul::FuncOp>());
 
