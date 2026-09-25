@@ -1,5 +1,5 @@
 ; REQUIRES: asserts
-; RUN: llc -evm-stack-region-offset=128 -evm-stack-region-size=32 --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
+; RUN: llc --debug-only=evm-stack-solver < %s 2>&1 | FileCheck %s
 
 target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
 target triple = "evm-unknown-unknown"
@@ -90,3 +90,7 @@ conditional_rt_187_join_block:                    ; preds = %"block_rt_181/0", %
 }
 
 attributes #0 = { nocallback nofree nounwind willreturn memory(argmem: readwrite) }
+
+!llvm.module.flags = !{!0, !1}
+!0 = !{i32 1, !"evm-memory-guard", i64 128}
+!1 = !{i32 1, !"evm-stack-region-size", i64 32}

@@ -151,6 +151,7 @@ void EVMTargetMachine::registerEarlyDefaultAliasAnalyses(AAManager &AAM) {
 void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineStartEPCallback(
       [](ModulePassManager &PM, OptimizationLevel Level) {
+        PM.addPass(EVMFoldMemoryGuardPass());
         if (Level != OptimizationLevel::O0)
           PM.addPass(EVMAlwaysInlinePass());
         PM.addPass(EVMLinkRuntimePass());
@@ -185,6 +186,10 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef PassName, ModulePassManager &PM,
          ArrayRef<PassBuilder::PipelineElement>) {
+        if (PassName == "evm-fold-memory-guard") {
+          PM.addPass(EVMFoldMemoryGuardPass());
+          return true;
+        }
         if (PassName == "evm-mark-recursive-functions") {
           PM.addPass(EVMMarkRecursiveFunctionsPass());
           return true;

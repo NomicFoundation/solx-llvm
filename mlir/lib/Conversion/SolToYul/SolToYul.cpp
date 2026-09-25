@@ -4122,9 +4122,12 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
   void genFreePtrInit(PatternRewriter &r, Location loc,
                       size_t reservedMem = 0) const {
     mlir::solgen::BuilderExt bExt(r, loc);
-    mlir::Value freeMem = bExt.genI256Const(
-        mlir::evm::MemoryLayout::generalPurposeMemoryStart + reservedMem);
-    r.create<yul::MStoreOp>(loc, bExt.genI256Const(64), freeMem);
+    auto guard = r.create<yul::MemGuardOp>(
+        loc,
+        r.getIntegerAttr(r.getIntegerType(256),
+                         mlir::evm::MemoryLayout::generalPurposeMemoryStart +
+                             reservedMem));
+    r.create<yul::MStoreOp>(loc, bExt.genI256Const(64), guard);
   };
 
   /// Generates the dispatch to interface functions.
