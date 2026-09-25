@@ -14,6 +14,7 @@
 #ifndef LLVM_LIB_TARGET_EVM_EVM_H
 #define LLVM_LIB_TARGET_EVM_EVM_H
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Pass.h"
@@ -45,6 +46,11 @@ unsigned constexpr POP = 2;
 unsigned constexpr PUSH = 3;
 unsigned constexpr MLOAD = 3;
 } // namespace EVMCOST
+
+// Module flags describing the stack region: its base is the front end's
+// memory guard, its size is set by the driver on a spill retry.
+constexpr StringLiteral EVMMemoryGuardFlag = "evm-memory-guard";
+constexpr StringLiteral EVMStackRegionSizeFlag = "evm-stack-region-size";
 
 // LLVM IR passes.
 FunctionPass *createEVMCodegenPreparePass();
@@ -121,6 +127,11 @@ struct EVMAlwaysInlinePass : PassInfoMixin<EVMAlwaysInlinePass> {
 
 struct EVMVerifierPass : PassInfoMixin<EVMVerifierPass> {
   EVMVerifierPass() = default;
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+};
+
+struct EVMFoldMemoryGuardPass : PassInfoMixin<EVMFoldMemoryGuardPass> {
+  EVMFoldMemoryGuardPass() = default;
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };
 
