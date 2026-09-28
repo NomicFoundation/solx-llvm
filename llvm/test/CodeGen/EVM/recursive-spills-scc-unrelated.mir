@@ -6,16 +6,20 @@
 # a new activation of @f, so it cannot clobber the spill slots of @f. The
 # spilled register %1 is live across the call to @g and still needs no
 # callee-save code. There is no save load in the prologue and no restore
-# before the return jump. The only frame operation before the call is the
-# spill store of the loaded value.
+# before the return jump. The only frame operations are the spill store of
+# the loaded value before the call and its reload after the call. The stack
+# is compressed across the call, because @g is recursive, so the value does
+# not stay on the stack.
 
 # CHECK-LABEL: bb.0.entry:
 # CHECK-NOT: PUSH_FRAME
 # CHECK: MLOAD_S
-# CHECK-NEXT: DUP1_S
 # CHECK-NEXT: PUSH_FRAME %stack.0
 # CHECK-NEXT: MSTORE_S
-# CHECK: PseudoCALL @g
+# CHECK-NEXT: PseudoCALL @g
+# CHECK-NEXT: PUSH_FRAME %stack.0
+# CHECK-NEXT: MLOAD_S
+# CHECK-NEXT: ADD_S
 # CHECK-NOT: PUSH_FRAME
 # CHECK: PseudoRET
 
