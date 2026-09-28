@@ -15,6 +15,22 @@ func.func @negative_case(%arg0: i256) {
 
 // -----
 
+// A negative zero is rejected too: the minus sign itself is not allowed,
+// even though the value it produces is not negative.
+func.func @negative_zero_case(%arg0: i256) {
+  yul.switch %arg0 : i256
+  // expected-error@below {{negative case values are not allowed}}
+  case -0 {
+    yul.yield
+  }
+  default {
+    yul.yield
+  }
+  return
+}
+
+// -----
+
 // Case values that do not fit the switch argument are rejected instead of
 // being silently truncated.
 func.func @too_wide_case(%arg0: i256) {

@@ -493,7 +493,9 @@ void SwitchOp::print(OpAsmPrinter &p) {
 
   for (auto [val, region] : llvm::zip(getCases(), getCaseRegions())) {
     p.printNewline();
-    p << "case " << val << ' ';
+    p << "case ";
+    val.print(p.getStream(), /*isSigned=*/false);
+    p << ' ';
     p.printRegion(region, /*printEntryBlockArgs=*/false);
   }
 
@@ -518,11 +520,20 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
   // Parse case regions.
   SmallVector<APInt> caseVals;
   while (succeeded(p.parseOptionalKeyword("case"))) {
+    llvm::SMLoc caseLoc = p.getCurrentLocation();
+    // Case values are unsigned words with no negative literals. Reject the
+    // minus sign itself: parseInteger would consume it, and "-0" would then
+    // come back as a non-negative zero.
+    if (succeeded(p.parseOptionalMinus()))
+      return p.emitError(caseLoc, "negative case values are not allowed");
     APInt value(argTy.getWidth(), 0);
     Region *region = result.addRegion();
     if (p.parseInteger(value) || p.parseRegion(*region))
       return failure();
-    caseVals.push_back(value);
+    if (value.getActiveBits() > argTy.getWidth())
+      return p.emitError(caseLoc,
+                         "case value does not fit the switch argument type");
+    caseVals.push_back(value.zextOrTrunc(argTy.getWidth()));
   }
   auto caseValsAttr = DenseIntElementsAttr::get(
       RankedTensorType::get(static_cast<int64_t>(caseVals.size()), argTy),
