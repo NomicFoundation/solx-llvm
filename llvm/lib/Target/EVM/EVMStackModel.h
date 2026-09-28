@@ -20,6 +20,7 @@
 #include "MCTargetDesc/EVMMCTargetDesc.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/LiveIntervals.h"
@@ -275,9 +276,11 @@ class EVMStackModel {
       CalleeSavedStorage;
   // Callee-saved words for the spill slots in creation order.
   mutable SmallVector<const CalleeSavedSlot *, 8> CalleeSavedSlots;
-  // Slot indexes of the calls that may re-enter this function, collected in
-  // processMI.
-  SmallVector<SlotIndex, 4> ReentrantCallIndexes;
+  // Calls to recursive functions, collected in processMI.
+  SmallPtrSet<const MachineInstr *, 4> RecursiveCalls;
+  // Calls that may re-enter this function, i.e. calls into the same call
+  // graph cycle. A subset of RecursiveCalls, collected in processMI.
+  SmallPtrSet<const MachineInstr *, 4> ReentrantCalls;
 
   using MBBStackMap = DenseMap<const MachineBasicBlock *, Stack>;
   using InstStackMap = DenseMap<const MachineInstr *, Stack>;
@@ -343,6 +346,11 @@ public:
   // Return true if \p Reg is live across a call that may re-enter this
   // function.
   bool crossesReentrantCall(const Register &Reg) const;
+
+  // Return true if \p MI is a call to a recursive function.
+  bool isCallToRecursiveFunction(const MachineInstr &MI) const {
+    return RecursiveCalls.contains(&MI);
+  }
 
   // Return true if a callee-saved slot exists for the spill slot of \p R.
   bool hasCalleeSavedSlot(const Register &R) const {

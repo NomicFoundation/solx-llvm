@@ -570,6 +570,14 @@ Stack EVMStackSolver::propagateThroughMI(const Stack &ExitStack,
     dbgs() << "\tMI: ";
     MI.dump();
   });
+
+  // Always compress the stack across a call to a recursive function. The
+  // recursion runs on top of the caller's stack, so every word the caller
+  // keeps across the call brings the deepest activation closer to the EVM
+  // stack limit.
+  if (StackModel.isCallToRecursiveFunction(MI))
+    CompressStack = true;
+
   const Stack MIDefs = StackModel.getSlotsForInstructionDefs(&MI);
   // Stack before MI except for MI inputs.
   Stack BeforeMI = calculateStackBeforeInst(MIDefs, ExitStack, CompressStack,
