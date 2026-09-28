@@ -5,20 +5,25 @@
 # "evm-recursive-scc" ids are equal. A call to @g may re-enter @f, so the
 # spilled register %1, which is live across the call, needs the callee-save
 # discipline. The prologue loads the previous slot contents and the return
-# path stores them back.
+# path stores them back. The stack is compressed across the re-entrant call,
+# so the spilled value is not kept on the stack across it: it is stored
+# without a DUP before the call and reloaded after the call.
 
 # The save load in the prologue.
 # CHECK-LABEL: bb.0.entry:
 # CHECK: PUSH_FRAME %stack.0
 # CHECK-NEXT: MLOAD_S
 
-# The spill store of the loaded value.
-# CHECK: DUP1_S
+# The spill store of the loaded value, with no copy left on the stack.
+# CHECK: MLOAD_S
 # CHECK-NEXT: PUSH_FRAME %stack.0
 # CHECK-NEXT: MSTORE_S
 
-# The restore right before the return jump.
-# CHECK: PseudoCALL @g
+# The reload after the call, then the restore right before the return jump.
+# CHECK-NEXT: PseudoCALL @g
+# CHECK-NEXT: PUSH_FRAME %stack.0
+# CHECK-NEXT: MLOAD_S
+# CHECK-NEXT: ADD_S
 # CHECK: PUSH_FRAME %stack.0
 # CHECK-NEXT: MSTORE_S
 # CHECK-NEXT: PseudoRET

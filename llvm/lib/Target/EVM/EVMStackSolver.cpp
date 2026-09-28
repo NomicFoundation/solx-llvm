@@ -555,6 +555,11 @@ Stack EVMStackSolver::propagateThroughMI(const Stack &ExitStack,
     dbgs() << "\tMI: ";
     MI.dump();
   });
+
+  // Always compress the stack across a call that may re-enter this function.
+  if (StackModel.isReentrantCall(MI))
+    CompressStack = true;
+
   const Stack MIDefs = StackModel.getSlotsForInstructionDefs(&MI);
   // Stack before MI except for MI inputs.
   Stack BeforeMI = calculateStackBeforeInst(MIDefs, ExitStack, CompressStack,

@@ -269,9 +269,8 @@ class EVMStackModel {
       CalleeSavedStorage;
   // Callee-saved words for the spill slots in creation order.
   mutable SmallVector<const CalleeSavedSlot *, 8> CalleeSavedSlots;
-  // Slot indexes of the calls that may re-enter this function, collected in
-  // processMI.
-  SmallVector<SlotIndex, 4> ReentrantCallIndexes;
+  // Calls that may re-enter this function, collected in processMI.
+  SmallVector<const MachineInstr *, 4> ReentrantCalls;
 
   using MBBStackMap = DenseMap<const MachineBasicBlock *, Stack>;
   using InstStackMap = DenseMap<const MachineInstr *, Stack>;
@@ -327,6 +326,12 @@ public:
   // Return true if \p Reg is live across a call that may re-enter this
   // function.
   bool crossesReentrantCall(const Register &Reg) const;
+
+  // Return true if \p MI is a call that may create a new activation of this
+  // function, i.e. the callee belongs to the same call graph cycle.
+  bool isReentrantCall(const MachineInstr &MI) const {
+    return is_contained(ReentrantCalls, &MI);
+  }
 
   // Return true if a callee-saved slot exists for the spill slot of \p R.
   bool hasCalleeSavedSlot(const Register &R) const {
