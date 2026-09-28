@@ -90,8 +90,8 @@ bool EVMStackModel::crossesReentrantCall(const Register &Reg) const {
   // value there. A register whose last use is a call argument is killed at
   // the call, and its last reload happens before the callee starts.
   const LiveInterval &LI = LIS.getInterval(Reg);
-  return any_of(ReentrantCallIndexes, [&LI](SlotIndex Idx) {
-    LiveQueryResult Q = LI.Query(Idx);
+  return any_of(ReentrantCalls, [&LI, this](const MachineInstr *Call) {
+    LiveQueryResult Q = LI.Query(LIS.getInstructionIndex(*Call));
     return Q.valueIn() && !Q.isKill();
   });
 }
@@ -195,8 +195,10 @@ void EVMStackModel::processMI(const MachineInstr &MI) {
   if (Opc == EVM::FCALL) {
     const auto *Callee =
         cast<Function>(MI.explicit_uses().begin()->getGlobal());
+    if (Callee->hasFnAttribute("evm-recursive"))
+      RecursiveCalls.insert(&MI);
     if (inSameRecursiveCycle(MF.getFunction(), *Callee))
-      ReentrantCallIndexes.push_back(LIS.getInstructionIndex(MI));
+      ReentrantCalls.insert(&MI);
 
     Stack Input;
     if (!isNoReturnCallMI(MI))
