@@ -748,3 +748,37 @@ llvm.func @artificial() {
 
 // CHECK: !DISubprogram(name: "artificial"{{.*}} flags: DIFlagArtificial{{.*}})
 // EVM local end
+
+// -----
+
+// EVM local begin
+// Test that a location in another file than its scope's is scoped to a
+// lexical block file of its own file, in the scope's directory.
+#own_file = #llvm.di_file<"own.sol" in "/src">
+#own_cu = #llvm.di_compile_unit<id = distinct[0]<>, sourceLanguage = DW_LANG_C,
+ file = #own_file, isOptimized = false, emissionKind = Full>
+#cross_file_sp = #llvm.di_subprogram<id = distinct[1]<>, compileUnit = #own_cu,
+ scope = #own_file, name = "cross_file", file = #own_file,
+ subprogramFlags = Definition>
+
+llvm.func @callee()
+
+llvm.func @cross_file() {
+  llvm.call @callee() : () -> () loc(#own_loc)
+  llvm.call @callee() : () -> () loc(#other_loc)
+  llvm.return loc(#own_loc)
+} loc(#cross_file_loc)
+
+#own_loc = loc("own.sol":4:5)
+#other_loc = loc("other.sol":2:3)
+#cross_file_loc = loc(fused<#cross_file_sp>[#own_loc])
+
+// CHECK-LABEL: define void @cross_file()
+// CHECK-SAME: !dbg ![[SP:[0-9]+]]
+// CHECK: call void @callee(), !dbg ![[OWN:[0-9]+]]
+// CHECK: call void @callee(), !dbg ![[OTHER:[0-9]+]]
+// CHECK: ![[OWN]] = !DILocation(line: 4, column: 5, scope: ![[SP]])
+// CHECK: ![[OTHER]] = !DILocation(line: 2, column: 3, scope: ![[BLOCK:[0-9]+]])
+// CHECK: ![[BLOCK]] = !DILexicalBlockFile(scope: ![[SP]], file: ![[OTHER_FILE:[0-9]+]], discriminator: 0)
+// CHECK: ![[OTHER_FILE]] = !DIFile(filename: "other.sol", directory: "/src")
+// EVM local end

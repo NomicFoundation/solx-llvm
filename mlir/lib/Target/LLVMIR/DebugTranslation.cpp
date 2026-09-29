@@ -546,9 +546,23 @@ llvm::DILocation *DebugTranslation::translateLoc(Location loc,
     // A scope of a DILocation cannot be null.
     if (!scope)
       return nullptr;
-    llvmLoc =
-        llvm::DILocation::get(llvmCtx, fileLoc.getLine(), fileLoc.getColumn(),
-                              scope, const_cast<llvm::DILocation *>(inlinedAt));
+    // EVM local begin
+    // A row takes its file from its scope, so code from another file than its
+    // scope's, such as an inherited modifier inlined into a function, is
+    // scoped to a lexical block file of its own file. The directory is the
+    // scope's, which does not depend on the working directory. `scope` stays
+    // as given, since it keys the cache.
+    llvm::DILocalScope *rowScope = scope;
+    if (fileLoc.getFilename().getValue() != scope->getFilename())
+      rowScope = llvm::DILexicalBlockFile::get(
+          llvmCtx, scope,
+          llvm::DIFile::get(llvmCtx, fileLoc.getFilename().getValue(),
+                            scope->getDirectory()),
+          /*Discriminator=*/0);
+    llvmLoc = llvm::DILocation::get(llvmCtx, fileLoc.getLine(),
+                                    fileLoc.getColumn(), rowScope,
+                                    const_cast<llvm::DILocation *>(inlinedAt));
+    // EVM local end
 
   } else if (auto fusedLoc = dyn_cast<FusedLoc>(loc)) {
     ArrayRef<Location> locations = fusedLoc.getLocations();
