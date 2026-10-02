@@ -1,11 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", "customManagers:githubActionsVersions"],
   "timezone": "UTC",
   "schedule": ["before 9am on Monday"],
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
-  "enabledManagers": ["github-actions", "pip-compile"],
+  "enabledManagers": ["github-actions", "pip-compile", "custom.regex"],
   "includePaths": [
     ".github/workflows/**",
     "llvm/utils/git/requirements_formatting.txt.in",
