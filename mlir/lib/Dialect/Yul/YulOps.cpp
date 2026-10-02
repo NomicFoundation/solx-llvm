@@ -123,10 +123,10 @@ void SwitchOp::getRegionInvocationBounds(
     return;
   }
 
-  unsigned liveIndex = getNumRegions() - 1;
+  unsigned liveIndex = 0;
   const auto it = llvm::find(getCases(), operandValue.getValue());
   if (it != getCases().end())
-    liveIndex = std::distance(getCases().begin(), it);
+    liveIndex = std::distance(getCases().begin(), it) + 1;
   for (unsigned i = 0, e = getNumRegions(); i < e; ++i)
     bounds.emplace_back(/*lb=*/0, /*ub=*/i == liveIndex);
 }
@@ -289,9 +289,11 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
   IntegerType argTy;
   if (p.parseOperand(arg) || p.parseColon() || p.parseType(argTy) ||
       p.resolveOperand(arg, argTy, result.operands) ||
-      p.parseOptionalArrowTypeList(result.types))
+      p.parseOptionalArrowTypeList(result.types) ||
+      p.parseOptionalAttrDict(result.attributes))
     return failure();
 
+  Region *defRegion = result.addRegion();
   SmallVector<APInt> caseVals;
   while (succeeded(p.parseOptionalKeyword("case"))) {
     llvm::SMLoc caseLoc = p.getCurrentLocation();
@@ -315,10 +317,7 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
       caseVals);
   result.addAttribute(getCasesAttrName(result.name), caseValsAttr);
 
-  if (p.parseKeyword("default"))
-    return failure();
-  Region *defRegion = result.addRegion();
-  if (p.parseRegion(*defRegion))
+  if (p.parseKeyword("default") || p.parseRegion(*defRegion))
     return failure();
 
   return success();
