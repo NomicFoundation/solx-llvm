@@ -68,6 +68,9 @@ class EVMAsmPrinter : public AsmPrinter {
 
   bool FirstFunctIsHandled = false;
 
+  // Whether the current block needs a JUMPDEST that is not emitted yet.
+  bool JumpDestPending = false;
+
 public:
   EVMAsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer)
       : AsmPrinter(TM, std::move(Streamer)) {}
@@ -77,6 +80,8 @@ public:
   void emitInstruction(const MachineInstr *MI) override;
 
   void emitBasicBlockStart(const MachineBasicBlock &MBB) override;
+
+  void emitBasicBlockEnd(const MachineBasicBlock &MBB) override;
 
   void emitFunctionEntryLabel() override;
 
@@ -92,6 +97,7 @@ public:
 
 private:
   void emitJumpDest();
+  void emitPendingJumpDest();
   void emitAssemblySymbol(const MachineInstr *MI);
   void emitWideRelocatableSymbol(const MachineInstr *MI);
   void emitLoadImmutableLabel(const MachineInstr *MI);
@@ -160,14 +166,23 @@ void EVMAsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
            MF->getFunction().hasFnAttribute("evm-entry-function");
   };
 
-  // Emit JUMPDEST instruction at the beginning of the basic block, if
-  // this is not a block that is only reachable by fallthrough.
+  // A block that is not only reachable by fallthrough needs a JUMPDEST.
   if (!EVMKeepRegisters && !IsEntryPoint(MBB) &&
       !AsmPrinter::isBlockOnlyReachableByFallthrough(&MBB))
-    emitJumpDest();
+    JumpDestPending = true;
+}
+
+void EVMAsmPrinter::emitBasicBlockEnd(const MachineBasicBlock &MBB) {
+  // Only a block that emits no instruction has its JUMPDEST pending here.
+  emitPendingJumpDest();
+  AsmPrinter::emitBasicBlockEnd(MBB);
 }
 
 void EVMAsmPrinter::emitInstruction(const MachineInstr *MI) {
+  // The block's JUMPDEST is emitted here, after this instruction's line-table
+  // row is open, to get correct debug info.
+  emitPendingJumpDest();
+
   EVMMCInstLower MCInstLowering(OutContext, *this, VRegMapping,
                                 MF->getRegInfo());
 
@@ -255,6 +270,13 @@ void EVMAsmPrinter::emitJumpDest() {
   MCInst JumpDest;
   JumpDest.setOpcode(EVM::JUMPDEST_S);
   EmitToStreamer(*OutStreamer, JumpDest);
+}
+
+void EVMAsmPrinter::emitPendingJumpDest() {
+  if (!JumpDestPending)
+    return;
+  JumpDestPending = false;
+  emitJumpDest();
 }
 
 // Lowers LOADIMMUTABLE_S as show below:
