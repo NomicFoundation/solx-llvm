@@ -41,12 +41,13 @@ static ModuleOp getModule(OpT op) {
 // Both functions created here (`__entry` and `.unreachable`) are generated, so
 // a new one carries an artificial subprogram at the module's location.
 func::FuncOp getOrInsertFuncOp(PatternRewriter &r, ModuleOp mod, StringRef name,
-                               FunctionType fnTy, LLVM::Linkage linkage) {
+                               FunctionType fnTy, LLVM::Linkage linkage,
+                               Block::iterator insertPt) {
   if (auto found = mod.lookupSymbol<func::FuncOp>(name))
     return found;
 
   OpBuilder::InsertionGuard insertGuard(r);
-  r.setInsertionPointToStart(mod.getBody());
+  r.setInsertionPoint(mod.getBody(), insertPt);
 
   std::vector<NamedAttribute> attrs;
   attrs.push_back(r.getNamedAttr(
@@ -68,8 +69,10 @@ func::FuncOp getOrInsertFuncOp(PatternRewriter &r, ModuleOp mod, StringRef name,
 void createCallToUnreachableWrapper(PatternRewriter &r, ModuleOp mod,
                                     Location loc) {
   auto fnTy = FunctionType::get(mod.getContext(), {}, {});
+  // At the end, since the entry function must be first.
   func::FuncOp fn =
-      getOrInsertFuncOp(r, mod, ".unreachable", fnTy, LLVM::Linkage::Private);
+      getOrInsertFuncOp(r, mod, ".unreachable", fnTy, LLVM::Linkage::Private,
+                        mod.getBody()->end());
   r.create<func::CallOp>(
       loc, FlatSymbolRefAttr::get(mod.getContext(), ".unreachable"),
       TypeRange{}, ValueRange{});
@@ -1622,8 +1625,16 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
     OpBuilder::InsertionGuard insertGuard(r);
 
     // Generate the entry function.
-    func::FuncOp entryFn = getOrInsertFuncOp(
-        r, mod, "__entry", r.getFunctionType({}, {}), LLVM::Linkage::External);
+    func::FuncOp entryFn =
+        getOrInsertFuncOp(r, mod, "__entry", r.getFunctionType({}, {}),
+                          LLVM::Linkage::External, mod.getBody()->begin());
+
+    // Execution starts at the first function, so the backend checks that the
+    // entry function comes first, and emits no JUMPDEST for it.
+    SmallVector<Attribute> passthrough(
+        entryFn->getAttrOfType<ArrayAttr>("passthrough").getValue());
+    passthrough.push_back(r.getStringAttr("evm-entry-function"));
+    entryFn->setAttr("passthrough", r.getArrayAttr(passthrough));
     Block *modBlk = mod.getBody();
 
     // The entry code is all ops in the object that are neither a function nor
