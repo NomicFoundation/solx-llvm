@@ -623,6 +623,7 @@ def Sol_SwitchOp : Sol_Op<"switch", [
                         VariadicRegion<MinSizedRegion<1>>:$caseRegions);
 
   let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
 }
 
 class Sol_WhileOpBase<string mnemonic> : Sol_Op<mnemonic, [

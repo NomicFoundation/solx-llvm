@@ -504,10 +504,10 @@ void SwitchOp::getRegionInvocationBounds(
     return;
   }
 
-  unsigned liveIndex = getNumRegions() - 1;
+  unsigned liveIndex = 0;
   const auto it = llvm::find(getCases(), operandValue.getValue());
   if (it != getCases().end())
-    liveIndex = std::distance(getCases().begin(), it);
+    liveIndex = std::distance(getCases().begin(), it) + 1;
   for (unsigned i = 0, e = getNumRegions(); i < e; ++i)
     bounds.emplace_back(/*lb=*/0, /*ub=*/i == liveIndex);
 }
@@ -517,10 +517,11 @@ void SwitchOp::print(OpAsmPrinter &p) {
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/getCasesAttrName().getValue());
 
+  bool isSigned = cast<IntegerType>(getArg().getType()).isSigned();
   for (auto [val, region] : llvm::zip(getCases(), getCaseRegions())) {
     p.printNewline();
     p << "case ";
-    val.print(p.getStream(), /*isSigned=*/false);
+    val.print(p.getStream(), isSigned);
     p << ' ';
     p.printRegion(region, /*printEntryBlockArgs=*/false);
   }
@@ -534,32 +535,32 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
   // Parse arg and its type.
   OpAsmParser::UnresolvedOperand arg;
   IntegerType argTy;
-  if (succeeded(p.parseOperand(arg))) {
-    if (p.parseColon())
-      return failure();
-    if (p.parseType(argTy))
-      return failure();
-    if (p.resolveOperand(arg, argTy, result.operands))
-      return failure();
-  }
+  if (p.parseOperand(arg) || p.parseColon() || p.parseType(argTy) ||
+      p.resolveOperand(arg, argTy, result.operands) ||
+      p.parseOptionalAttrDict(result.attributes))
+    return failure();
 
   // Parse case regions.
+  Region *defRegion = result.addRegion();
+  unsigned width = argTy.getWidth();
   SmallVector<APInt> caseVals;
   while (succeeded(p.parseOptionalKeyword("case"))) {
     llvm::SMLoc caseLoc = p.getCurrentLocation();
-    // Case values are unsigned words with no negative literals. Reject the
-    // minus sign itself: parseInteger would consume it, and "-0" would then
-    // come back as a non-negative zero.
-    if (succeeded(p.parseOptionalMinus()))
+    // Only a signed argument takes negative case values. Reject the minus
+    // sign itself: "-0" would parse as a non-negative zero.
+    if (!argTy.isSigned() && succeeded(p.parseOptionalMinus()))
       return p.emitError(caseLoc, "negative case values are not allowed");
-    APInt value(argTy.getWidth(), 0);
+    APInt value(width, 0);
     Region *region = result.addRegion();
     if (p.parseInteger(value) || p.parseRegion(*region))
       return failure();
-    if (value.getActiveBits() > argTy.getWidth())
+    // parseInteger sizes the APInt to the literal plus a sign bit.
+    unsigned bits =
+        argTy.isSigned() ? value.getSignificantBits() : value.getActiveBits();
+    if (bits > width)
       return p.emitError(caseLoc,
                          "case value does not fit the switch argument type");
-    caseVals.push_back(value.zextOrTrunc(argTy.getWidth()));
+    caseVals.push_back(value.sextOrTrunc(width));
   }
   auto caseValsAttr = DenseIntElementsAttr::get(
       RankedTensorType::get(static_cast<int64_t>(caseVals.size()), argTy),
@@ -567,11 +568,19 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
   result.addAttribute(getCasesAttrName(result.name), caseValsAttr);
 
   // Parse default region.
-  if (p.parseKeyword("default"))
+  if (p.parseKeyword("default") || p.parseRegion(*defRegion))
     return failure();
-  Region *defRegion = result.addRegion();
-  if (p.parseRegion(*defRegion))
-    return failure();
+
+  return success();
+}
+
+LogicalResult SwitchOp::verify() {
+  if (getCases().getType().getElementType() != getArg().getType())
+    return emitOpError("expects case value type to match switch argument type");
+
+  if (getCases().getNumElements() !=
+      static_cast<int64_t>(getCaseRegions().size()))
+    return emitOpError("expects case value count to match case region count");
 
   return success();
 }
