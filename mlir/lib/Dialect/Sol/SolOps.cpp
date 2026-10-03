@@ -29,6 +29,46 @@ using namespace mlir;
 using namespace mlir::sol;
 
 //===----------------------------------------------------------------------===//
+// Custom directives
+//===----------------------------------------------------------------------===//
+
+static ParseResult
+parseTypeIfPresent(OpAsmParser &parser,
+                   std::optional<OpAsmParser::UnresolvedOperand> operand,
+                   Type &type) {
+  if (!operand)
+    return success();
+  return parser.parseType(type);
+}
+
+static void printTypeIfPresent(OpAsmPrinter &p, Operation *, Value operand,
+                               Type type) {
+  if (operand)
+    p << type;
+}
+
+// The declarative `type($variadic)` rejects an empty list.
+static ParseResult parseOptionalTypeList(OpAsmParser &parser,
+                                         SmallVectorImpl<Type> &types) {
+  Type type;
+  OptionalParseResult res = parser.parseOptionalType(type);
+  if (!res.has_value())
+    return success();
+  if (failed(*res))
+    return failure();
+  types.push_back(type);
+  while (succeeded(parser.parseOptionalComma()))
+    if (parser.parseType(types.emplace_back()))
+      return failure();
+  return success();
+}
+
+static void printOptionalTypeList(OpAsmPrinter &p, Operation *,
+                                  TypeRange types) {
+  p << types;
+}
+
+//===----------------------------------------------------------------------===//
 // ConvCastOp
 //===----------------------------------------------------------------------===//
 
