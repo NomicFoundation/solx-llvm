@@ -242,10 +242,9 @@ def Sol_MallocOp : Sol_Op<"malloc"> {
   // FIXME: Generated builders should include a version that defaults $size to
   // {}
 
-  // FIXME: Comma after `type($size)`
   let assemblyFormat = [{
     ($size^)? (`zero_init` $zero_init^)? attr-dict `:`
-      type($size) type($addr)
+      functional-type($size, $addr)
   }];
 }
 
@@ -313,7 +312,7 @@ def Sol_ArrayLitOp : Sol_Op<"array_lit"> {
   let arguments = (ins Variadic<AnyType>:$ins);
   // FIXME: AnyType -> Sol_PtrTy causes the asm printer to miss the prefix!
   let results = (outs AnyType:$addr);
-  let assemblyFormat = "$ins attr-dict `:` `(` type($ins) `)` `->` type($addr)";
+  let assemblyFormat = "($ins^)? attr-dict `:` functional-type($ins, $addr)";
 }
 
 def Sol_StateVarOp : Sol_Op<"state_var", [Symbol]> {
@@ -492,16 +491,15 @@ def Sol_EncodeOp : Sol_Op<"encode", [AttrSizedOperandSegments]> {
   // FIXME: AnyType -> Sol_StringType causes the asm printer to miss the prefix!
   let results = (outs AnyType:$res);
   let assemblyFormat = [{
-    (`selector` `(` $selector^ `)`)? ($ins^)?
-    `:` type($selector) type($ins)
-    `:` type($res) attr-dict
+    (`selector` `(` $selector^ `:` type($selector) `)`)? ($ins^)?
+    `:` functional-type($ins, $res) attr-dict
   }];
 }
 
 def Sol_DecodeOp : Sol_Op<"decode"> {
   let arguments = (ins AnyType:$addr);
   let results = (outs Variadic<AnyType>:$outs);
-  let assemblyFormat = "$addr `:` type($addr) `->` type($outs) attr-dict";
+  let assemblyFormat = "$addr `:` type($addr) (`->` type($outs)^)? attr-dict";
 }
 
 def Sol_EmitOp : Sol_Op<"emit"> {
