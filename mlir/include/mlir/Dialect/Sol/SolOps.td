@@ -550,7 +550,8 @@ def Sol_RevertOp : Sol_Op<"revert"> {
   let arguments = (ins Variadic<AnyType>:$args,
                        OptionalAttr<StrAttr>:$signature, UnitAttr:$call);
 
-  let assemblyFormat = "($signature^)? ($args^ `:` type($args))? attr-dict";
+  let assemblyFormat =
+      "($signature^)? (`(` $args^ `:` type($args) `)`)? attr-dict";
 }
 
 def Sol_AssertOp : Sol_Op<"assert"> {
@@ -564,7 +565,7 @@ def Sol_RequireOp : Sol_Op<"require"> {
                        Variadic<AnyType>:$args, UnitAttr:$call);
 
   let assemblyFormat = [{
-    $cond (`,` $msg^)? `(` ($args^ `:` type($args))? `)` attr-dict
+    $cond (`,` $msg^)? (`(` $args^ `:` type($args) `)`)? attr-dict
   }];
 }
 
