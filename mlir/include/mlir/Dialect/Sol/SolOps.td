@@ -1365,7 +1365,8 @@ def Sol_ConcatOp : Sol_Op<"concat"> {
   let assemblyFormat = "($args^ `:` type($args))? attr-dict `->` type($result)";
 }
 
-def Sol_InlineAsmOp : Sol_Op<"inline_asm", [NoTerminator, SymbolTable]> {
+def Sol_InlineAsmOp : Sol_Op<"inline_asm", [NoTerminator, SingleBlock,
+                                             SymbolTable]> {
   // A separate SymbolTable is required: For instance, lookups expect symbol
   // defs to be immediately nested within the symbol table op, so we can't use
   // the parent symbol table.
