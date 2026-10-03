@@ -547,7 +547,8 @@ def Sol_RevertOp : Sol_Op<"revert"> {
   let arguments = (ins Variadic<AnyType>:$args,
                        OptionalAttr<StrAttr>:$signature, UnitAttr:$call);
 
-  let assemblyFormat = "($signature^)? ($args^ `:` type($args))? attr-dict";
+  let assemblyFormat =
+      "($signature^)? (`(` $args^ `:` type($args) `)`)? attr-dict";
 }
 
 def Sol_AssertOp : Sol_Op<"assert"> {
