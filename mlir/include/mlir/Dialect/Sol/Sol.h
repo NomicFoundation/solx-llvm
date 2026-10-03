@@ -103,7 +103,6 @@ unsigned getNumBytes(mlir::Type ty);
 /// The following functions are used to query the capabilities of the specified
 /// evm in the module.
 ///
-bool evmhasStaticCall(ModuleOp mod);
 bool evmSupportsReturnData(ModuleOp mod);
 bool evmCanOverchargeGasForCall(ModuleOp mod);
 
