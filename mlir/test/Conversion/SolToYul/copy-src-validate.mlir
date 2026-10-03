@@ -1,0 +1,196 @@
+// RUN: mlir-opt %s --convert-sol-to-yul | FileCheck %s
+
+// Array copies into storage that convert the element type read each source
+// element with the source element type, then convert to the destination
+// element type.
+
+// CHECK-LABEL: yul.func @m2s_i8_i136
+// CHECK:         yul.for
+// CHECK:           %[[V:.*]] = yul.mload
+// CHECK-NEXT:      %[[C0:.*]] = yul.constant 0
+// CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
+// CHECK-NEXT:      %[[M136:.*]] = yul.constant 87112285931760246646623899502532662132735
+// CHECK-NEXT:      %[[F:.*]] = yul.and %[[S]], %[[M136]]
+// CHECK-NEXT:      yul.sstore %{{.*}}, %[[F]]
+
+// CHECK-LABEL: yul.func @cd2s_i8_i16
+// CHECK:         yul.for
+// CHECK:           yul.for
+// CHECK:             %[[V:.*]] = yul.calldataload
+// CHECK-NEXT:        %[[C0:.*]] = yul.constant 0
+// CHECK-NEXT:        %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
+// CHECK-NEXT:        yul.cmp ne, %[[V]], %[[S]]
+// CHECK:             yul.revert
+// CHECK:             %[[M:.*]] = yul.constant 65535
+// CHECK-NEXT:        yul.and %[[S]], %[[M]]
+
+// Packed -> unpacked storage: sign-extend the int8 field into int136.
+// CHECK-LABEL: yul.func @s2s_i8_i136
+// CHECK:           %[[V:.*]] = yul.arith_shr
+// CHECK-NEXT:      %[[C0:.*]] = yul.constant 0
+// CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
+// CHECK-NEXT:      %[[M136:.*]] = yul.constant 87112285931760246646623899502532662132735
+// CHECK-NEXT:      %[[F:.*]] = yul.and %[[S]], %[[M136]]
+// CHECK-NEXT:      yul.sstore %{{.*}}, %[[F]]
+
+// Packed -> packed storage repack: sign-extend the int8 field into int16.
+// CHECK-LABEL: yul.func @s2s_i8_i16
+// CHECK:           %[[M:.*]] = yul.constant 255
+// CHECK-NEXT:      %[[V:.*]] = yul.and %{{.*}}, %[[M]]
+// CHECK-NEXT:      %[[C0:.*]] = yul.constant 0
+// CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
+// CHECK-NEXT:      %[[M16:.*]] = yul.constant 65535
+// CHECK-NEXT:      yul.and %[[S]], %[[M16]]
+
+// bytes17 storage is right-aligned: left-align it as bytes17 for bytes32.
+// CHECK-LABEL: yul.func @s2s_b17_b32
+// CHECK:         yul.for
+// CHECK:           %[[V:.*]] = yul.sload
+// CHECK-NEXT:      %[[C120:.*]] = yul.constant 120
+// CHECK-NEXT:      yul.arith_shl %[[V]], %[[C120]]
+// CHECK:           yul.sstore
+
+// CHECK-LABEL: yul.func @s2s_i136_i256
+// CHECK:         yul.for
+// CHECK:           %[[V:.*]] = yul.sload
+// CHECK-NEXT:      %[[C16:.*]] = yul.constant 16
+// CHECK-NEXT:      yul.signextend %[[C16]], %[[V]]
+// CHECK:           yul.sstore
+
+// CHECK-LABEL: yul.func @m2s_u8_u136
+// CHECK:         yul.for
+// CHECK:           %[[V:.*]] = yul.mload
+// CHECK-NEXT:      %[[M:.*]] = yul.constant 255
+// CHECK-NEXT:      yul.and %[[V]], %[[M]]
+// CHECK:           yul.sstore
+
+// CHECK-LABEL: yul.func @cd2s_b15_b17
+// CHECK:         yul.for
+// CHECK:           %[[V:.*]] = yul.calldataload
+// CHECK-NEXT:      %[[M:.*]] = yul.constant -87112285931760246646623899502532662132736
+// CHECK-NEXT:      %[[C:.*]] = yul.and %[[V]], %[[M]]
+// CHECK-NEXT:      yul.cmp ne, %[[V]], %[[C]]
+// CHECK:           %[[C120:.*]] = yul.constant 120
+// CHECK-NEXT:      yul.arith_shr %[[C]], %[[C120]]
+// CHECK:           yul.sstore
+
+// CHECK-LABEL: yul.func @m2s_b15_b16
+// CHECK:         yul.for
+// CHECK:           yul.for
+// CHECK:             %[[V:.*]] = yul.mload
+// CHECK-NEXT:        %[[M:.*]] = yul.constant -87112285931760246646623899502532662132736
+// CHECK-NEXT:        %[[C:.*]] = yul.and %[[V]], %[[M]]
+// CHECK-NEXT:        %[[C128:.*]] = yul.constant 128
+// CHECK-NEXT:        yul.arith_shr %[[C]], %[[C128]]
+
+// CHECK-LABEL: yul.func @m2s_i8_i16
+// CHECK:         yul.for
+// CHECK:           yul.for
+// CHECK:             %[[V:.*]] = yul.mload
+// CHECK-NEXT:        %[[C0:.*]] = yul.constant 0
+// CHECK-NEXT:        %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
+// CHECK-NEXT:        %[[M:.*]] = yul.constant 65535
+// CHECK-NEXT:        yul.and %[[S]], %[[M]]
+
+// CHECK-LABEL: yul.func @cd2s_b15_b16
+// CHECK:         yul.for
+// CHECK:           yul.for
+// CHECK:             %[[V:.*]] = yul.calldataload
+// CHECK-NEXT:        %[[M:.*]] = yul.constant -87112285931760246646623899502532662132736
+// CHECK-NEXT:        %[[C:.*]] = yul.and %[[V]], %[[M]]
+// CHECK-NEXT:        yul.cmp ne, %[[V]], %[[C]]
+
+// CHECK-LABEL: yul.func @cd2s_u8_u16
+// CHECK:         yul.for
+// CHECK:           yul.for
+// CHECK:             %[[V:.*]] = yul.calldataload
+// CHECK-NEXT:        %[[M:.*]] = yul.constant 255
+// CHECK-NEXT:        %[[C:.*]] = yul.and %[[V]], %[[M]]
+// CHECK-NEXT:        yul.cmp ne, %[[V]], %[[C]]
+
+#Constructor = #sol<FunctionKind Constructor>
+#Contract = #sol<ContractKind Contract>
+#Default = #sol<RevertStrings Default>
+#NonPayable = #sol<StateMutability NonPayable>
+#Osaka = #sol<EvmVersion Osaka>
+module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256", llvm.target_triple = "evm-unknown-unknown", sol.evm_version = #Osaka, sol.revert_strings = #Default} {
+  sol.contract @C {
+    sol.state_var @su16 slot 0 offset 0 : !sol.array<? x ui16, Storage>
+    sol.state_var @si16 slot 1 offset 0 : !sol.array<? x si16, Storage>
+    sol.state_var @sb16 slot 2 offset 0 : !sol.array<? x !sol.fixedbytes<16>, Storage>
+    sol.state_var @sb17 slot 3 offset 0 : !sol.array<? x !sol.fixedbytes<17>, Storage>
+    sol.state_var @su136 slot 4 offset 0 : !sol.array<? x ui136, Storage>
+    sol.state_var @si136 slot 5 offset 0 : !sol.array<? x si136, Storage>
+    sol.state_var @si256 slot 6 offset 0 : !sol.array<? x si256, Storage>
+    sol.state_var @sb17s slot 7 offset 0 : !sol.array<? x !sol.fixedbytes<17>, Storage>
+    sol.state_var @sb32 slot 8 offset 0 : !sol.array<? x !sol.fixedbytes<32>, Storage>
+    sol.state_var @si8 slot 9 offset 0 : !sol.array<? x si8, Storage>
+    sol.func @C() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
+      sol.return
+    }
+    sol.func @cd2s_u8_u16(%arg0: !sol.array<? x ui8, CallData>) attributes {orig_fn_type = (!sol.array<? x ui8, CallData>) -> (), selector = 1 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @su16 : !sol.array<? x ui16, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x ui8, CallData>, !sol.array<? x ui16, Storage>
+      sol.return
+    }
+    sol.func @cd2s_b15_b16(%arg0: !sol.array<? x !sol.fixedbytes<15>, CallData>) attributes {orig_fn_type = (!sol.array<? x !sol.fixedbytes<15>, CallData>) -> (), selector = 2 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @sb16 : !sol.array<? x !sol.fixedbytes<16>, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x !sol.fixedbytes<15>, CallData>, !sol.array<? x !sol.fixedbytes<16>, Storage>
+      sol.return
+    }
+    sol.func @m2s_i8_i16(%arg0: !sol.array<? x si8, Memory>) attributes {orig_fn_type = (!sol.array<? x si8, Memory>) -> (), selector = 3 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @si16 : !sol.array<? x si16, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x si8, Memory>, !sol.array<? x si16, Storage>
+      sol.return
+    }
+    sol.func @m2s_b15_b16(%arg0: !sol.array<? x !sol.fixedbytes<15>, Memory>) attributes {orig_fn_type = (!sol.array<? x !sol.fixedbytes<15>, Memory>) -> (), selector = 4 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @sb16 : !sol.array<? x !sol.fixedbytes<16>, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x !sol.fixedbytes<15>, Memory>, !sol.array<? x !sol.fixedbytes<16>, Storage>
+      sol.return
+    }
+    sol.func @cd2s_b15_b17(%arg0: !sol.array<? x !sol.fixedbytes<15>, CallData>) attributes {orig_fn_type = (!sol.array<? x !sol.fixedbytes<15>, CallData>) -> (), selector = 5 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @sb17 : !sol.array<? x !sol.fixedbytes<17>, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x !sol.fixedbytes<15>, CallData>, !sol.array<? x !sol.fixedbytes<17>, Storage>
+      sol.return
+    }
+    sol.func @m2s_u8_u136(%arg0: !sol.array<? x ui8, Memory>) attributes {orig_fn_type = (!sol.array<? x ui8, Memory>) -> (), selector = 6 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @su136 : !sol.array<? x ui136, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x ui8, Memory>, !sol.array<? x ui136, Storage>
+      sol.return
+    }
+    sol.func @s2s_i136_i256() attributes {orig_fn_type = () -> (), selector = 7 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @si136 : !sol.array<? x si136, Storage>
+      %1 = sol.addr_of @si256 : !sol.array<? x si256, Storage>
+      sol.copy %0, %1 : !sol.array<? x si136, Storage>, !sol.array<? x si256, Storage>
+      sol.return
+    }
+    sol.func @s2s_b17_b32() attributes {orig_fn_type = () -> (), selector = 8 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @sb17s : !sol.array<? x !sol.fixedbytes<17>, Storage>
+      %1 = sol.addr_of @sb32 : !sol.array<? x !sol.fixedbytes<32>, Storage>
+      sol.copy %0, %1 : !sol.array<? x !sol.fixedbytes<17>, Storage>, !sol.array<? x !sol.fixedbytes<32>, Storage>
+      sol.return
+    }
+    sol.func @s2s_i8_i16() attributes {orig_fn_type = () -> (), selector = 9 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @si8 : !sol.array<? x si8, Storage>
+      %1 = sol.addr_of @si16 : !sol.array<? x si16, Storage>
+      sol.copy %0, %1 : !sol.array<? x si8, Storage>, !sol.array<? x si16, Storage>
+      sol.return
+    }
+    sol.func @s2s_i8_i136() attributes {orig_fn_type = () -> (), selector = 10 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @si8 : !sol.array<? x si8, Storage>
+      %1 = sol.addr_of @si136 : !sol.array<? x si136, Storage>
+      sol.copy %0, %1 : !sol.array<? x si8, Storage>, !sol.array<? x si136, Storage>
+      sol.return
+    }
+    sol.func @cd2s_i8_i16(%arg0: !sol.array<? x si8, CallData>) attributes {orig_fn_type = (!sol.array<? x si8, CallData>) -> (), selector = 11 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @si16 : !sol.array<? x si16, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x si8, CallData>, !sol.array<? x si16, Storage>
+      sol.return
+    }
+    sol.func @m2s_i8_i136(%arg0: !sol.array<? x si8, Memory>) attributes {orig_fn_type = (!sol.array<? x si8, Memory>) -> (), selector = 12 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @si136 : !sol.array<? x si136, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x si8, Memory>, !sol.array<? x si136, Storage>
+      sol.return
+    }
+  } {kind = #Contract}
+}
