@@ -600,7 +600,7 @@ static void emitRepackStorageToStorageCopyLoop(OpBuilder &b, Location loc,
   APInt dstMask = APInt::getLowBitsSet(256, dstEltByteSize * 8);
   // BytesN values are big-endian packed: widening/narrowing requires a shift
   // to keep byte[0] at the most-significant position within the item's bit
-  // field. Integer types are right-aligned and only need masking.
+  // field.
   auto i256Ty = b.getIntegerType(256);
   Value initSrcSlotVal = b.create<yul::SLoadOp>(loc, srcDataAddr);
 
@@ -637,8 +637,14 @@ static void emitRepackStorageToStorageCopyLoop(OpBuilder &b, Location loc,
           dstVal = b.create<yul::ArithShrOp>(
               loc, srcVal,
               bExt.genI256Const((srcEltByteSize - dstEltByteSize) * 8));
+        } else if (auto intTy = dyn_cast<IntegerType>(srcEltTy);
+                   intTy && intTy.isSigned() &&
+                   srcEltByteSize < dstEltByteSize) {
+          dstVal = b.create<yul::SignExtendOp>(
+              loc, bExt.genI256Const(srcEltByteSize - 1), srcVal);
         } else {
-          // Integer (or equal-width bytes): right-aligned, masking suffices.
+          // Unsigned integer (or equal-width bytes): right-aligned, masking
+          // suffices.
           dstVal = srcVal;
         }
 
@@ -3084,12 +3090,23 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
                 Value dstAddr) {
               Value extracted =
                   b.create<yul::ArithShrOp>(loc, slotVal, shiftBits);
-              Value widened = b.create<yul::ArithShlOp>(
-                  loc, extracted, bExt.genI256Const(widenShift));
-              APInt maskBits = APInt::getBitsSet(
-                  256, widenShift, widenShift + srcEltByteSize * 8);
-              Value val = b.create<yul::AndOp>(loc, widened,
-                                               bExt.genI256Const(maskBits));
+              Value val = nullptr;
+              auto srcIntTy = dyn_cast<IntegerType>(srcEltTy);
+              if (srcIntTy && srcIntTy.isSigned()) {
+                val = genCleanupPackedStorageValue(srcEltTy, extracted, loc);
+                if (dstEltByteSize < 32)
+                  val = b.create<yul::AndOp>(
+                      loc, val,
+                      bExt.genI256Const(
+                          APInt::getLowBitsSet(256, dstEltByteSize * 8)));
+              } else {
+                Value widened = b.create<yul::ArithShlOp>(
+                    loc, extracted, bExt.genI256Const(widenShift));
+                APInt maskBits = APInt::getBitsSet(
+                    256, widenShift, widenShift + srcEltByteSize * 8);
+                val = b.create<yul::AndOp>(loc, widened,
+                                           bExt.genI256Const(maskBits));
+              }
               genStore(val, dstAddr, sol::DataLocation::Storage, loc);
             });
         return;
@@ -3120,10 +3137,11 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
           [&](OpBuilder &b, Location loc, Value srcAddr, Value accum,
               Value shiftBits) {
             Value val = genLoad(srcAddr, srcDataLoc, loc);
-            // Validate-and-revert each element from calldata
-            // before packing (e.g. signextend check for signed int types).
-            if (srcDataLoc == sol::DataLocation::CallData)
-              val = genCleanup(dstEltTy, val, loc, /*shouldRevert=*/true);
+            // Clean against the source type: the destination's cleanup accepts
+            // values the source type cannot encode.
+            if (srcDataLoc == sol::DataLocation::CallData ||
+                srcEltTy != dstEltTy)
+              val = genCleanup(srcEltTy, val, loc, srcDataLoc);
 
             // ExtFuncRef is not handled here, as it occupies a full slot in
             // array.
@@ -3186,6 +3204,18 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
 
     if (isa<sol::ExtFuncRefType>(dstTy)) {
       val = genExtFuncConversion(val, srcDataLoc, dstDataLoc, loc);
+    } else if (srcTy != dstTy) {
+      assert(dstIsStorage && "element conversion only on copies into storage");
+      val = srcIsStorage ? genCleanupPackedStorageValue(srcTy, val, loc)
+                         : genCleanup(srcTy, val, loc, srcDataLoc);
+      if (alignShift > 0) {
+        val =
+            b.create<yul::ArithShrOp>(loc, val, bExt.genI256Const(alignShift));
+      } else if (sol::getNumBytes(dstTy) < 32) {
+        APInt fieldMask =
+            APInt::getLowBitsSet(256, sol::getNumBytes(dstTy) * 8);
+        val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
+      }
     } else if (alignShift > 0) {
       if (srcDataLoc == sol::DataLocation::CallData)
         val = genCleanup(dstTy, val, loc, /*shouldRevert=*/true);
