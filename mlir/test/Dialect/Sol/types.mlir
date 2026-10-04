@@ -64,3 +64,15 @@ func.func private @huge_transient_array(!sol.array<18446744073709551616 x i256, 
 // CHECK-LABEL: @huge_member_offset
 // CHECK-SAME: !sol.struct<(i256, !sol.array<18446744073709551616 x !sol.array<2 x i256, Storage>, Storage>, i256), Storage>
 func.func private @huge_member_offset(!sol.struct<(i256, !sol.array<18446744073709551616 x !sol.array<2 x i256, Storage>, Storage>, i256), Storage>)
+
+// CHECK-LABEL: @ptr
+// CHECK-SAME: !sol.ptr<ui256, Stack>, !sol.ptr<ui8, Storage>, !sol.ptr<ui256, Transient>, !sol.ptr<ui256, Memory>, !sol.ptr<ui256, CallData>, !sol.ptr<ui256, Immutable>, !sol.ptr<!sol.string<Memory>, Stack>
+func.func private @ptr(!sol.ptr<ui256, Stack>, !sol.ptr<ui8, Storage>, !sol.ptr<ui256, Transient>, !sol.ptr<ui256, Memory>, !sol.ptr<ui256, CallData>, !sol.ptr<ui256, Immutable>, !sol.ptr<!sol.string<Memory>, Stack>)
+
+// CHECK-LABEL: @address
+// CHECK-SAME: !sol.address, !sol.address<payable>
+func.func private @address(!sol.address, !sol.address<payable>)
+
+// CHECK-LABEL: @contract
+// CHECK-SAME: !sol.contract<"C">, !sol.contract<"C", payable>
+func.func private @contract(!sol.contract<"C">, !sol.contract<"C", payable>)
