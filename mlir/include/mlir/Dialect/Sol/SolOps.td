@@ -245,7 +245,7 @@ def Sol_MallocOp : Sol_Op<"malloc"> {
   // FIXME: Comma after `type($size)`
   let assemblyFormat = [{
     ($size^)? (`zero_init` $zero_init^)? attr-dict `:`
-      type($size) type($addr)
+      custom<TypeIfPresent>(ref($size), type($size)) type($addr)
   }];
 }
 
@@ -313,7 +313,10 @@ def Sol_ArrayLitOp : Sol_Op<"array_lit"> {
   let arguments = (ins Variadic<AnyType>:$ins);
   // FIXME: AnyType -> Sol_PtrTy causes the asm printer to miss the prefix!
   let results = (outs AnyType:$addr);
-  let assemblyFormat = "$ins attr-dict `:` `(` type($ins) `)` `->` type($addr)";
+  let assemblyFormat = [{
+    $ins attr-dict `:` `(` custom<OptionalTypeList>(type($ins)) `)` `->`
+      type($addr)
+  }];
 }
 
 def Sol_StateVarOp : Sol_Op<"state_var", [Symbol]> {
@@ -482,7 +485,8 @@ def Sol_EncodeOp : Sol_Op<"encode", [AttrSizedOperandSegments]> {
   let results = (outs AnyType:$res);
   let assemblyFormat = [{
     (`selector` `(` $selector^ `)`)? ($ins^)?
-    `:` type($selector) type($ins)
+    `:` custom<TypeIfPresent>(ref($selector), type($selector))
+      custom<OptionalTypeList>(type($ins))
     `:` type($res) attr-dict
   }];
 }
@@ -490,7 +494,9 @@ def Sol_EncodeOp : Sol_Op<"encode", [AttrSizedOperandSegments]> {
 def Sol_DecodeOp : Sol_Op<"decode"> {
   let arguments = (ins AnyType:$addr);
   let results = (outs Variadic<AnyType>:$outs);
-  let assemblyFormat = "$addr `:` type($addr) `->` type($outs) attr-dict";
+  let assemblyFormat = [{
+    $addr `:` type($addr) `->` custom<OptionalTypeList>(type($outs)) attr-dict
+  }];
 }
 
 def Sol_EmitOp : Sol_Op<"emit"> {
@@ -541,7 +547,8 @@ def Sol_RevertOp : Sol_Op<"revert"> {
   let arguments = (ins Variadic<AnyType>:$args,
                        OptionalAttr<StrAttr>:$signature, UnitAttr:$call);
 
-  let assemblyFormat = "($signature^)? ($args^ `:` type($args))? attr-dict";
+  let assemblyFormat =
+      "($signature^)? (`(` $args^ `:` type($args) `)`)? attr-dict";
 }
 
 def Sol_AssertOp : Sol_Op<"assert"> {
@@ -1336,7 +1343,8 @@ def Sol_ConcatOp : Sol_Op<"concat"> {
   let assemblyFormat = "($args^ `:` type($args))? attr-dict `->` type($result)";
 }
 
-def Sol_InlineAsmOp : Sol_Op<"inline_asm", [NoTerminator, SymbolTable]> {
+def Sol_InlineAsmOp : Sol_Op<"inline_asm", [NoTerminator, SingleBlock,
+                                             SymbolTable]> {
   // A separate SymbolTable is required: For instance, lookups expect symbol
   // defs to be immediately nested within the symbol table op, so we can't use
   // the parent symbol table.

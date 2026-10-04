@@ -97,19 +97,22 @@ bool mlir::sol::shouldKeepUserRevertStrings(ModuleOp mod) {
   return getRevertStrings(mod) != RevertStrings::Strip;
 }
 
+static EvmVersion getEvmVersion(ModuleOp mod) {
+  if (auto attr = mod->getAttrOfType<EvmVersionAttr>("sol.evm_version"))
+    return attr.getValue();
+  return EvmVersion::Osaka;
+}
+
 bool mlir::sol::evmhasStaticCall(ModuleOp mod) {
-  auto evmVersionAttr = cast<EvmVersionAttr>(mod->getAttr("sol.evm_version"));
-  return evmVersionAttr.getValue() >= EvmVersion::Byzantium;
+  return getEvmVersion(mod) >= EvmVersion::Byzantium;
 }
 
 bool mlir::sol::evmSupportsReturnData(ModuleOp mod) {
-  auto evmVersionAttr = cast<EvmVersionAttr>(mod->getAttr("sol.evm_version"));
-  return evmVersionAttr.getValue() >= EvmVersion::Byzantium;
+  return getEvmVersion(mod) >= EvmVersion::Byzantium;
 }
 
 bool mlir::sol::evmCanOverchargeGasForCall(ModuleOp mod) {
-  auto evmVersionAttr = cast<EvmVersionAttr>(mod->getAttr("sol.evm_version"));
-  return evmVersionAttr.getValue() >= EvmVersion::TangerineWhistle;
+  return getEvmVersion(mod) >= EvmVersion::TangerineWhistle;
 }
 
 Type mlir::sol::getEltType(Type ty, Index structTyIdx) {

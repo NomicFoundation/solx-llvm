@@ -29,6 +29,46 @@ using namespace mlir;
 using namespace mlir::sol;
 
 //===----------------------------------------------------------------------===//
+// Custom directives
+//===----------------------------------------------------------------------===//
+
+static ParseResult
+parseTypeIfPresent(OpAsmParser &parser,
+                   std::optional<OpAsmParser::UnresolvedOperand> operand,
+                   Type &type) {
+  if (!operand)
+    return success();
+  return parser.parseType(type);
+}
+
+static void printTypeIfPresent(OpAsmPrinter &p, Operation *, Value operand,
+                               Type type) {
+  if (operand)
+    p << type;
+}
+
+// The declarative `type($variadic)` rejects an empty list.
+static ParseResult parseOptionalTypeList(OpAsmParser &parser,
+                                         SmallVectorImpl<Type> &types) {
+  Type type;
+  OptionalParseResult res = parser.parseOptionalType(type);
+  if (!res.has_value())
+    return success();
+  if (failed(*res))
+    return failure();
+  types.push_back(type);
+  while (succeeded(parser.parseOptionalComma()))
+    if (parser.parseType(types.emplace_back()))
+      return failure();
+  return success();
+}
+
+static void printOptionalTypeList(OpAsmPrinter &p, Operation *,
+                                  TypeRange types) {
+  p << types;
+}
+
+//===----------------------------------------------------------------------===//
 // ConvCastOp
 //===----------------------------------------------------------------------===//
 
@@ -478,10 +518,10 @@ void SwitchOp::getRegionInvocationBounds(
     return;
   }
 
-  unsigned liveIndex = getNumRegions() - 1;
+  unsigned liveIndex = 0;
   const auto it = llvm::find(getCases(), operandValue.getValue());
   if (it != getCases().end())
-    liveIndex = std::distance(getCases().begin(), it);
+    liveIndex = std::distance(getCases().begin(), it) + 1;
   for (unsigned i = 0, e = getNumRegions(); i < e; ++i)
     bounds.emplace_back(/*lb=*/0, /*ub=*/i == liveIndex);
 }
@@ -491,9 +531,12 @@ void SwitchOp::print(OpAsmPrinter &p) {
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/getCasesAttrName().getValue());
 
+  bool isSigned = !cast<IntegerType>(getArg().getType()).isUnsigned();
   for (auto [val, region] : llvm::zip(getCases(), getCaseRegions())) {
     p.printNewline();
-    p << "case " << val << ' ';
+    p << "case ";
+    val.print(p.getStream(), isSigned);
+    p << ' ';
     p.printRegion(region, /*printEntryBlockArgs=*/false);
   }
 
@@ -506,23 +549,29 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
   // Parse arg and its type.
   OpAsmParser::UnresolvedOperand arg;
   IntegerType argTy;
-  if (succeeded(p.parseOperand(arg))) {
-    if (p.parseColon())
-      return failure();
-    if (p.parseType(argTy))
-      return failure();
-    if (p.resolveOperand(arg, argTy, result.operands))
-      return failure();
-  }
+  if (p.parseOperand(arg) || p.parseColon() || p.parseType(argTy) ||
+      p.resolveOperand(arg, argTy, result.operands) ||
+      p.parseOptionalAttrDict(result.attributes))
+    return failure();
 
   // Parse case regions.
+  Region *defRegion = result.addRegion();
+  unsigned width = argTy.getWidth();
   SmallVector<APInt> caseVals;
   while (succeeded(p.parseOptionalKeyword("case"))) {
-    APInt value(argTy.getWidth(), 0);
+    llvm::SMLoc caseLoc = p.getCurrentLocation();
+    APInt value(width, 0);
     Region *region = result.addRegion();
     if (p.parseInteger(value) || p.parseRegion(*region))
       return failure();
-    caseVals.push_back(value);
+    // parseInteger sizes the APInt to the literal plus a sign bit.
+    bool fits = value.isNegative()
+                    ? !argTy.isUnsigned() && value.getSignificantBits() <= width
+                    : value.getActiveBits() + argTy.isSigned() <= width;
+    if (!fits)
+      return p.emitError(caseLoc,
+                         "case value does not fit the switch argument type");
+    caseVals.push_back(value.sextOrTrunc(width));
   }
   auto caseValsAttr = DenseIntElementsAttr::get(
       RankedTensorType::get(static_cast<int64_t>(caseVals.size()), argTy),
@@ -530,10 +579,7 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
   result.addAttribute(getCasesAttrName(result.name), caseValsAttr);
 
   // Parse default region.
-  if (p.parseKeyword("default"))
-    return failure();
-  Region *defRegion = result.addRegion();
-  if (p.parseRegion(*defRegion))
+  if (p.parseKeyword("default") || p.parseRegion(*defRegion))
     return failure();
 
   return success();
