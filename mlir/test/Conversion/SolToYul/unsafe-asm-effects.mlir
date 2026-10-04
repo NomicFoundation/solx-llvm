@@ -5,9 +5,7 @@
 // memory variable counts as one.
 
 #Contract = #sol<ContractKind Contract>
-#Default = #sol<RevertStrings Default>
 #NonPayable = #sol<StateMutability NonPayable>
-#Osaka = #sol<EvmVersion Osaka>
 
 // CHECK-LABEL: yul.object @Mload_deployed {
 // CHECK-NEXT:    yul.constant 128
