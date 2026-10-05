@@ -70,8 +70,8 @@ void populateFuncBoundaryPats(RewritePatternSet &pats, TypeConverter &tyConv);
 /// Adds the conversion pattern of sol.func.
 void populateFuncOpPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
-/// Adds late Sol-to-Yul patterns that require legalized signatures and
-/// contract runtime/creation placement.
+/// Adds late Sol-to-Yul patterns that require legalized signatures and the
+/// functions placed in their contract's object.
 void populateLateSolToYulPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
 /// Adds the conversion pattern of sol.contract.

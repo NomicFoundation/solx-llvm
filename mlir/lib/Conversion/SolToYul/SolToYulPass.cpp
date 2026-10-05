@@ -63,7 +63,7 @@ struct ConvertSolToYulPass
   // TODO: Generalize this comment.
   //
   // FIXME: Some of the conversion patterns depends on the ancestor/descendant
-  // sol.func ops (e.g.: checking the runtime/creation context). Also APIs
+  // sol.func ops (e.g.: placing a dispatch after its caller). Also APIs
   // like getOrInsert*FuncOp that are used in the conversion pass works with
   // sol.func. sol.func conversion in the same conversion pass will require
   // other conversion to be able to work with sol.func and func.func. To keep
@@ -90,6 +90,7 @@ struct ConvertSolToYulPass
     convTgt.addIllegalOp<
         // clang-format off
         sol::ConstantOp,
+        sol::FuncConstantOp,
         sol::DefaultFuncConstantOp,
         sol::ExtFuncConstantOp,
         sol::ExtFuncAddrOp,
@@ -142,6 +143,7 @@ struct ConvertSolToYulPass
         sol::DeleteOp,
         sol::DataLocCastOp,
         sol::LoadOp,
+        sol::LoadImmutableOp,
         sol::StoreOp,
         sol::LengthOp,
         sol::SliceOp,
@@ -210,11 +212,7 @@ struct ConvertSolToYulPass
     convTgt.addDynamicallyLegalOp<sol::FuncOp>([&](sol::FuncOp op) {
       return tyConv.isSignatureLegal(op.getFunctionType());
     });
-    // sol.func_constant is only type-legalized here: ContractOpLowering's
-    // ctor-reachability walk needs the symbol reference intact so functions
-    // referenced as values get cloned into the creation object.
-    convTgt.addDynamicallyLegalOp<sol::CallOp, sol::ICallOp, sol::ReturnOp,
-                                  sol::LoadImmutableOp, sol::FuncConstantOp>(
+    convTgt.addDynamicallyLegalOp<sol::CallOp, sol::ICallOp, sol::ReturnOp>(
         [&](Operation *op) { return tyConv.isLegal(op); });
 
     RewritePatternSet pats(&getContext());
@@ -222,8 +220,7 @@ struct ConvertSolToYulPass
     populateAnyFunctionOpInterfaceTypeConversionPattern(pats, tyConv);
     pats.add<GenericTypeConversion<sol::CallOp>,
              GenericTypeConversion<sol::ICallOp>,
-             GenericTypeConversion<sol::ReturnOp>,
-             GenericTypeConversion<sol::FuncConstantOp>>(tyConv, &getContext());
+             GenericTypeConversion<sol::ReturnOp>>(tyConv, &getContext());
 
     evm::populateStage1Pats(pats, tyConv);
 
@@ -251,8 +248,7 @@ struct ConvertSolToYulPass
     convTgt.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
     convTgt
         .addLegalDialect<sol::SolDialect, yul::YulDialect, LLVM::LLVMDialect>();
-    convTgt.addIllegalOp<sol::ContractOp, sol::ICallOp, sol::LoadImmutableOp,
-                         sol::FuncConstantOp>();
+    convTgt.addIllegalOp<sol::ContractOp, sol::ICallOp>();
 
     RewritePatternSet pats(&getContext());
     evm::populateStage2Pats(pats, tyConv);
@@ -307,13 +303,23 @@ struct ConvertSolToYulPass
         icalls.push_back(icall);
         return;
       }
+      if (auto contr = dyn_cast<sol::ContractOp>(op)) {
+        for (auto sym :
+             contr.getCreationFuncRefs().getAsRange<FlatSymbolRefAttr>()) {
+          auto fn = contr.lookupSymbol<sol::FuncOp>(sym);
+          buckets[{contr.getOperation(),
+                   sol::FuncRefType::get(b.getContext(), fn.getFunctionType())}]
+              .insert(*fn.getId());
+        }
+        return;
+      }
       auto fnConst = dyn_cast<sol::FuncConstantOp>(op);
       if (!fnConst)
         return;
       auto fn = SymbolTable::lookupNearestSymbolFrom<sol::FuncOp>(
           fnConst, fnConst.getSymAttr());
       assert(fn && fn.getId() && "unresolvable sol.func_constant");
-      buckets[{fnConst->getParentOfType<ModuleOp>().getOperation(),
+      buckets[{SymbolTable::getNearestSymbolTable(fnConst),
                cast<sol::FuncRefType>(fnConst.getType())}]
           .insert(*fn.getId());
     });
@@ -329,7 +335,7 @@ struct ConvertSolToYulPass
     DenseI64ArrayAttr emptyAttr = b.getDenseI64ArrayAttr({});
     for (sol::ICallOp icall : icalls) {
       auto it = bucketAttrs.find(
-          {icall->getParentOfType<ModuleOp>().getOperation(),
+          {SymbolTable::getNearestSymbolTable(icall),
            cast<sol::FuncRefType>(icall.getCallee().getType())});
       icall.setCandidatesAttr(it != bucketAttrs.end() ? it->second : emptyAttr);
     }
@@ -338,6 +344,13 @@ struct ConvertSolToYulPass
   void runOnOperation() override {
     ModuleOp mod = getOperation();
     evm::SolTypeConverter tyConv;
+    // The module lowers to the object of its one contract.
+    auto contracts = mod.getOps<sol::ContractOp>();
+    if (!llvm::hasSingleElement(contracts) || !mod.getOps<ModuleOp>().empty()) {
+      mod.emitOpError("expects one sol.contract and no nested module");
+      signalPassFailure();
+      return;
+    }
     annotateICallCandidates(mod);
     if (failed(runStage1Conversion(mod, tyConv))) {
       signalPassFailure();

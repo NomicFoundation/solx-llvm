@@ -121,7 +121,6 @@
 // CHECK-NEXT:        %[[C:.*]] = yul.and %[[V]], %[[M]]
 // CHECK-NEXT:        yul.cmp ne, %[[V]], %[[C]]
 
-#Constructor = #sol<FunctionKind Constructor>
 #Contract = #sol<ContractKind Contract>
 #Default = #sol<RevertStrings Default>
 #NonPayable = #sol<StateMutability NonPayable>
@@ -138,9 +137,6 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
     sol.state_var @sb17s slot 7 offset 0 : !sol.array<? x !sol.fixedbytes<17>, Storage>
     sol.state_var @sb32 slot 8 offset 0 : !sol.array<? x !sol.fixedbytes<32>, Storage>
     sol.state_var @si8 slot 9 offset 0 : !sol.array<? x si8, Storage>
-    sol.func @C() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @cd2s_u8_u16(%arg0: !sol.array<? x ui8, CallData>) attributes {orig_fn_type = (!sol.array<? x ui8, CallData>) -> (), selector = 1 : i32, state_mutability = #NonPayable} {
       %0 = sol.addr_of @su16 : !sol.array<? x ui16, Storage>
       sol.copy %arg0, %0 : !sol.array<? x ui8, CallData>, !sol.array<? x ui16, Storage>
@@ -215,5 +211,5 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
       sol.copy %arg0, %0 : !sol.array<? x si136, CallData>, !sol.array<? x si136, Storage>
       sol.return
     }
-  } {kind = #Contract}
+  } {kind = #Contract, runtime}
 }
