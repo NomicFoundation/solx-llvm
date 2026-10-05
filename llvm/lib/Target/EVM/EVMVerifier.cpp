@@ -104,6 +104,10 @@ void EVMVerifierImpl::visitIntrinsicInst(IntrinsicInst &II) {
         "EVM memoryguard must be folded before codegen, run "
         "evm-fold-memory-guard",
         II);
+  Check(II.getIntrinsicID() != Intrinsic::evm_setimmutable,
+        "EVM setimmutable must be lowered before codegen, run "
+        "evm-lower-set-immutables",
+        II);
 }
 
 bool EVMVerifierImpl::verify(Module &M) {

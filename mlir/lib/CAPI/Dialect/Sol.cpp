@@ -11,22 +11,9 @@
 #include "mlir/CAPI/Registration.h"
 #include "mlir/CAPI/Wrap.h"
 #include "mlir/Dialect/Sol/Sol.h"
-#include "mlir/Dialect/Sol/Transforms/SolImmutables.h"
 #include "mlir/Dialect/Sol/Utils.h"
 
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Sol, sol, mlir::sol::SolDialect)
-
-void mlirEvmLowerSetImmutables(MlirModule mod, const char **immIDs,
-                               const uint64_t *immOffsets, uint64_t immCount) {
-  llvm::StringMap<mlir::SmallVector<uint64_t>> immMap;
-  for (uint64_t i = 0; i < immCount; ++i)
-    immMap[immIDs[i]].push_back(immOffsets[i]);
-  mlir::evm::lowerSetImmutables(unwrap(mod), immMap);
-}
-
-void mlirEvmRemoveSetImmutables(MlirModule mod) {
-  mlir::evm::removeSetImmutables(unwrap(mod));
-}
 
 MlirType mlirSolGetEltType(MlirType ty, uint64_t structFieldIdx) {
   return wrap(mlir::sol::getEltType(unwrap(ty), structFieldIdx));

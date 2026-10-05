@@ -1116,8 +1116,11 @@ struct SetImmutableOpLowering : public OpRewritePattern<yul::SetImmutableOp> {
 
   LogicalResult matchAndRewrite(yul::SetImmutableOp op,
                                 PatternRewriter &r) const override {
-    r.replaceOpWithNewOp<LLVM::SetImmutableOp>(op, op.getAddr(), op.getName(),
-                                               op.getVal());
+    r.replaceOpWithNewOp<LLVM::IntrCallOp>(
+        op, /*res=*/Type{}, llvm::Intrinsic::evm_setimmutable,
+        /*ins=*/ValueRange{op.getAddr(), op.getVal()},
+        /*metadata=*/r.getStrArrayAttr(op.getName()),
+        r.getStringAttr("evm.setimmutable"));
     return success();
   }
 };
