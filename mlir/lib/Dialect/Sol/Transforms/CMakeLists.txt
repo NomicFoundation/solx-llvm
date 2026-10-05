@@ -1,5 +1,4 @@
 add_mlir_dialect_library(MLIRSolTransforms
-  SolImmutables.cpp
   SolLoopInvariantCodeMotion.cpp
   ModifierInlining.cpp
 
@@ -10,12 +9,10 @@ add_mlir_dialect_library(MLIRSolTransforms
   MLIRSolPassIncGen
 
   LINK_LIBS PUBLIC
-  MLIRSolToYul
   MLIRSolDialect
   MLIRYulDialect
   MLIRArithDialect
   MLIRSCFDialect
-  MLIRLLVMDialect
   MLIRFuncDialect
   MLIRPass
   MLIRTransforms

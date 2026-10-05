@@ -400,4 +400,11 @@ def int_evm_pushdeployaddress
 def int_evm_loadimmutable
     : DefaultAttrsIntrinsic<[llvm_i256_ty], [llvm_metadata_ty],
                             [IntrNoMem, IntrWillReturn]>;
+
+// Stores an immutable's value into the runtime code copied to the heap at the
+// address, at each offset the runtime loads it from. Should be used only in
+// deploy code, and is lowered by EVMLowerSetImmutables at the start of the
+// pipeline, so it carries no attributes.
+def int_evm_setimmutable
+    : Intrinsic<[], [llvm_i256_ty, llvm_i256_ty, llvm_metadata_ty], []>;
 } // TargetPrefix = "evm"
