@@ -1466,7 +1466,8 @@ struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
       allocPtr =
           evmB.genMemAlloc(op.getType(), false, {}, litSize, Type{}, loc);
       // Create a global constant initialized with the given string literal.
-      LLVM::GlobalOp globConst = bExt.getStringLiteralGlobalOp(lit, mod);
+      LLVM::GlobalOp globConst = bExt.getStringLiteralGlobalOp(
+          lit, op->getParentOfType<sol::ContractOp>());
       auto ptrToArray =
           LLVM::LLVMPointerType::get(mod.getContext(), /*addressSpace=*/4);
       auto addrOf =
@@ -2094,51 +2095,12 @@ struct LoadOpLowering : public OpConversionPattern<sol::LoadOp> {
   }
 };
 
-struct LoadImmutableMetadataConversion
-    : public OpConversionPattern<sol::LoadImmutableOp> {
-  using OpConversionPattern<sol::LoadImmutableOp>::OpConversionPattern;
+struct LoadImmutableOpLowering : public OpRewritePattern<sol::LoadImmutableOp> {
+  using OpRewritePattern<sol::LoadImmutableOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(sol::LoadImmutableOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &r) const override {
-    // Track the "addr" attribute from the referenced sol.immutable op.
-    SmallVector<NamedAttribute> attrs = llvm::to_vector(op->getAttrs());
-    auto parentContract = op->getParentOfType<sol::ContractOp>();
-    Operation *sym = parentContract.lookupSymbol(op.getName());
-    auto immOp = cast<sol::ImmutableOp>(sym);
-    attrs.push_back(
-        r.getNamedAttr("addr", immOp->getAttrOfType<IntegerAttr>("addr")));
-
-    // Legalize result types and add the "addr" attribute.
-    SmallVector<Type> newResTys;
-    if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(),
-                                                      newResTys)))
-      return failure();
-    r.replaceOpWithNewOp<sol::LoadImmutableOp>(op, newResTys,
-                                               adaptor.getOperands(), attrs);
-    return success();
-  }
-};
-
-struct LoadImmutableToYulLowering
-    : public OpConversionPattern<sol::LoadImmutableOp> {
-  using OpConversionPattern<sol::LoadImmutableOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(sol::LoadImmutableOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &r) const override {
-    Location loc = op.getLoc();
-    mlir::solgen::BuilderExt bExt(r, loc);
-
-    bool inRuntime = op->getParentOfType<sol::FuncOp>().getRuntime();
-    Value repl;
-    if (inRuntime) {
-      repl = r.create<yul::LoadImmutableOp>(loc, op.getName());
-    } else {
-      assert(op->hasAttr("addr"));
-      IntegerAttr addr = cast<IntegerAttr>(op->getAttr("addr"));
-      repl = r.create<yul::MLoadOp>(loc, bExt.genI256Const(addr.getValue()));
-    }
-
-    r.replaceOp(op, repl);
+  LogicalResult matchAndRewrite(sol::LoadImmutableOp op,
+                                PatternRewriter &r) const override {
+    r.replaceOpWithNewOp<yul::LoadImmutableOp>(op, op.getName());
     return success();
   }
 };
@@ -3940,8 +3902,6 @@ struct FuncOpLowering : public OpConversionPattern<sol::FuncOp> {
         r.create<yul::FuncOp>(op.getLoc(), op.getName(), convertedFuncTy);
     for (NamedAttribute attr : attrs)
       newOp->setAttr(attr.getName(), attr.getValue());
-    if (auto visibility = op.getSymVisibilityAttr())
-      newOp.setSymVisibilityAttr(visibility);
     if (op.getUnsafeAsm())
       newOp.setUnsafeAsm(true);
     r.inlineRegionBefore(op.getBody(), newOp.getBody(), newOp.getBody().end());
@@ -3966,11 +3926,10 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
   }
 
   /// Generates the dispatch function that switches over the candidate
-  /// functions of the caller's phase. Outlining this reduces the caller's
-  /// stack pressure.
+  /// functions. Outlining this reduces the caller's stack pressure.
   yul::FuncOp genDispatchFn(StringRef name, ArrayRef<int64_t> candidateIds,
                             FunctionType calleeTy, FunctionType dispatchFnTy,
-                            bool callerRuntime, sol::ICallOp op,
+                            sol::ICallOp op,
                             ConversionPatternRewriter &r) const {
     // The dispatch function is generated and shared by every call of these
     // candidates: its subprogram is artificial at the line of the module
@@ -3980,24 +3939,19 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
     Operation *symTab = SymbolTable::getNearestSymbolTable(op);
     evm::Builder evmB(mod, r, loc);
 
-    // Resolve the candidate ids in the caller's phase.
+    // Resolve the candidate ids to their functions.
     DenseSet<int64_t> candidateIdSet(candidateIds.begin(), candidateIds.end());
     SmallVector<int64_t> caseIds;
     SmallVector<sol::FuncOp> caseFns;
-    symTab->walk([&](sol::FuncOp fn) {
-      // At this stage the nearest Sol symbol table can still contain both
-      // creation and runtime functions. Internal function pointers are only
-      // valid within the caller's phase, so do not dispatch across that
-      // boundary just because the id matches.
-      if (fn.getRuntime() != callerRuntime)
-        return;
+    for (auto fn : symTab->getRegion(0).getOps<sol::FuncOp>()) {
       if (fn.getId() && candidateIdSet.contains(*fn.getId())) {
         assert(fn.getFunctionType() == calleeTy &&
                "candidate signature mismatch");
         caseFns.push_back(fn);
         caseIds.push_back(*fn.getId());
       }
-    });
+    }
+    assert(caseFns.size() == candidateIds.size() && "unresolvable candidate");
 
     OpBuilder::InsertionGuard insertGuard(r);
     r.setInsertionPointAfter(op->getParentOfType<sol::FuncOp>());
@@ -4011,15 +3965,6 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
                                  dispatchFnTy.getInputs(), argLocs);
     r.setInsertionPointToStart(entry);
     ValueRange calleeArgs = entry->getArguments().drop_front();
-
-    // Candidates exist, but none in the caller's phase: no valid id can reach
-    // this call, so unconditionally panic.
-    if (caseFns.empty()) {
-      evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
-      r.create<yul::FuncReturnOp>(loc,
-                                  genUndefs(calleeTy.getResults(), loc, r));
-      return fn;
-    }
 
     auto calleeIntTy = cast<IntegerType>(dispatchFnTy.getInput(0));
     SmallVector<APInt> caseVals;
@@ -4067,7 +4012,7 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
 
     // No valid id can reach this call: panic inline. Cannot outline: the
     // symbol is keyed by the ids alone, so empty sets of different signatures
-    // would collide on `__sol.internal_dispatch.<rt|cr>`.
+    // would collide on `__sol.internal_dispatch`.
     if (candidateIds->empty()) {
       evm::Builder evmB(getModule(op), r, loc);
       evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
@@ -4082,21 +4027,19 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
     auto dispatchFnTy = mlir::FunctionType::get(
         r.getContext(), dispatchInputTys, calleeTy.getResults());
 
-    // Contract lowering has already relocated the caller into a
-    // creation/runtime object; standalone free functions stay hosted at
-    // module level.
+    // Contract lowering has already relocated the caller into its contract's
+    // object. Standalone free functions stay hosted at module level.
     Operation *symTab = SymbolTable::getNearestSymbolTable(op);
     assert((isa<yul::ObjectOp, ModuleOp>(symTab)) &&
            "expected an object or module scoped caller");
-    bool callerRuntime = op->getParentOfType<sol::FuncOp>().getRuntime();
     std::string dispatchFnName =
-        evm::helpersym::internalDispatch(callerRuntime, *candidateIds);
+        evm::helpersym::internalDispatch(*candidateIds);
     Operation *found = SymbolTable::lookupSymbolIn(symTab, dispatchFnName);
     auto dispatchFn = dyn_cast_or_null<yul::FuncOp>(found);
     if (!dispatchFn) {
       assert(!found && "dispatch symbol clashes with a non-function");
       dispatchFn = genDispatchFn(dispatchFnName, *candidateIds, calleeTy,
-                                 dispatchFnTy, callerRuntime, op, r);
+                                 dispatchFnTy, op, r);
     } else {
       assert(dispatchFn.getFunctionType() == dispatchFnTy &&
              "dispatch symbol clashes with an incompatible function");
@@ -4262,129 +4205,25 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     }
   }
 
-  /// Collects reachable function from `fn` in `reachableFns`.
-  void
-  getReachableFuncs(FunctionOpInterface fn,
-                    llvm::SetVector<FunctionOpInterface> &reachableFns) const {
-    reachableFns.insert(fn);
-    fn.walk([&](Operation *op) {
-      SymbolRefAttr calleeSym;
-      if (auto call = dyn_cast<CallOpInterface>(op))
-        calleeSym = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
-      else if (auto fnRef = dyn_cast<sol::FuncConstantOp>(op))
-        calleeSym = fnRef.getSymAttr();
-      if (!calleeSym)
-        return;
-
-      auto callee = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
-          fn.getOperation(), calleeSym);
-      if (!callee || reachableFns.contains(callee))
-        return;
-      getReachableFuncs(callee, reachableFns);
-    });
-  }
-
-  LogicalResult matchAndRewrite(sol::ContractOp op,
-                                PatternRewriter &r) const override {
-    // The code this pattern emits is at the contract's location, except the
-    // dispatch cases and the constructor's part of the creation code, which are
-    // at their function's. The objects keep the contract's location with the
-    // compile unit fused onto it: the runtime module is created at it and
-    // inherits the compile unit.
-    mlir::Location contractLoc = op.getLoc();
-    mlir::Location loc = evm::sourceLoc(contractLoc);
+  /// Generates the creation code: it runs the constructor, then returns the
+  /// runtime object's code with the immutables set.
+  void genCreationCode(sol::ContractOp contrOp, StringRef runtimeObjName,
+                       PatternRewriter &r, Location loc) const {
     mlir::solgen::BuilderExt bExt(r, loc);
-    ModuleOp mod = getModule(op);
-    evm::Builder evmB(mod, r, loc);
+    ModuleOp mod = getModule(contrOp);
 
-    // Generate the creation and runtime ObjectOp.
-    auto creationObj = r.create<yul::ObjectOp>(contractLoc, op.getName());
-    r.setInsertionPointToStart(&creationObj.getBody().front());
-    auto runtimeObj = r.create<yul::ObjectOp>(
-        contractLoc, std::string(op.getName()) + "_deployed");
-
-    SmallVector<sol::FuncOp, 4> ifcFns;
-    sol::FuncOp ctor, receiveFn, fallbackFn;
-    SmallVector<uint32_t, 4> selectors;
+    sol::FuncOp ctor;
+    for (auto fn : contrOp.getBody()->getOps<sol::FuncOp>()) {
+      if (fn.getKind() == sol::FunctionKind::Constructor) {
+        assert(!ctor);
+        ctor = fn;
+      }
+    }
+    SmallVector<sol::ImmutableOp, 2> immOps(
+        contrOp.getBody()->getOps<sol::ImmutableOp>());
     size_t reservedMemSize = 0;
-    SmallVector<sol::ImmutableOp, 2> immOps;
-
-    // Track relevant types of functions (with selector, ctor, fallback,
-    // receive) immutables (and reserved memory) etc; Remove state variables.
-    for (Operation &i :
-         llvm::make_early_inc_range(op.getBody()->getOperations())) {
-      // Functions
-      if (auto fn = dyn_cast<sol::FuncOp>(i)) {
-        if (auto selector = fn.getSelector()) {
-          selectors.push_back(*selector);
-          ifcFns.push_back(fn);
-        }
-        auto fnKind = fn.getKind();
-        if (fnKind) {
-          switch (*fnKind) {
-          case sol::FunctionKind::Constructor:
-            assert(!ctor);
-            ctor = fn;
-            break;
-          case sol::FunctionKind::Fallback:
-            assert(!fallbackFn);
-            fallbackFn = fn;
-            break;
-          case sol::FunctionKind::Receive:
-            assert(!receiveFn);
-            receiveFn = fn;
-            break;
-          }
-        }
-
-        // Immutables
-      } else if (auto immOp = dyn_cast<sol::ImmutableOp>(i)) {
-        reservedMemSize += evm::getCallDataHeadSize(immOp.getType());
-        immOps.push_back(immOp);
-
-        // State variables
-      } else if (isa<sol::StateVarOp>(i)) {
-        r.eraseOp(&i);
-
-      } else if (!isa<yul::FuncOp>(i)) {
-        llvm_unreachable("NYI");
-      }
-    }
-
-    if (ctor) {
-      // Clone functions reachable from the ctor to creation and runtime
-      // objects.
-      llvm::SetVector<FunctionOpInterface> reachableFns;
-      getReachableFuncs(ctor, reachableFns);
-      ctor->moveBefore(creationObj.getEntryBlock(),
-                       creationObj.getEntryBlock()->begin());
-      for (FunctionOpInterface reachableFn : reachableFns) {
-        Operation *fnOp = reachableFn.getOperation();
-        if (fnOp == ctor.getOperation())
-          continue;
-        // Clone in the creation object and move the original to runtime object.
-        r.clone(*fnOp);
-        fnOp->moveBefore(runtimeObj.getEntryBlock(),
-                         runtimeObj.getEntryBlock()->begin());
-        if (auto solFn = dyn_cast<sol::FuncOp>(fnOp))
-          solFn.setRuntimeAttr(r.getUnitAttr());
-      }
-    }
-
-    for (Operation &i : llvm::make_early_inc_range(*op.getBody())) {
-      if (!isa<FunctionOpInterface>(i))
-        continue;
-      if (auto solFn = dyn_cast<sol::FuncOp>(&i))
-        solFn.setRuntimeAttr(r.getUnitAttr());
-      i.moveBefore(runtimeObj.getEntryBlock(),
-                   runtimeObj.getEntryBlock()->begin());
-    }
-
-    //
-    // Creation context
-    //
-
-    r.setInsertionPointToStart(creationObj.getEntryBlock());
+    for (sol::ImmutableOp immOp : immOps)
+      reservedMemSize += evm::getCallDataHeadSize(immOp.getType());
 
     genFreePtrInit(r, loc, reservedMemSize);
 
@@ -4402,8 +4241,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     }
 
     // Generate the call to constructor (if required).
-    if (ctor && op.getKind() != sol::ContractKind::Library) {
-      auto progSize = r.create<yul::DataSizeOp>(ctorLoc, creationObj.getName());
+    if (ctor && contrOp.getKind() != sol::ContractKind::Library) {
+      auto progSize = r.create<yul::DataSizeOp>(ctorLoc, contrOp.getName());
       auto codeSize = r.create<yul::CodeSizeOp>(ctorLoc);
       auto argSize = r.create<yul::SubOp>(ctorLoc, codeSize, progSize);
       Value tupleStart = ctorEvmB.genMemAlloc(argSize);
@@ -4423,41 +4262,60 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     // Generate the codecopy of the runtime object for the return from the
     // creation object.
     auto freePtr = r.create<yul::MLoadOp>(loc, bExt.genI256Const(64));
-    auto runtimeObjSym = FlatSymbolRefAttr::get(runtimeObj);
+    auto runtimeObjSym = FlatSymbolRefAttr::get(r.getContext(), runtimeObjName);
     auto runtimeObjOffset = r.create<yul::DataOffsetOp>(loc, runtimeObjSym);
     auto runtimeObjSize = r.create<yul::DataSizeOp>(loc, runtimeObjSym);
     r.create<yul::CodeCopyOp>(loc, freePtr, runtimeObjOffset, runtimeObjSize);
 
     // Generate setimmutable of the library address (the runtime object uses
     // this for the delegate call check).
-    if (op.getKind() == sol::ContractKind::Library)
+    if (contrOp.getKind() == sol::ContractKind::Library)
       r.create<yul::SetImmutableOp>(loc, freePtr, libAddrName,
                                     r.create<yul::AddressOp>(loc));
 
-    // Generate setimmutable's and remove all sol.immutable ops.
-    for (sol::ImmutableOp immOp : llvm::make_early_inc_range(immOps)) {
+    // Generate setimmutable's.
+    for (sol::ImmutableOp immOp : immOps) {
       assert(immOp->getAttr("addr"));
       auto addr = bExt.genI256Const(
           cast<IntegerAttr>(immOp->getAttr("addr")).getValue());
       auto val = r.create<yul::MLoadOp>(loc, addr);
       r.create<yul::SetImmutableOp>(loc, freePtr, immOp.getName(), val);
-      r.eraseOp(immOp);
     }
 
     // Generate the return for the creation context.
     r.create<yul::ReturnOp>(loc, freePtr, runtimeObjSize);
+  }
 
-    //
-    // Runtime context
-    //
+  /// Generates the runtime code: the dispatch to the interface functions, then
+  /// receive and fallback.
+  void genRuntimeCode(sol::ContractOp contrOp, PatternRewriter &r,
+                      Location loc) const {
+    mlir::solgen::BuilderExt bExt(r, loc);
+    ModuleOp mod = getModule(contrOp);
+    evm::Builder evmB(mod, r, loc);
 
-    r.setInsertionPointToStart(runtimeObj.getEntryBlock());
+    SmallVector<uint32_t, 4> selectors;
+    SmallVector<sol::FuncOp, 4> ifcFns;
+    sol::FuncOp receiveFn, fallbackFn;
+    for (auto fn : contrOp.getBody()->getOps<sol::FuncOp>()) {
+      if (auto selector = fn.getSelector()) {
+        selectors.push_back(*selector);
+        ifcFns.push_back(fn);
+      }
+      if (fn.getKind() == sol::FunctionKind::Receive) {
+        assert(!receiveFn);
+        receiveFn = fn;
+      } else if (fn.getKind() == sol::FunctionKind::Fallback) {
+        assert(!fallbackFn);
+        fallbackFn = fn;
+      }
+    }
 
     // Generate the memory init.
     genFreePtrInit(r, loc);
 
     // Generate the dispatch to interface functions.
-    genDispatch(op, selectors, ifcFns, r, loc);
+    genDispatch(contrOp, selectors, ifcFns, r, loc);
 
     // Generate receive function.
     if (receiveFn) {
@@ -4511,31 +4369,36 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
                     : "Contract does not have fallback nor receive functions",
           loc);
     }
+  }
 
-    // StringLitOpLowering puts __data_in_code_* globals at module scope with
-    // AddressOfOps inside yul::ObjectOps. For CODECOPY to bind to the right
-    // object's data section, each global must live inside the ObjectOp that
-    // references it
-    llvm::DenseSet<LLVM::GlobalOp> toErase;
-    mod->walk([&](LLVM::AddressOfOp addrOf) {
-      StringRef name = addrOf.getGlobalName();
-      if (!name.starts_with("__data_in_code_"))
-        return;
-      auto obj = addrOf->getParentOfType<yul::ObjectOp>();
-      assert(obj);
-      if (SymbolTable::lookupSymbolIn(obj, name))
-        return;
-      auto gOp = cast<LLVM::GlobalOp>(SymbolTable::lookupSymbolIn(mod, name));
-      obj.getEntryBlock()->push_front(gOp->clone());
-      toErase.insert(gOp);
-    });
-    for (LLVM::GlobalOp gOp : toErase)
-      r.eraseOp(gOp);
+  LogicalResult matchAndRewrite(sol::ContractOp op,
+                                PatternRewriter &r) const override {
+    // The code this pattern emits is at the contract's location, except the
+    // dispatch cases and the constructor's part of the creation code, which are
+    // at their function's.
+    mlir::Location loc = op.getLoc();
 
-    // TODO? Make sure op.getBody() is either empty or has only ops marked for
-    // deletion.
+    std::string runtimeObjName = std::string(op.getName()) + "_deployed";
+    auto obj = r.create<yul::ObjectOp>(
+        loc, op.getRuntime() ? StringRef(runtimeObjName) : op.getName());
+
+    r.setInsertionPointToStart(obj.getEntryBlock());
+    if (op.getRuntime())
+      genRuntimeCode(op, r, loc);
+    else
+      genCreationCode(op, runtimeObjName, r, loc);
+
+    // The functions and the string literal globals follow the code, the last
+    // one first, which keeps the layout of the object and so its bytecode.
+    for (Operation &i :
+         llvm::make_early_inc_range(llvm::reverse(*op.getBody()))) {
+      if (isa<FunctionOpInterface, LLVM::GlobalOp>(i))
+        r.moveOpBefore(&i, obj.getEntryBlock(), obj.getEntryBlock()->end());
+      else if (!isa<sol::StateVarOp, sol::ImmutableOp>(i))
+        llvm_unreachable("NYI");
+    }
+
     r.eraseOp(op);
-    // TODO: Subobjects
     return success();
   }
 };
@@ -4548,8 +4411,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 // debug builds?)
 
 void evm::populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv) {
-  pats.add<ConstantOpLowering, DefaultFuncConstantOpLowering>(
-      pats.getContext());
+  pats.add<ConstantOpLowering, FuncConstantOpLowering,
+           DefaultFuncConstantOpLowering>(pats.getContext());
   pats.add<CastOpLowering, AddressCastOpLowering, ContractCastOpLowering,
            EnumCastOpLowering, BytesCastOpLowering,
            DynBytesToFixedBytesOpLowering, FixedBytesIndexOpLowering,
@@ -4587,12 +4450,11 @@ void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv) {
   pats.add<AllocaOpLowering, MallocOpLowering, ArrayLitOpLowering,
            GetCallDataOpLowering, DefaultCallDataOpLowering,
            DefaultStorageOpLowering, PushOpLowering, PopOpLowering,
-           GepOpLowering, MapOpLowering, LoadOpLowering,
-           LoadImmutableMetadataConversion, StoreOpLowering,
+           GepOpLowering, MapOpLowering, LoadOpLowering, StoreOpLowering,
            DataLocCastOpLowering, LengthOpLowering, SliceOpLowering,
            CopyOpLowering, DeleteOpLowering, PushStringOpLowering,
            StringLitOpLowering, ConcatOpLowering>(tyConv, pats.getContext());
-  pats.add<AddrOfOpLowering>(pats.getContext());
+  pats.add<AddrOfOpLowering, LoadImmutableOpLowering>(pats.getContext());
 }
 
 void evm::populateControlFlowPats(RewritePatternSet &pats,
@@ -4612,9 +4474,7 @@ void evm::populateFuncOpPats(RewritePatternSet &pats, TypeConverter &tyConv) {
 
 void evm::populateLateSolToYulPats(RewritePatternSet &pats,
                                    TypeConverter &tyConv) {
-  pats.add<ICallOpLowering, LoadImmutableToYulLowering>(tyConv,
-                                                        pats.getContext());
-  pats.add<FuncConstantOpLowering>(pats.getContext());
+  pats.add<ICallOpLowering>(tyConv, pats.getContext());
 }
 
 void evm::populateAddrPat(RewritePatternSet &pats, TypeConverter &tyConv) {

@@ -119,9 +119,8 @@ std::string clearStringTail();
 std::string copyStringData(mlir::sol::DataLocation src,
                            mlir::sol::DataLocation dst);
 /// Dispatches an internal function pointer call over its candidate set:
-/// `__sol.internal_dispatch.<rt|cr>.<id>...`.
-std::string internalDispatch(bool runtime,
-                             llvm::ArrayRef<int64_t> candidateIds);
+/// `__sol.internal_dispatch.<id>...`.
+std::string internalDispatch(llvm::ArrayRef<int64_t> candidateIds);
 } // namespace helpersym
 
 /// IR Builder for EVM specific lowering.
@@ -522,14 +521,8 @@ public:
   /// call instead of recursing in the compiler. Used to out-of-line recursive
   /// storage operations (clear, deep copy) over self-referential structs,
   /// mirroring upstream solc's named Yul copy/convert functions. As a
-  /// `sol.func` the helper is relocated, cloned and lowered by the existing
-  /// contract/object machinery.
-  /// When the insertion point is not inside a contract (a free function that
-  /// no contract references, lowered standalone at module level), the helper
-  /// is hosted by the module instead. Nothing relocates module level helpers,
-  /// which is fine because no contract object can reach that code. This
-  /// support exists only for standalone free functions and is a subject of
-  /// future removal, see the comment in the implementation.
+  /// `sol.func` the helper is moved into its contract's object and lowered by
+  /// the existing contract/object machinery.
   mlir::sol::FuncOp getOrCreateHelperFn(
       llvm::StringRef symbol, mlir::TypeRange argTys, mlir::TypeRange resTys,
       llvm::function_ref<void(mlir::ValueRange, mlir::Location)> genBody);

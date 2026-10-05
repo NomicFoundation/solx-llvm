@@ -324,5 +324,15 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
   return success();
 }
 
+LogicalResult ObjectOp::verify() {
+  // A module lowers to a single object, whose entry code becomes the module's
+  // entry function.
+  for (Operation &sibling : *getOperation()->getBlock())
+    if (&sibling != getOperation() && isa<ObjectOp>(sibling))
+      return emitOpError("expects no other yul.object in its module, found '")
+             << cast<ObjectOp>(sibling).getSymName() << "'";
+  return success();
+}
+
 #define GET_OP_CLASSES
 #include "mlir/Dialect/Yul/YulOps.cpp.inc"
