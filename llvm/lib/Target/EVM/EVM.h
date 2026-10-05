@@ -135,5 +135,10 @@ struct EVMFoldMemoryGuardPass : PassInfoMixin<EVMFoldMemoryGuardPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };
 
+struct EVMLowerSetImmutablesPass : PassInfoMixin<EVMLowerSetImmutablesPass> {
+  EVMLowerSetImmutablesPass() = default;
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
+};
+
 } // namespace llvm
 #endif // LLVM_LIB_TARGET_EVM_EVM_H

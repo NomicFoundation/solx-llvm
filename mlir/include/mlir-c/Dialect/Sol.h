@@ -18,15 +18,6 @@ extern "C" {
 
 MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Sol, sol);
 
-/// Lowers llvm.setimmutable ops using the provided immutable offset map.
-MLIR_CAPI_EXPORTED void mlirEvmLowerSetImmutables(MlirModule mod,
-                                                  const char **immIDs,
-                                                  const uint64_t *immOffsets,
-                                                  uint64_t immCount);
-
-/// Removes all llvm.setimmutable ops.
-MLIR_CAPI_EXPORTED void mlirEvmRemoveSetImmutables(MlirModule mod);
-
 /// Returns the element type of a non-mapping reference type. For struct
 /// types, `structFieldIdx` selects the member; ignored for other types.
 MLIR_CAPI_EXPORTED MlirType mlirSolGetEltType(MlirType ty,

@@ -103,11 +103,6 @@ static void testSolPasses(MlirContext ctx) {
   // CHECK: pass manager run successfully
   fprintf(stderr, "pass manager run successfully\n");
 
-  mlirEvmLowerSetImmutables(module, NULL, NULL, 0);
-  mlirEvmRemoveSetImmutables(module);
-  // CHECK: immutables run successfully
-  fprintf(stderr, "immutables run successfully\n");
-
   mlirPassManagerDestroy(pm);
   mlirModuleDestroy(module);
 }
