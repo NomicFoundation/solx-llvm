@@ -219,7 +219,7 @@ public:
   /// Creates a private constant LLVM global in address space 4 (code) holding
   /// the given string literal bytes, with a unique \c __data_in_code_* name.
   mlir::LLVM::GlobalOp getStringLiteralGlobalOp(llvm::StringRef literal,
-                                                mlir::ModuleOp mod);
+                                                mlir::sol::ContractOp contr);
 
   /// Generates an LLVM literal struct from the given values.
   Value genLLVMStruct(ValueRange vals,

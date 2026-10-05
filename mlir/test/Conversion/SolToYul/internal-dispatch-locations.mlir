@@ -6,7 +6,6 @@
 // of the module hosting it, and its body is at line 0. The call into it keeps
 // the call's location.
 
-#Constructor = #sol<FunctionKind Constructor>
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 
@@ -26,10 +25,7 @@
 
 module {
   sol.contract @C {
-    sol.func @ctor() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return loc(#loc_contract)
-    } loc(#loc_contract)
-    sol.func private @g() attributes {id = 7 : i64, state_mutability = #NonPayable} {
+    sol.func @g() attributes {id = 7 : i64, state_mutability = #NonPayable} {
       sol.return loc(#loc_g)
     } loc(#loc_g)
     sol.func @f() attributes {orig_fn_type = () -> (), selector = 1 : i32, state_mutability = #NonPayable} {
@@ -37,7 +33,7 @@ module {
       sol.icall %0() : !sol.func_ref<() -> ()>, () -> () loc(#loc_call)
       sol.return loc(#loc_f)
     } loc(#loc_f)
-  } {kind = #Contract} loc(#loc_contract_cu)
+  } {kind = #Contract, runtime}
 } loc(#loc_contract_cu)
 
 #loc_contract = loc("C.sol":1:1)

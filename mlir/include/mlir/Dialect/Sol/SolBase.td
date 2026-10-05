@@ -281,6 +281,11 @@ def Sol_ExtFuncRefType : Sol_Type<"ExtFuncRef", "ext_func_ref"> {
 def I256Attr : SignlessIntegerAttrBase<I256,
                                        "256-bit signless integer attribute">;
 
+// Upstream's FlatSymbolRefArrayAttr has no constant builder, which a default
+// value needs.
+def Sol_FlatSymbolRefArrayAttr
+    : TypedArrayAttrBase<FlatSymbolRefAttr, "flat symbol ref array attribute">;
+
 def Sol_CmpPredicateAttr :
     I64EnumAttr<"CmpPredicate", "",
                 [I64EnumAttrCase<"eq", 0>,

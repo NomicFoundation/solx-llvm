@@ -2183,40 +2183,27 @@ std::string evm::helpersym::copyStringData(sol::DataLocation src,
                            sol::stringifyDataLocation(dst).lower()});
 }
 
-std::string evm::helpersym::internalDispatch(bool runtime,
-                                             ArrayRef<int64_t> candidateIds) {
+std::string evm::helpersym::internalDispatch(ArrayRef<int64_t> candidateIds) {
   SmallVector<std::string> idStrs;
   idStrs.reserve(candidateIds.size());
   for (int64_t id : candidateIds)
     idStrs.push_back(std::to_string(id));
-  SmallVector<StringRef> fields{runtime ? "rt" : "cr"};
-  llvm::append_range(fields, idStrs);
+  SmallVector<StringRef> fields(idStrs.begin(), idStrs.end());
   return makeHelperSymbol("internal_dispatch", fields);
 }
 
 sol::FuncOp evm::Builder::getOrCreateHelperFn(
     StringRef symbol, TypeRange argTys, TypeRange resTys,
     llvm::function_ref<void(ValueRange, Location)> genBody) {
-  // The helper normally lives in the enclosing contract: stage-2 contract
-  // lowering then relocates it into the creation/runtime objects and clones
-  // it where needed, and the regular sol.func -> yul.func lowering handles
-  // the rest, so a recursive helper behaves exactly like a user-written
-  // recursive function.
-  //
-  // Free functions that no contract references are lowered standalone at
-  // module level (referenced ones are cloned into each referencing contract
-  // by the frontend). Their helpers are hosted by the module itself. Nothing
-  // relocates module level helpers, which is fine because no contract object
-  // can reach that code.
-  // TODO: The module level hosting exists only to keep standalone free
-  // functions compilable and is a subject of future removal. The pipeline
-  // should stop lowering free functions that no contract references, matching
-  // the upstream solc pipeline, which generates no code for them.
+  // The helper lives in the enclosing contract: stage-2 contract lowering then
+  // moves it into the contract's object, and the regular sol.func -> yul.func
+  // lowering handles the rest, so a recursive helper behaves exactly like a
+  // user-written recursive function.
   auto contract =
       b.getInsertionBlock()->getParentOp()->getParentOfType<sol::ContractOp>();
-  Operation *host = contract ? contract.getOperation() : mod.getOperation();
-  Block *hostBlock =
-      contract ? &contract.getBodyRegion().front() : mod.getBody();
+  assert(contract && "a helper is created inside a sol.contract");
+  Operation *host = contract.getOperation();
+  Block *hostBlock = &contract.getBodyRegion().front();
 
   auto fnTy = FunctionType::get(b.getContext(), argTys, resTys);
 

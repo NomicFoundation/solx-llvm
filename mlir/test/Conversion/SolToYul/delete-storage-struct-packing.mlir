@@ -33,7 +33,7 @@ sol.contract @Padding {
     sol.delete %0 : !Padding
     sol.return
   }
-} {kind = #Contract}
+} {kind = #Contract, runtime}
 
 // -----
 
@@ -57,7 +57,7 @@ sol.contract @Full {
     sol.delete %0 : !Full
     sol.return
   }
-} {kind = #Contract}
+} {kind = #Contract, runtime}
 
 // -----
 
@@ -87,7 +87,7 @@ sol.contract @TwoSlots {
     sol.delete %0 : !TwoSlots
     sol.return
   }
-} {kind = #Contract}
+} {kind = #Contract, runtime}
 
 // -----
 
@@ -113,7 +113,7 @@ sol.contract @Kinds {
     sol.delete %0 : !Kinds
     sol.return
   }
-} {kind = #Contract}
+} {kind = #Contract, runtime}
 
 // -----
 
@@ -156,7 +156,7 @@ sol.contract @Aggregates {
     sol.delete %0 : !Aggregates
     sol.return
   }
-} {kind = #Contract}
+} {kind = #Contract, runtime}
 
 // -----
 
@@ -196,7 +196,7 @@ sol.contract @ArrayOfStructs {
     sol.delete %0 : !ArrayOfStructs
     sol.return
   }
-} {kind = #Contract}
+} {kind = #Contract, runtime}
 
 // -----
 
@@ -220,7 +220,7 @@ sol.contract @ArrayOfBytes {
     sol.delete %0 : !ArrayOfBytes
     sol.return
   }
-} {kind = #Contract}
+} {kind = #Contract, runtime}
 
 // -----
 
@@ -254,4 +254,4 @@ sol.contract @Recursive {
     sol.delete %0 : !Recursive
     sol.return
   }
-} {kind = #Contract}
+} {kind = #Contract, runtime}
