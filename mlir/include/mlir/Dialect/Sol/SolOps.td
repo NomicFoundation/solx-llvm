@@ -866,7 +866,8 @@ class Sol_ICallOpBase<string mnemonic, TypeConstraint calleeTy,
 }
 
 // Indirect call for internal function pointers. $candidates holds the ids of
-// the functions referenced by a sol.func_constant of the callee type
+// the functions referenced by a sol.func_constant whose signature lowers to the
+// callee's
 def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefLike,
     (ins OptionalAttr<DenseI64ArrayAttr>:$candidates)>;
 
