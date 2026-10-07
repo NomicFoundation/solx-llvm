@@ -32,6 +32,7 @@
 #include <utility>
 
 using namespace mlir;
+using solgen::getModule;
 
 namespace {
 
@@ -60,13 +61,6 @@ SmallVector<Type> getABITypes(OpBuilder &b, TypeRange sourceTys,
       mappedTys.push_back(sourceTy);
   }
   return mappedTys;
-}
-
-template <typename OpT>
-static ModuleOp getModule(OpT op) {
-  ModuleOp mod = op->template getParentOfType<ModuleOp>();
-  assert(mod && "expected attached module");
-  return mod;
 }
 
 template <typename OpT, typename Derived>
@@ -143,7 +137,8 @@ struct ConstantOpLowering : public OpRewritePattern<sol::ConstantOp> {
 };
 
 struct FuncConstantOpLowering : public OpRewritePattern<sol::FuncConstantOp> {
-  using OpRewritePattern<sol::FuncConstantOp>::OpRewritePattern;
+  FuncConstantOpLowering(MLIRContext *ctx, evm::InternalDispatch &dispatch)
+      : OpRewritePattern(ctx), dispatch(dispatch) {}
 
   LogicalResult matchAndRewrite(sol::FuncConstantOp op,
                                 PatternRewriter &r) const override {
@@ -152,9 +147,12 @@ struct FuncConstantOpLowering : public OpRewritePattern<sol::FuncConstantOp> {
         SymbolTable::lookupNearestSymbolFrom<sol::FuncOp>(op, op.getSymAttr());
     std::optional<uint64_t> id = fn.getId();
     assert(id);
+    dispatch.addTarget(op.getType(), *id);
     r.replaceOp(op, bExt.genI256Const(*id));
     return success();
   }
+
+  evm::InternalDispatch &dispatch;
 };
 
 struct DefaultFuncConstantOpLowering
@@ -3907,114 +3905,17 @@ struct FuncOpLowering : public OpConversionPattern<sol::FuncOp> {
 };
 
 struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
-  // This lowering runs after Sol signatures are legalized but before sol.func
-  // is lowered, so the dispatch table can still inspect the Sol symbol table.
-  using OpConversionPattern<sol::ICallOp>::OpConversionPattern;
-
-  /// Generates undef values of the given types.
-  static SmallVector<Value> genUndefs(TypeRange tys, Location loc,
-                                      ConversionPatternRewriter &r) {
-    SmallVector<Value> undefs;
-    undefs.reserve(tys.size());
-    for (Type ty : tys)
-      undefs.push_back(r.create<LLVM::UndefOp>(loc, ty));
-    return undefs;
-  }
-
-  /// Generates the dispatch function that switches over the candidate
-  /// functions. Outlining this reduces the caller's stack pressure.
-  yul::FuncOp genDispatchFn(StringRef name, ArrayRef<int64_t> candidateIds,
-                            FunctionType calleeTy, FunctionType dispatchFnTy,
-                            sol::ICallOp op,
-                            ConversionPatternRewriter &r) const {
-    // The dispatch function is generated and shared by every call of these
-    // candidates: its subprogram is artificial at the line of the module
-    // hosting it, and its body and arguments are at line 0.
-    ModuleOp mod = getModule(op);
-    Location loc = evm::artificialLoc(mod.getLoc());
-    Operation *symTab = SymbolTable::getNearestSymbolTable(op);
-    evm::Builder evmB(mod, r, loc);
-
-    // Resolve the candidate ids to their functions.
-    DenseSet<int64_t> candidateIdSet(candidateIds.begin(), candidateIds.end());
-    SmallVector<int64_t> caseIds;
-    SmallVector<sol::FuncOp> caseFns;
-    for (auto fn : symTab->getRegion(0).getOps<sol::FuncOp>()) {
-      if (fn.getId() && candidateIdSet.contains(*fn.getId())) {
-        assert(fn.getFunctionType() == calleeTy &&
-               "candidate signature mismatch");
-        caseFns.push_back(fn);
-        caseIds.push_back(*fn.getId());
-      }
-    }
-    assert(caseFns.size() == candidateIds.size() && "unresolvable candidate");
-
-    OpBuilder::InsertionGuard insertGuard(r);
-    r.setInsertionPointAfter(op->getParentOfType<sol::FuncOp>());
-
-    auto fn = r.create<yul::FuncOp>(
-        evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name,
-        dispatchFnTy);
-
-    SmallVector<Location> argLocs(dispatchFnTy.getNumInputs(), loc);
-    Block *entry = r.createBlock(&fn.getBody(), fn.getBody().end(),
-                                 dispatchFnTy.getInputs(), argLocs);
-    r.setInsertionPointToStart(entry);
-    ValueRange calleeArgs = entry->getArguments().drop_front();
-
-    auto calleeIntTy = cast<IntegerType>(dispatchFnTy.getInput(0));
-    SmallVector<APInt> caseVals;
-    caseVals.reserve(caseIds.size());
-    for (int64_t caseId : caseIds)
-      caseVals.emplace_back(calleeIntTy.getWidth(), caseId);
-    auto caseIdsAttr = DenseIntElementsAttr::get(
-        RankedTensorType::get(static_cast<int64_t>(caseVals.size()),
-                              calleeIntTy),
-        caseVals);
-    auto switchOp = r.create<yul::SwitchOp>(loc, calleeTy.getResults(),
-                                            entry->getArgument(0), caseIdsAttr,
-                                            caseIds.size());
-    for (size_t i = 0; i < caseFns.size(); ++i) {
-      r.setInsertionPointToStart(&switchOp.getCaseRegions()[i].emplaceBlock());
-      auto call = r.create<yul::FuncCallOp>(loc, calleeTy.getResults(),
-                                            FlatSymbolRefAttr::get(caseFns[i]),
-                                            calleeArgs);
-      r.create<yul::YieldOp>(loc, call.getResults());
-    }
-
-    r.setInsertionPointToStart(&switchOp.getDefaultRegion().emplaceBlock());
-    evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
-    r.create<yul::YieldOp>(loc, genUndefs(calleeTy.getResults(), loc, r));
-
-    r.setInsertionPointToEnd(entry);
-    r.create<yul::FuncReturnOp>(loc, switchOp.getResults());
-    return fn;
-  }
+  ICallOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                  evm::InternalDispatch &dispatch)
+      : OpConversionPattern(tyConv, ctx), dispatch(dispatch) {}
 
   LogicalResult matchAndRewrite(sol::ICallOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
-    Location loc = op.getLoc();
     auto calleeArgs = adaptor.getOperands().drop_front();
     SmallVector<Type> convertedResTys;
     if (failed(getTypeConverter()->convertTypes(op.getResultTypes(),
                                                 convertedResTys)))
       return failure();
-
-    // Set at pass entry, before the sol signatures are legalized.
-    // TODO: Consider a separate op with a required $candidates so the
-    // annotated state is encoded in the dialect instead of this assert.
-    std::optional<ArrayRef<int64_t>> candidateIds = op.getCandidates();
-    assert(candidateIds && "sol.icall without candidate annotation");
-
-    // No valid id can reach this call: panic inline. Cannot outline: the
-    // symbol is keyed by the ids alone, so empty sets of different signatures
-    // would collide on `__sol.internal_dispatch`.
-    if (candidateIds->empty()) {
-      evm::Builder evmB(getModule(op), r, loc);
-      evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
-      r.replaceOp(op, genUndefs(convertedResTys, loc, r));
-      return success();
-    }
 
     auto calleeTy = mlir::FunctionType::get(
         r.getContext(), calleeArgs.getTypes(), convertedResTys);
@@ -4023,30 +3924,17 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
     auto dispatchFnTy = mlir::FunctionType::get(
         r.getContext(), dispatchInputTys, calleeTy.getResults());
 
-    // Contract lowering has already relocated the caller into its contract's
-    // object. Standalone free functions stay hosted at module level.
-    Operation *symTab = SymbolTable::getNearestSymbolTable(op);
-    assert((isa<yul::ObjectOp, ModuleOp>(symTab)) &&
-           "expected an object or module scoped caller");
-    std::string dispatchFnName =
-        evm::helpersym::internalDispatch(*candidateIds);
-    Operation *found = SymbolTable::lookupSymbolIn(symTab, dispatchFnName);
-    auto dispatchFn = dyn_cast_or_null<yul::FuncOp>(found);
-    if (!dispatchFn) {
-      assert(!found && "dispatch symbol clashes with a non-function");
-      dispatchFn = genDispatchFn(dispatchFnName, *candidateIds, calleeTy,
-                                 dispatchFnTy, op, r);
-    } else {
-      assert(dispatchFn.getFunctionType() == dispatchFnTy &&
-             "dispatch symbol clashes with an incompatible function");
-    }
-
     SmallVector<Value> callArgs{adaptor.getCallee()};
     llvm::append_range(callArgs, calleeArgs);
     r.replaceOpWithNewOp<yul::FuncCallOp>(
-        op, convertedResTys, FlatSymbolRefAttr::get(dispatchFn), callArgs);
+        op, convertedResTys,
+        FlatSymbolRefAttr::get(
+            dispatch.getOrCreateDispatchFn(op, dispatchFnTy, r)),
+        callArgs);
     return success();
   }
+
+  evm::InternalDispatch &dispatch;
 };
 
 struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
@@ -4408,8 +4296,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 // debug builds?)
 
 void evm::populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv) {
-  pats.add<ConstantOpLowering, FuncConstantOpLowering,
-           DefaultFuncConstantOpLowering>(pats.getContext());
+  pats.add<ConstantOpLowering>(pats.getContext());
   pats.add<CastOpLowering, AddressCastOpLowering, ContractCastOpLowering,
            EnumCastOpLowering, BytesCastOpLowering,
            DynBytesToFixedBytesOpLowering, FixedBytesIndexOpLowering,
@@ -4467,11 +4354,6 @@ void evm::populateFuncBoundaryPats(RewritePatternSet &pats,
 
 void evm::populateFuncOpPats(RewritePatternSet &pats, TypeConverter &tyConv) {
   pats.add<FuncOpLowering>(tyConv, pats.getContext());
-}
-
-void evm::populateLateSolToYulPats(RewritePatternSet &pats,
-                                   TypeConverter &tyConv) {
-  pats.add<ICallOpLowering>(tyConv, pats.getContext());
 }
 
 void evm::populateAddrPat(RewritePatternSet &pats, TypeConverter &tyConv) {
@@ -4714,8 +4596,18 @@ void evm::populateInlineAsmPats(RewritePatternSet &pats,
       tyConv, pats.getContext());
 }
 
-void evm::populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv) {
+void evm::populateInternalFuncPtrPats(RewritePatternSet &pats,
+                                      TypeConverter &tyConv,
+                                      evm::InternalDispatch &dispatch) {
+  pats.add<DefaultFuncConstantOpLowering>(pats.getContext());
+  pats.add<FuncConstantOpLowering>(pats.getContext(), dispatch);
+  pats.add<ICallOpLowering>(tyConv, pats.getContext(), dispatch);
+}
+
+void evm::populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv,
+                             evm::InternalDispatch &dispatch) {
   populateArithPats(pats, tyConv);
+  populateInternalFuncPtrPats(pats, tyConv, dispatch);
   populateCheckedArithPats(pats, tyConv);
   populateCryptoPats(pats, tyConv);
   populateMemPats(pats, tyConv);
@@ -4728,7 +4620,6 @@ void evm::populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv) {
   populateInlineAsmPats(pats, tyConv);
 }
 
-void evm::populateStage2Pats(RewritePatternSet &pats, TypeConverter &tyConv) {
+void evm::populateStage2Pats(RewritePatternSet &pats) {
   populateContractPat(pats);
-  populateLateSolToYulPats(pats, tyConv);
 }
