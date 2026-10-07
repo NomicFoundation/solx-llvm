@@ -813,6 +813,23 @@ void FuncOp::print(OpAsmPrinter &p) {
 }
 
 //===----------------------------------------------------------------------===//
+// FuncConstantOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+FuncConstantOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto fn = symbolTable.lookupNearestSymbolFrom<FuncOp>(*this, getSymAttr());
+  if (!fn || !fn.getId())
+    return emitOpError("expects '")
+           << getSym() << "' to be a sol.func with an id";
+  if (fn.getFunctionType() != getAddr().getType().getFuncTy())
+    return emitOpError("expects type ")
+           << fn.getFunctionType() << " of '" << getSym() << "', not "
+           << getAddr().getType().getFuncTy();
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // ContractOp
 //===----------------------------------------------------------------------===//
 

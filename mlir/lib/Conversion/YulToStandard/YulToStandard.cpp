@@ -26,15 +26,9 @@
 #include "llvm/IR/IntrinsicsEVM.h"
 
 using namespace mlir;
+using solgen::getModule;
 
 namespace {
-
-template <typename OpT>
-static ModuleOp getModule(OpT op) {
-  ModuleOp mod = op->template getParentOfType<ModuleOp>();
-  assert(mod && "expected attached module");
-  return mod;
-}
 
 // Returns an existing or a new (if not found) FuncOp in the ModuleOp `mod`.
 //

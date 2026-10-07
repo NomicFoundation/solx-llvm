@@ -2,9 +2,9 @@
 // RUN:   -mlir-print-local-scope | FileCheck %s
 
 // The dispatch function of an internal function pointer call is shared by
-// every call of the same candidates: its subprogram is artificial at the line
-// of the module hosting it, and its body is at line 0. The call into it keeps
-// the call's location.
+// every call through a pointer of its type: its subprogram is artificial at the
+// line of the module hosting it, and its body is at line 0. The call into it
+// keeps the call's location.
 
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>

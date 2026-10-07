@@ -812,13 +812,13 @@ def Sol_DefaultFuncConstantOp : Sol_Op<"default_func_constant", [Pure]> {
   let assemblyFormat = "attr-dict `:` type($addr)";
 }
 
-def Sol_FuncConstantOp : Sol_Op<"func_constant", [Pure]> {
-  // TODO: SymbolUserOpInterface verifier: $sym must resolve to a sol.func with
-  // an assigned id.
+def Sol_FuncConstantOp
+    : Sol_Op<"func_constant", [Pure, DeclareOpInterfaceMethods<
+                                         SymbolUserOpInterface>]> {
   let arguments = (ins FlatSymbolRefAttr:$sym);
-  let results = (outs Sol_FuncRefLike:$addr);
+  let results = (outs Sol_FuncRefType:$addr);
 
-  let assemblyFormat = "$sym attr-dict `:` type($addr)";
+  let assemblyFormat = "$sym attr-dict `:` qualified(type($addr))";
 }
 
 def Sol_ExtFuncConstantOp : Sol_Op<"ext_func_constant", [Pure]> {
@@ -877,11 +877,13 @@ class Sol_ICallOpBase<string mnemonic, TypeConstraint calleeTy,
     "attr-dict `:` type($callee) `,` functional-type($callee_operands, results)");
 }
 
-// Indirect call for internal function pointers. $candidates holds the ids of
-// the functions of the callee type referenced by a sol.func_constant or listed
-// in the contract's $creation_func_refs.
-def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefLike,
-    (ins OptionalAttr<DenseI64ArrayAttr>:$candidates)>;
+// Indirect call for internal function pointers.
+def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefType> {
+  let assemblyFormat = [{
+    $callee `(` $callee_operands `)` attr-dict `:` qualified(type($callee)) `,`
+    functional-type($callee_operands, results)
+  }];
+}
 
 // Indirect call for external function pointers.
 def ExtICallOp : Sol_ICallOpBase<"ext_icall", Sol_ExtFuncRefType,
