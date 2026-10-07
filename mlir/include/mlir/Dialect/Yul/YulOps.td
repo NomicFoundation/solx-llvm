@@ -25,9 +25,7 @@ def Yul_FuncOp : Yul_Op<"func", [AutomaticAllocationScope,
   let arguments = (ins SymbolNameAttr:$sym_name,
       TypeAttrOf<FunctionType>:$function_type,
       OptionalAttr<DictArrayAttr>:$arg_attrs,
-      OptionalAttr<DictArrayAttr>:$res_attrs,
-      // Set when the function holds memory unsafe inline assembly
-      UnitAttr:$unsafe_asm);
+      OptionalAttr<DictArrayAttr>:$res_attrs);
   let regions = (region AnyRegion:$body);
 
   let builders = [
