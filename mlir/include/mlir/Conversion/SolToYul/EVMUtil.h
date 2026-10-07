@@ -122,9 +122,9 @@ std::string clearStringTail();
 /// the length word: `__sol.copy_string_data.<src>.<dst>`.
 std::string copyStringData(mlir::sol::DataLocation src,
                            mlir::sol::DataLocation dst);
-/// Dispatches an internal function pointer call over its candidate set:
-/// `__sol.internal_dispatch.<id>...`.
-std::string internalDispatch(llvm::ArrayRef<int64_t> candidateIds);
+/// Dispatches the internal function pointer calls of one pointer type, the
+/// module's `index`-th such dispatch: `__sol.internal_dispatch.<index>`.
+std::string internalDispatch(unsigned index);
 } // namespace helpersym
 
 /// IR Builder for EVM specific lowering.

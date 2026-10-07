@@ -2188,13 +2188,9 @@ std::string evm::helpersym::copyStringData(sol::DataLocation src,
                            sol::stringifyDataLocation(dst).lower()});
 }
 
-std::string evm::helpersym::internalDispatch(ArrayRef<int64_t> candidateIds) {
-  SmallVector<std::string> idStrs;
-  idStrs.reserve(candidateIds.size());
-  for (int64_t id : candidateIds)
-    idStrs.push_back(std::to_string(id));
-  SmallVector<StringRef> fields(idStrs.begin(), idStrs.end());
-  return makeHelperSymbol("internal_dispatch", fields);
+std::string evm::helpersym::internalDispatch(unsigned index) {
+  std::string indexStr = std::to_string(index);
+  return makeHelperSymbol("internal_dispatch", {indexStr});
 }
 
 sol::FuncOp evm::Builder::getOrCreateHelperFn(

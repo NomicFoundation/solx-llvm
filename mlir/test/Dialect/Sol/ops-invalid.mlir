@@ -193,6 +193,53 @@ sol.contract @C {
 
 // -----
 
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// A pointer's target is a dispatch case, which needs the function's id.
+sol.contract @C {
+  sol.func @f() attributes {state_mutability = #NonPayable} {
+    // expected-error @below {{'sol.func_constant' op expects 'g' to be a sol.func with an id}}
+    %0 = sol.func_constant @g : !sol.func_ref<() -> ()>
+    sol.return
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+sol.contract @C {
+  sol.func @g() attributes {state_mutability = #NonPayable} {
+    sol.return
+  }
+  sol.func @f() attributes {state_mutability = #NonPayable} {
+    // expected-error @below {{'sol.func_constant' op expects 'g' to be a sol.func with an id}}
+    %0 = sol.func_constant @g : !sol.func_ref<() -> ()>
+    sol.return
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// A pointer's type is its target's, which the dispatch calls through it.
+sol.contract @C {
+  sol.func @k(%arg0: ui256) attributes {id = 10 : i64, state_mutability = #NonPayable} {
+    sol.return
+  }
+  sol.func @f() attributes {state_mutability = #NonPayable} {
+    // expected-error @below {{'sol.func_constant' op expects type '(ui256) -> ()' of 'k', not '() -> ()'}}
+    %0 = sol.func_constant @k : !sol.func_ref<() -> ()>
+    sol.return
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
 #NonPayable = #sol<StateMutability NonPayable>
 
 // A function is code of the contract holding it, which lowers to an object.

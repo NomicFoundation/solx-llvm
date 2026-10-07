@@ -42,6 +42,14 @@ unsigned getRoundUpToMultiple(unsigned val) {
   return ((val + (multiple - 1)) / multiple) * multiple;
 }
 
+/// Returns the module `op` is attached to.
+template <typename OpT>
+ModuleOp getModule(OpT op) {
+  ModuleOp mod = op->template getParentOfType<ModuleOp>();
+  assert(mod && "expected attached module");
+  return mod;
+}
+
 /// Extension of mlir::OpBuilder with APIs helpful for codegen in solidity.
 class BuilderExt {
   OpBuilder &b;
