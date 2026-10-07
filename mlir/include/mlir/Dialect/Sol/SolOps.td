@@ -1266,7 +1266,6 @@ def Sol_FuncOp : Sol_Op<"func", [AutomaticAllocationScope, CallableOpInterface,
                        OptionalAttr<DictArrayAttr>:$res_attrs,
                        OptionalAttr<I32Attr>:$selector,
                        OptionalAttr<TypeAttrOf<FunctionType>>:$orig_fn_type,
-                       UnitAttr:$unsafe_asm,
                        OptionalAttr<Sol_FunctionKindAttr>:$kind,
                        OptionalAttr<Sol_StateMutabilityAttr>:$state_mutability,
                        // Unique id used for generating dispatch table in the
@@ -1325,12 +1324,15 @@ def Sol_ContractOp
     A contract's creation code, or with `$runtime` its runtime code, each
     lowered to an object of its own, alone in its module. `$creation_func_refs`
     lists the functions whose pointer the creation code took, which a pointer
-    it stored can reach in the runtime code.
+    it stored can reach in the runtime code. `$unsafe_asm` marks code holding
+    memory-unsafe inline assembly, which initializes the free memory pointer
+    without a memoryguard.
   }];
 
   let arguments = (ins SymbolNameAttr:$sym_name, Sol_ContractKindAttr:$kind,
       UnitAttr:$runtime,
-      DefaultValuedAttr<Sol_FlatSymbolRefArrayAttr, "{}">:$creation_func_refs);
+      DefaultValuedAttr<Sol_FlatSymbolRefArrayAttr, "{}">:$creation_func_refs,
+      UnitAttr:$unsafe_asm);
   let regions = (region SizedRegion<1>:$bodyRegion);
 
   let assemblyFormat = "$sym_name $bodyRegion attr-dict";

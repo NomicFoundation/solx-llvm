@@ -3902,8 +3902,6 @@ struct FuncOpLowering : public OpConversionPattern<sol::FuncOp> {
         r.create<yul::FuncOp>(op.getLoc(), op.getName(), convertedFuncTy);
     for (NamedAttribute attr : attrs)
       newOp->setAttr(attr.getName(), attr.getValue());
-    if (op.getUnsafeAsm())
-      newOp.setUnsafeAsm(true);
     r.inlineRegionBefore(op.getBody(), newOp.getBody(), newOp.getBody().end());
     r.eraseOp(op);
     return success();
@@ -4070,16 +4068,21 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
                                loc);
   };
 
-  /// Generate the free pointer initialization.
-  void genFreePtrInit(PatternRewriter &r, Location loc,
+  /// Generate the free pointer initialization. A memoryguard lets the backend
+  /// claim the memory below it for spills, which memory-unsafe inline assembly
+  /// rules out.
+  void genFreePtrInit(sol::ContractOp contrOp, PatternRewriter &r, Location loc,
                       size_t reservedMem = 0) const {
     mlir::solgen::BuilderExt bExt(r, loc);
-    auto guard = r.create<yul::MemGuardOp>(
-        loc,
-        r.getIntegerAttr(r.getIntegerType(256),
-                         mlir::evm::MemoryLayout::generalPurposeMemoryStart +
-                             reservedMem));
-    r.create<yul::MStoreOp>(loc, bExt.genI256Const(64), guard);
+    int64_t start =
+        mlir::evm::MemoryLayout::generalPurposeMemoryStart + reservedMem;
+    Value freePtr;
+    if (contrOp.getUnsafeAsm())
+      freePtr = bExt.genI256Const(start);
+    else
+      freePtr = r.create<yul::MemGuardOp>(
+          loc, r.getIntegerAttr(r.getIntegerType(256), start));
+    r.create<yul::MStoreOp>(loc, bExt.genI256Const(64), freePtr);
   };
 
   /// Generates the dispatch to interface functions.
@@ -4227,7 +4230,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     for (sol::ImmutableOp immOp : immOps)
       reservedMemSize += evm::getCallDataHeadSize(immOp.getType());
 
-    genFreePtrInit(r, loc, reservedMemSize);
+    genFreePtrInit(contrOp, r, loc, reservedMemSize);
 
     // The constructor's check, argument decoding and call run the constructor,
     // so they are at its location.
@@ -4297,7 +4300,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     evm::Builder evmB(mod, r, loc);
 
     // Generate the memory init.
-    genFreePtrInit(r, loc);
+    genFreePtrInit(contrOp, r, loc);
 
     // Generate the dispatch to interface functions.
     genDispatch(contrOp, fns.selectors, fns.ifc, r, loc);
@@ -4549,6 +4552,19 @@ struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
            sol::DataLocation::Memory;
   }
 
+  /// Whether `op` is memory-unsafe: not annotated memory-safe, and its body
+  /// has a memory effect.
+  static bool isMemoryUnsafe(sol::InlineAsmOp op) {
+    if (op.getMemorySafe())
+      return false;
+    return op.getBody()
+        .walk([](Operation *inner) {
+          return hasMemoryEffects(inner) ? WalkResult::interrupt()
+                                         : WalkResult::advance();
+        })
+        .wasInterrupted();
+  }
+
   LogicalResult matchAndRewrite(sol::InlineAsmOp op, OpAdaptor,
                                 ConversionPatternRewriter &r) const override {
     Operation *dest = SymbolTable::getNearestSymbolTable(op->getParentOp());
@@ -4557,15 +4573,12 @@ struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
     Block &block = op.getBody().front();
     MLIRContext *ctx = r.getContext();
 
-    auto unsafeAsmWalk = op.getBody().walk([](Operation *inner) {
-      return hasMemoryEffects(inner) ? WalkResult::interrupt()
-                                     : WalkResult::advance();
-    });
-    if (!op.getMemorySafe() && unsafeAsmWalk.wasInterrupted()) {
-      auto fn = op->getParentOfType<sol::FuncOp>();
-      assert(fn && "inline_asm must be within a sol.func");
-      r.modifyOpInPlace(fn, [&] { fn.setUnsafeAsm(true); });
-    }
+    // The contract's lowering, a later stage, leaves out the memoryguard of a
+    // marked contract.
+    auto contr = op->getParentOfType<sol::ContractOp>();
+    assert(contr && "inline_asm must be within a sol.contract");
+    if (!contr.getUnsafeAsm() && isMemoryUnsafe(op))
+      r.modifyOpInPlace(contr, [&] { contr.setUnsafeAsm(true); });
 
     auto fns = llvm::to_vector(block.getOps<yul::FuncOp>());
 

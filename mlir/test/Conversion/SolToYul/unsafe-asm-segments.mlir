@@ -1,7 +1,8 @@
 // RUN: mlir-opt %s --split-input-file --convert-sol-to-yul --convert-yul-to-std | FileCheck %s
 
-// A module keeps its memoryguard iff none of its functions holds unsafe
-// assembly, so the creation and the runtime code are judged apart. A
+// A module keeps its memoryguard iff its contract holds no unsafe assembly, so
+// the creation and the runtime code are judged apart, and the creation code
+// reserves the immutables' memory ahead of its free pointer either way. A
 // memory_safe block is trusted, not checked.
 
 #Constructor = #sol<FunctionKind Constructor>
@@ -10,9 +11,10 @@
 
 // CHECK-LABEL: module @CtorOnly {
 // CHECK:         func.func @__entry
-// CHECK-NEXT:      arith.constant 128
+// CHECK-NEXT:      arith.constant 160
 module {
   sol.contract @CtorOnly {
+    sol.immutable @x : ui256
     sol.func @_5() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
