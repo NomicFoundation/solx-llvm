@@ -1717,9 +1717,7 @@ struct AddrOfOpLowering : public OpRewritePattern<sol::AddrOfOp> {
       return success();
     }
     auto immOp = cast<sol::ImmutableOp>(sym);
-    assert(immOp->hasAttr("addr"));
-    IntegerAttr addr = cast<IntegerAttr>(immOp->getAttr("addr"));
-    r.replaceOp(op, bExt.genI256Const(addr.getValue()));
+    r.replaceOp(op, bExt.genI256Const(evm::getImmutableAddr(immOp)));
     return success();
   }
 };
@@ -4224,11 +4222,9 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     }
     SmallVector<sol::ImmutableOp, 2> immOps(
         contrOp.getBody()->getOps<sol::ImmutableOp>());
-    size_t reservedMemSize = 0;
-    for (sol::ImmutableOp immOp : immOps)
-      reservedMemSize += evm::getCallDataHeadSize(immOp.getType());
 
-    genFreePtrInit(contrOp, r, loc, reservedMemSize);
+    genFreePtrInit(contrOp, r, loc,
+                   immOps.size() * evm::MemoryLayout::immutableCellSize);
 
     // The constructor's check, argument decoding and call run the constructor,
     // so they are at its location.
@@ -4278,9 +4274,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 
     // Generate setimmutable's.
     for (sol::ImmutableOp immOp : immOps) {
-      assert(immOp->getAttr("addr"));
-      auto addr = bExt.genI256Const(
-          cast<IntegerAttr>(immOp->getAttr("addr")).getValue());
+      auto addr = bExt.genI256Const(evm::getImmutableAddr(immOp));
       auto val = r.create<yul::MLoadOp>(loc, addr);
       r.create<yul::SetImmutableOp>(loc, freePtr, immOp.getName(), val);
     }

@@ -829,8 +829,17 @@ LogicalResult ContractOp::verify() {
 }
 
 LogicalResult ContractOp::verifyRegions() {
-  // The creation code dispatches no call. Receive and fallback run in the
-  // runtime code, a constructor in the creation code.
+  // The creation code keeps the immutables in consecutive memory cells and
+  // dispatches no call. Receive and fallback run in the runtime code, a
+  // constructor in the creation code.
+  uint64_t position = 0;
+  for (ImmutableOp immutable : getBody()->getOps<ImmutableOp>()) {
+    if (immutable.getIndex() != position)
+      return emitOpError("expects immutable '")
+             << immutable.getSymName() << "' to carry index " << position
+             << ", not " << immutable.getIndex();
+    ++position;
+  }
   if (getRuntime()) {
     for (FuncOp fn : getBody()->getOps<FuncOp>())
       if (fn.getKind() == FunctionKind::Constructor)

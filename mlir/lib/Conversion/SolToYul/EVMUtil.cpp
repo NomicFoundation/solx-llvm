@@ -820,6 +820,11 @@ unsigned evm::getAlignment(Value ptr) {
   return getAlignment(static_cast<evm::AddrSpace>(ty.getAddressSpace()));
 }
 
+int64_t evm::getImmutableAddr(sol::ImmutableOp immOp) {
+  return evm::MemoryLayout::generalPurposeMemoryStart +
+         immOp.getIndex() * evm::MemoryLayout::immutableCellSize;
+}
+
 unsigned evm::getCallDataHeadSize(Type ty) {
   if (isa<IntegerType>(ty) || isa<sol::EnumType>(ty) ||
       isa<sol::FixedBytesType>(ty) || isa<sol::ExtFuncRefType>(ty) ||

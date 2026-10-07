@@ -224,18 +224,6 @@ struct ConvertSolToYulPass
 
     evm::populateStage1Pats(pats, tyConv);
 
-    // Assign addresses to immutables.
-    // TODO: Move this to the frontend like we did for state variable slots.
-    mod.walk([&](sol::ContractOp contr) {
-      APInt immAddr(256, 128);
-      contr.walk([&](sol::ImmutableOp immOp) {
-        immOp->setAttr(
-            "addr",
-            IntegerAttr::get(IntegerType::get(&getContext(), 256), immAddr));
-        immAddr += 32;
-      });
-    });
-
     if (failed(applyPartialConversion(mod, convTgt, std::move(pats))))
       return failure();
     return success();
