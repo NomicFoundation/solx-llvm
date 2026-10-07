@@ -296,11 +296,17 @@ struct ConvertSolToYulPass
     return success();
   }
 
-  /// Sets the candidates attribute of every sol.icall.
-  void annotateICallCandidates(ModuleOp mod) {
+  /// Sets the candidates attribute of every sol.icall to the ids of the
+  /// sol.func_constant functions in its module whose signature lowers to the
+  /// callee's: inline assembly can retype a pointer, so its Sol type does not
+  /// bound its targets.
+  void annotateICallCandidates(ModuleOp mod, evm::SolTypeConverter &tyConv) {
     Builder b(mod.getContext());
-    DenseMap<std::pair<Operation *, sol::FuncRefType>, SetVector<int64_t>>
-        buckets;
+    auto lowerSig = [&](Type funcRefTy) {
+      return cast<FunctionType>(
+          tyConv.convertType(cast<sol::FuncRefType>(funcRefTy).getFuncTy()));
+    };
+    DenseMap<std::pair<Operation *, FunctionType>, SetVector<int64_t>> buckets;
     SmallVector<sol::ICallOp> icalls;
     mod.walk([&](Operation *op) {
       if (auto icall = dyn_cast<sol::ICallOp>(op)) {
@@ -314,11 +320,11 @@ struct ConvertSolToYulPass
           fnConst, fnConst.getSymAttr());
       assert(fn && fn.getId() && "unresolvable sol.func_constant");
       buckets[{fnConst->getParentOfType<ModuleOp>().getOperation(),
-               cast<sol::FuncRefType>(fnConst.getType())}]
+               lowerSig(fnConst.getType())}]
           .insert(*fn.getId());
     });
 
-    DenseMap<std::pair<Operation *, sol::FuncRefType>, DenseI64ArrayAttr>
+    DenseMap<std::pair<Operation *, FunctionType>, DenseI64ArrayAttr>
         bucketAttrs;
     for (auto &[key, idSet] : buckets) {
       SmallVector<int64_t> ids = idSet.takeVector();
@@ -328,9 +334,9 @@ struct ConvertSolToYulPass
 
     DenseI64ArrayAttr emptyAttr = b.getDenseI64ArrayAttr({});
     for (sol::ICallOp icall : icalls) {
-      auto it = bucketAttrs.find(
-          {icall->getParentOfType<ModuleOp>().getOperation(),
-           cast<sol::FuncRefType>(icall.getCallee().getType())});
+      auto it =
+          bucketAttrs.find({icall->getParentOfType<ModuleOp>().getOperation(),
+                            lowerSig(icall.getCallee().getType())});
       icall.setCandidatesAttr(it != bucketAttrs.end() ? it->second : emptyAttr);
     }
   }
@@ -338,7 +344,7 @@ struct ConvertSolToYulPass
   void runOnOperation() override {
     ModuleOp mod = getOperation();
     evm::SolTypeConverter tyConv;
-    annotateICallCandidates(mod);
+    annotateICallCandidates(mod, tyConv);
     if (failed(runStage1Conversion(mod, tyConv))) {
       signalPassFailure();
       return;
