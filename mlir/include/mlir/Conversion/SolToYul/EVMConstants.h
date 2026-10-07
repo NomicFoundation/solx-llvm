@@ -45,6 +45,8 @@ constexpr size_t freeMemoryPointer = 64;
 constexpr size_t zeroPointer = freeMemoryPointer + 32;
 /// Start of general purpose memory.
 constexpr size_t generalPurposeMemoryStart = zeroPointer + 32;
+/// The memory each immutable takes in the creation code.
+constexpr size_t immutableCellSize = 32;
 } // namespace MemoryLayout
 
 /// Computes the keccak256 hash of the input string.
