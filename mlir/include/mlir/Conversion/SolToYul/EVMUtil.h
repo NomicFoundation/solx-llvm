@@ -55,6 +55,10 @@ unsigned getAlignment(Value ptr);
 /// MLIR version of solidity ast's Type::calldataHeadSize.
 unsigned getCallDataHeadSize(Type ty);
 
+/// Returns the memory address the creation code keeps `immOp` at until it sets
+/// the immutables: a word per immutable after the scratch space.
+int64_t getImmutableAddr(sol::ImmutableOp immOp);
+
 /// Per-element iteration step. Unit depends on data location: memory-word
 /// bytes for Memory/CallData, storage slots for Storage. 256-bit because a
 /// storage element can itself be a huge static array.

@@ -14,7 +14,7 @@
 // CHECK-NEXT:      arith.constant 160
 module {
   sol.contract @CtorOnly {
-    sol.immutable @x : ui256
+    sol.immutable @x index 0 : ui256
     sol.func @_5() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0

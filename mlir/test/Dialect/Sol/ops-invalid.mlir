@@ -63,6 +63,26 @@ sol.contract @C {
 // -----
 
 #Contract = #sol<ContractKind Contract>
+
+// The creation code keeps the immutables in consecutive memory cells.
+// expected-error @below {{'sol.contract' op expects immutable 'y' to carry index 1, not 0}}
+sol.contract @C {
+  sol.immutable @x index 0 : ui256
+  sol.immutable @y index 0 : ui256
+} {kind = #Contract}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// expected-error @below {{'sol.contract' op expects immutable 'x' to carry index 0, not 1}}
+sol.contract @C {
+  sol.immutable @x index 1 : ui256
+} {kind = #Contract}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 
 // The creation code dispatches no call.
@@ -147,7 +167,7 @@ sol.contract @C {
 
 // A load reads the value of the immutable's type.
 sol.contract @C {
-  sol.immutable @x : ui256
+  sol.immutable @x index 0 : ui256
   sol.func @get() -> ui8 attributes {state_mutability = #NonPayable} {
     // expected-error @below {{'sol.load_immutable' op expects type 'ui256' of 'x', not 'ui8'}}
     %0 = sol.load_immutable @x : ui8
@@ -163,7 +183,7 @@ sol.contract @C {
 
 // The creation code reads an immutable from its memory cell.
 sol.contract @C {
-  sol.immutable @x : ui256
+  sol.immutable @x index 0 : ui256
   sol.func @ctor() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
     // expected-error @below {{'sol.load_immutable' op expects to load 'x' in runtime code}}
     %0 = sol.load_immutable @x : ui256

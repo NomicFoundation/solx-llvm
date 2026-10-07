@@ -328,9 +328,17 @@ def Sol_StateVarOp : Sol_Op<"state_var", [Symbol]> {
 }
 
 def Sol_ImmutableOp : Sol_Op<"immutable", [Symbol]> {
-  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type);
+  let summary = "Declares an immutable of the contract";
+  let description = [{
+    `$index` is the immutable's position among its contract's immutables in
+    declaration order, which places it in the memory the creation code keeps
+    it in until it sets the immutables.
+  }];
 
-  let assemblyFormat = "$sym_name attr-dict `:` $type";
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type,
+      I64Attr:$index);
+
+  let assemblyFormat = "$sym_name `index` $index attr-dict `:` $type";
 }
 
 def Sol_AddrOfOp : Sol_Op<"addr_of", [Pure]> {
