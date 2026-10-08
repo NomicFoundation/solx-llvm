@@ -281,7 +281,7 @@ struct ConvertSolToYulPass
   void runOnOperation() override {
     ModuleOp mod = getOperation();
     evm::SolTypeConverter tyConv;
-    evm::InternalDispatch dispatch;
+    evm::InternalDispatch dispatch(tyConv);
     // The module lowers to the object of its one contract, and a nested
     // module's contract would lower without its creation func refs.
     auto contracts = mod.getOps<sol::ContractOp>();

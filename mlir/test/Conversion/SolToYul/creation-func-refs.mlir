@@ -2,11 +2,11 @@
 
 // A pointer the creation code stored can reach a function the runtime code
 // takes no pointer to. The runtime contract lists such a function in its
-// creation func refs, which adds it to the dispatch cases of the calls of its
-// type, next to the functions the runtime code takes a pointer to. The calls
-// through a pointer type share one dispatch function, which follows its first
-// caller, and a pointer type with no target dispatches to the panic alone. The
-// functions follow the code, the last one first.
+// creation func refs, which adds it to the dispatch cases of the calls taking
+// and returning as many words, next to the functions the runtime code takes a
+// pointer to. The calls of a signature share one dispatch function, which
+// follows its first caller, and a call no target matches dispatches to the
+// panic alone. The functions follow the code, the last one first.
 
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
