@@ -147,7 +147,7 @@ struct FuncConstantOpLowering : public OpRewritePattern<sol::FuncConstantOp> {
         SymbolTable::lookupNearestSymbolFrom<sol::FuncOp>(op, op.getSymAttr());
     std::optional<uint64_t> id = fn.getId();
     assert(id);
-    dispatch.addTarget(op.getType(), fn);
+    dispatch.addTarget(fn);
     r.replaceOp(op, bExt.genI256Const(*id));
     return success();
   }
