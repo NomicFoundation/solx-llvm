@@ -47,6 +47,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetMachine.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -2894,11 +2895,20 @@ static bool canClobberReachingPhysRegUse(const SUnit *DepSU, const SUnit *SU,
 /// physical register defs.
 static bool canClobberPhysRegDefs(const SUnit *SuccSU, const SUnit *SU,
                                   const TargetInstrInfo *TII,
-                                  const TargetRegisterInfo *TRI) {
+                                  const TargetRegisterInfo *TRI,
+                                  const TargetMachine &TM) {
   SDNode *N = SuccSU->getNode();
-  unsigned NumDefs = TII->get(N->getMachineOpcode()).getNumDefs();
-  ArrayRef<MCPhysReg> ImpDefs = TII->get(N->getMachineOpcode()).implicit_defs();
+  const MCInstrDesc &MCID = TII->get(N->getMachineOpcode());
+  unsigned NumDefs = MCID.getNumDefs();
+  ArrayRef<MCPhysReg> ImpDefs = MCID.implicit_defs();
   assert(!ImpDefs.empty() && "Caller should check hasPhysRegDefs");
+  // Results beyond the explicit defs are implicit physical register defs,
+  // unless the target models variadic results as virtual registers. In that
+  // case there are no physical register results to clobber. This must match
+  // InstrEmitter::EmitMachineNode.
+  if (!TM.usesPhysRegsForValues() && MCID.isVariadic() &&
+      MCID.variadicOpsAreDefs())
+    return false;
   for (const SDNode *SUNode = SU->getNode(); SUNode;
        SUNode = SUNode->getGluedNode()) {
     if (!SUNode->isMachineOpcode())
@@ -3030,7 +3040,8 @@ void RegReductionPQBase::PrescheduleNodesWithMultipleUses() {
         goto outer_loop_continue;
       // Don't break physical register dependencies.
       if (SU.hasPhysRegClobbers && PredSuccSU->hasPhysRegDefs)
-        if (canClobberPhysRegDefs(PredSuccSU, &SU, TII, TRI))
+        if (canClobberPhysRegDefs(PredSuccSU, &SU, TII, TRI,
+                                  scheduleDAG->MF.getTarget()))
           goto outer_loop_continue;
       // Don't introduce graph cycles.
       if (scheduleDAG->IsReachable(&SU, PredSuccSU))
@@ -3116,7 +3127,8 @@ void RegReductionPQBase::AddPseudoTwoAddrDeps() {
         // Don't constrain nodes with physical register defs if the
         // predecessor can clobber them.
         if (SuccSU->hasPhysRegDefs && SU.hasPhysRegClobbers) {
-          if (canClobberPhysRegDefs(SuccSU, &SU, TII, TRI))
+          if (canClobberPhysRegDefs(SuccSU, &SU, TII, TRI,
+                                    scheduleDAG->MF.getTarget()))
             continue;
         }
         // Don't constrain EXTRACT_SUBREG, INSERT_SUBREG, and SUBREG_TO_REG;
