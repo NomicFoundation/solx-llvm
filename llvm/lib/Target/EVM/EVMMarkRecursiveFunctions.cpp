@@ -11,8 +11,9 @@
 // functions to detect unknown calls (as it is implemented in FunctionAttrs.cpp,
 // function createSCCNodeSet), because all functions are known at compile time,
 // and we don't have any indirect calls.
-// This is needed during stackification, since we can't use spills for recursive
-// functions, as we are using memory for spills, and not the real stack.
+// Stackification depends on this attribute. Spill slots live at fixed
+// memory addresses, so every activation of a recursive function reuses
+// them. For marked functions the stackifier callee-saves each spill slot.
 //
 //===----------------------------------------------------------------------===//
 
@@ -50,6 +51,7 @@ public:
 
 static bool runImpl(CallGraph &CG) {
   bool Changed = false;
+  unsigned SCCId = 0;
   for (auto SCCI = scc_begin(&CG); !SCCI.isAtEnd(); ++SCCI) {
     const auto &SCC = *SCCI;
     // Only mark indirect recursive functions (size > 1) or self-recursive
@@ -58,11 +60,16 @@ static bool runImpl(CallGraph &CG) {
     if (SCC.size() == 1 && !SCCI.hasCycle())
       continue;
 
+    // Also mark each function with the id of its call graph cycle. A call
+    // into a different cycle can never re-enter the caller. This info is
+    // for spilling values in recursive functions.
+    const std::string Id = std::to_string(SCCId++);
     for (const auto *Node : SCC) {
       Function *F = Node->getFunction();
       if (!F || F->isDeclaration())
         continue;
       F->addFnAttr("evm-recursive");
+      F->addFnAttr("evm-recursive-scc", Id);
       Changed = true;
     }
   }
