@@ -35,31 +35,38 @@ public:
   SolTypeConverter();
 };
 
-/// The internal function pointer dispatch of a module, per pointer type. The
-/// pass records its contract's creation_func_refs before stage 1, while their
-/// Sol pointer types remain. Stage 1 records each sol.func_constant's target
-/// and turns each sol.icall into a call of its dispatch function, declared at
-/// its first call. The pass gives the dispatch functions their bodies after
-/// stage 2 has moved the functions into their object.
+/// The internal function pointer dispatch of a module. Inline assembly can
+/// retype a pointer, so a call reaches every target that takes and returns as
+/// many words. The pass records its contract's creation_func_refs before
+/// stage 2 erases the contract. Stage 1 records each sol.func_constant's target
+/// and turns each sol.icall into a call of its dispatch function, one per
+/// lowered signature, declared at its first call. The pass gives the dispatch
+/// functions their bodies after stage 2 has moved the functions into their
+/// object.
 class InternalDispatch {
 public:
-  /// Records the functions `contr` lists in its creation_func_refs under their
-  /// declared pointer types.
+  /// The words a function takes and returns.
+  using WordCounts = std::pair<unsigned, unsigned>;
+
+  explicit InternalDispatch(const TypeConverter &tyConv) : tyConv(tyConv) {}
+
+  /// Records the functions `contr` lists in its creation_func_refs.
   void addCreationFuncRefs(sol::ContractOp contr);
 
-  /// Records `id` as a target of the pointers of `type`.
-  void addTarget(sol::FuncRefType type, int64_t id);
+  /// Records `fn` as a target of the calls that take and return as many words
+  /// as it does.
+  void addTarget(sol::FuncOp fn);
 
   /// Returns the dispatch function `icall` calls, of `dispatchFnTy`: the
   /// pointer ahead of the callee's arguments, to the callee's results. The
-  /// first call through a pointer type declares it, so every call names an
-  /// existing function.
+  /// first call of that signature declares it, so every call names an existing
+  /// function.
   yul::FuncOp getOrCreateDispatchFn(sol::ICallOp icall,
                                     FunctionType dispatchFnTy,
                                     PatternRewriter &r);
 
   /// Gives each declared dispatch function its body, a switch over the targets
-  /// of its pointer type, and places it after its first caller.
+  /// of its word counts, and places it after its first caller.
   void genDispatchFns();
 
 private:
@@ -68,8 +75,9 @@ private:
     sol::FuncOp caller;
   };
 
-  DenseMap<Type, DenseSet<int64_t>> targets;
-  llvm::MapVector<Type, Request> requests;
+  const TypeConverter &tyConv;
+  DenseMap<WordCounts, DenseSet<int64_t>> targets;
+  llvm::MapVector<FunctionType, Request> requests;
 };
 
 /// Adds the conversion patterns of unchecked arithmetic ops in the sol dialect.

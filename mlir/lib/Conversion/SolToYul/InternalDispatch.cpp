@@ -32,27 +32,91 @@ static SmallVector<Value> genUndefs(TypeRange tys, Location loc, OpBuilder &b) {
   return undefs;
 }
 
-void evm::InternalDispatch::addCreationFuncRefs(sol::ContractOp contr) {
-  for (auto sym : contr.getCreationFuncRefs().getAsRange<FlatSymbolRefAttr>()) {
-    auto fn = contr.lookupSymbol<sol::FuncOp>(sym);
-    addTarget(sol::FuncRefType::get(contr.getContext(), fn.getFunctionType()),
-              *fn.getId());
+/// Returns the number of words `tys` lower to.
+static unsigned getNumWords(TypeRange tys) {
+  unsigned numWords = 0;
+  for (Type ty : tys) {
+    if (auto structTy = dyn_cast<LLVM::LLVMStructType>(ty))
+      numWords += getNumWords(structTy.getBody());
+    else
+      ++numWords;
   }
+  return numWords;
 }
 
-void evm::InternalDispatch::addTarget(sol::FuncRefType type, int64_t id) {
-  targets[type].insert(id);
+/// Returns the word counts of `ty`, a lowered function type.
+static evm::InternalDispatch::WordCounts getWordCounts(FunctionType ty) {
+  return {getNumWords(ty.getInputs()), getNumWords(ty.getResults())};
+}
+
+/// Appends the words of `val` to `words`.
+static void appendWords(Value val, SmallVectorImpl<Value> &words, Location loc,
+                        OpBuilder &b) {
+  auto structTy = dyn_cast<LLVM::LLVMStructType>(val.getType());
+  if (!structTy) {
+    words.push_back(val);
+    return;
+  }
+  ArrayRef<Type> fieldTys = structTy.getBody();
+  for (int64_t i = 0, e = fieldTys.size(); i < e; ++i)
+    appendWords(b.create<LLVM::ExtractValueOp>(loc, fieldTys[i], val,
+                                               b.getDenseI64ArrayAttr({i})),
+                words, loc, b);
+}
+
+/// Builds a value of `ty` from the words at the front of `words`, and drops
+/// them.
+static Value takeWords(Type ty, ArrayRef<Value> &words, Location loc,
+                       OpBuilder &b) {
+  auto structTy = dyn_cast<LLVM::LLVMStructType>(ty);
+  if (!structTy) {
+    Value word = words.front();
+    assert(word.getType() == ty && "a word keeps its type");
+    words = words.drop_front();
+    return word;
+  }
+  SmallVector<Value> fields;
+  for (Type fieldTy : structTy.getBody())
+    fields.push_back(takeWords(fieldTy, words, loc, b));
+  return solgen::BuilderExt(b, loc).genLLVMStruct(fields);
+}
+
+/// Returns `vals` as values of `tys`. A retyped pointer can reach a target
+/// whose values group the same words differently.
+static SmallVector<Value> regroup(ValueRange vals, TypeRange tys, Location loc,
+                                  OpBuilder &b) {
+  if (TypeRange(vals) == tys)
+    return SmallVector<Value>(vals);
+  SmallVector<Value> words;
+  for (Value val : vals)
+    appendWords(val, words, loc, b);
+  ArrayRef<Value> rest = words;
+  SmallVector<Value> regrouped;
+  for (Type ty : tys)
+    regrouped.push_back(takeWords(ty, rest, loc, b));
+  assert(rest.empty() && "a target takes and returns the words of its call");
+  return regrouped;
+}
+
+void evm::InternalDispatch::addCreationFuncRefs(sol::ContractOp contr) {
+  for (auto sym : contr.getCreationFuncRefs().getAsRange<FlatSymbolRefAttr>())
+    addTarget(contr.lookupSymbol<sol::FuncOp>(sym));
+}
+
+void evm::InternalDispatch::addTarget(sol::FuncOp fn) {
+  auto loweredTy = cast<FunctionType>(tyConv.convertType(fn.getFunctionType()));
+  targets[getWordCounts(loweredTy)].insert(*fn.getId());
 }
 
 yul::FuncOp evm::InternalDispatch::getOrCreateDispatchFn(
     sol::ICallOp icall, FunctionType dispatchFnTy, PatternRewriter &r) {
-  auto [it, inserted] = requests.try_emplace(icall.getCallee().getType());
+  auto [it, inserted] = requests.try_emplace(dispatchFnTy);
   Request &request = it->second;
   if (inserted) {
     auto caller = icall->getParentOfType<sol::FuncOp>();
     ModuleOp mod = getModule(caller);
     std::string name = evm::helpersym::internalDispatch(requests.size() - 1);
-    // The dispatch function is shared by every call of its pointer type: its
+    // The dispatch function is shared by every call of its signature: its
     // subprogram is artificial at the line of the module hosting it.
     OpBuilder::InsertionGuard insertGuard(r);
     r.setInsertionPointAfter(caller);
@@ -61,13 +125,11 @@ yul::FuncOp evm::InternalDispatch::getOrCreateDispatchFn(
         dispatchFnTy);
     request = {fn, caller};
   }
-  assert(request.fn.getFunctionType() == dispatchFnTy &&
-         "the calls of a pointer type share a dispatch signature");
   return request.fn;
 }
 
 void evm::InternalDispatch::genDispatchFns() {
-  for (auto &[key, request] : requests) {
+  for (auto &[dispatchFnTy, request] : requests) {
     // The caller moved with the other functions into the object, which holds
     // the targets.
     Operation *symTab = SymbolTable::getNearestSymbolTable(request.caller);
@@ -78,22 +140,19 @@ void evm::InternalDispatch::genDispatchFns() {
     evm::Builder evmB(mod, b, loc);
 
     yul::FuncOp fn = request.fn;
-    FunctionType dispatchFnTy = fn.getFunctionType();
     // The dispatch takes the pointer ahead of the callee's arguments.
-    [[maybe_unused]] auto calleeTy = FunctionType::get(
-        mod.getContext(), dispatchFnTy.getInputs().drop_front(),
-        dispatchFnTy.getResults());
+    auto calleeTy = FunctionType::get(mod.getContext(),
+                                      dispatchFnTy.getInputs().drop_front(),
+                                      dispatchFnTy.getResults());
 
     // Resolve the targets to their functions, in their order in the symbol
     // table.
     SmallVector<int64_t> caseIds;
     SmallVector<sol::FuncOp> caseFns;
-    auto found = targets.find(key);
+    auto found = targets.find(getWordCounts(calleeTy));
     if (found != targets.end()) {
       for (auto target : symTab->getRegion(0).getOps<sol::FuncOp>()) {
         if (target.getId() && found->second.contains(*target.getId())) {
-          assert(target.getFunctionType() == calleeTy &&
-                 "target signature mismatch");
           caseFns.push_back(target);
           caseIds.push_back(*target.getId());
         }
@@ -123,9 +182,11 @@ void evm::InternalDispatch::genDispatchFns() {
                                             caseIdsAttr, caseIds.size());
     for (size_t i = 0; i < caseFns.size(); ++i) {
       b.setInsertionPointToStart(&switchOp.getCaseRegions()[i].emplaceBlock());
+      FunctionType targetTy = caseFns[i].getFunctionType();
       auto call = b.create<yul::FuncCallOp>(
-          loc, resTys, FlatSymbolRefAttr::get(caseFns[i]), calleeArgs);
-      b.create<yul::YieldOp>(loc, call.getResults());
+          loc, targetTy.getResults(), FlatSymbolRefAttr::get(caseFns[i]),
+          regroup(calleeArgs, targetTy.getInputs(), loc, b));
+      b.create<yul::YieldOp>(loc, regroup(call.getResults(), resTys, loc, b));
     }
 
     b.setInsertionPointToStart(&switchOp.getDefaultRegion().emplaceBlock());
