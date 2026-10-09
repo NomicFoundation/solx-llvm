@@ -1202,6 +1202,19 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
             return SmallVector<Value>{};
           });
 
+    } else if (zeroInit && isa<sol::FuncRefType, sol::ExtFuncRefType>(eltTy)) {
+      // Function pointers are zeroed by a store per slot. When the pointer
+      // type has no function to call, nothing reads the slots, and a single
+      // copy would be dropped with the whole cost of zeroing them.
+      bExt.createCountedLoop(
+          bExt.genI256Const(0), sizeInBytes, bExt.genI256Const(32),
+          ValueRange{},
+          [&](OpBuilder &b, Location loc, Value indVar, ValueRange) {
+            Value incrMemPtr = b.create<yul::AddOp>(loc, dataPtr, indVar);
+            b.create<yul::MStoreOp>(loc, incrMemPtr, bExt.genI256Const(0));
+            return SmallVector<Value>{};
+          });
+
     } else if (zeroInit) {
       Value callDataSz = b.create<yul::CallDataSizeOp>(loc);
       b.create<yul::CallDataCopyOp>(loc, dataPtr, callDataSz, sizeInBytes);
