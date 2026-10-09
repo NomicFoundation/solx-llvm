@@ -1243,8 +1243,10 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
       return bExt.genLLVMStruct({bExt.genI256Const(0), bExt.genI256Const(0)},
                                 loc);
     if (sizeVar) {
+      // roundedSize wraps mod 2^256 for huge n, so guard on the length.
       Value roundedSize = bExt.genRoundUpToMultiple<32>(sizeVar);
-      Value memPtr = genMemAllocForDynArray(sizeVar, roundedSize, loc);
+      Value memPtr = genMemAllocForDynArray(sizeVar, roundedSize, loc,
+                                            /*genLengthPanicGuard=*/true);
       if (zeroInit) {
         Value dataPtr =
             b.create<yul::AddOp>(loc, memPtr, bExt.genI256Const(32));
