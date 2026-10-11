@@ -306,6 +306,17 @@ func.func @by_variable(%a: ui256, %b: ui256) -> ui256 {
   return %0 : ui256
 }
 
+// An unused division or modulo stays for its division-by-zero panic.
+
+// CHECK-LABEL: func @unused_div_mod
+// CHECK:         sol.div
+// CHECK:         sol.mod
+func.func @unused_div_mod(%a: ui256, %b: ui256) {
+  %0 = sol.div %a, %b : ui256
+  %1 = sol.mod %a, %b : ui256
+  return
+}
+
 // An identity folds.
 
 // CHECK-LABEL: func @identities

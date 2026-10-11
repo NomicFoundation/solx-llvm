@@ -4,8 +4,8 @@
 // once per array type: `index_storage_array.<ty>`, returning the element
 // address (a {slot, byte offset} struct for packed elements),
 // `push_storage_array.<ty>` and `pop_storage_array.<ty>`. The no-panic
-// bounds behaviour is part of the key. A constant index into a static array
-// needs no check and stays inline.
+// bounds behaviour is part of the key. An in-bounds constant index into a
+// static array needs no check and stays inline.
 
 #Contract = #sol<ContractKind Contract>
 #Default = #sol<RevertStrings Default>
@@ -39,6 +39,13 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
       %0 = sol.addr_of @f : !sol.array<4 x ui256, Storage>
       %c2_ui8 = sol.constant 2 : ui8
       %1 = sol.gep %0, %c2_ui8 : !sol.array<4 x ui256, Storage>, ui8, !sol.ptr<ui256, Storage>
+      %2 = sol.load %1 : !sol.ptr<ui256, Storage>, ui256
+      sol.return %2 : ui256
+    }
+    sol.func @fixedConstPastEnd() -> ui256 attributes {orig_fn_type = () -> ui256, selector = 8 : i32, state_mutability = #View} {
+      %0 = sol.addr_of @f : !sol.array<4 x ui256, Storage>
+      %c4_ui8 = sol.constant 4 : ui8
+      %1 = sol.gep %0, %c4_ui8 : !sol.array<4 x ui256, Storage>, ui8, !sol.ptr<ui256, Storage>
       %2 = sol.load %1 : !sol.ptr<ui256, Storage>, ui256
       sol.return %2 : ui256
     }
@@ -84,6 +91,9 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK:           yul.sstore
 // CHECK-LABEL:   yul.func @fixedIdx
 // CHECK:           yul.func_call @__sol.index_storage_array.array$_4_ui256_$_Storage_$(
+// CHECK-LABEL:   yul.func @fixedConstPastEnd
+// CHECK:           %[[C4:.*]] = yul.constant 4{{$}}
+// CHECK:           yul.func_call @__sol.index_storage_array.array$_4_ui256_$_Storage_$(%{{.*}}, %[[C4]])
 // CHECK-LABEL:   yul.func @fixedConst
 // CHECK-NOT:       yul.func_call @__sol.index_storage_array
 // CHECK:           yul.sload

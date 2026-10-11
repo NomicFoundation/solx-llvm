@@ -109,7 +109,8 @@ sol.contract @C {
 // -----
 
 sol.contract @C {
-  // a[0] = a[1]: a constant index into a static array has no bounds check.
+  // a[0] = a[1]: an in-bounds constant index into a static array has no
+  // bounds check.
   // CHECK-LABEL: yul.func @static8 : (i256) -> ()
   // CHECK:         %[[I1:.*]] = yul.constant 1{{$}}
   // CHECK-NOT:     yul.cmp uge

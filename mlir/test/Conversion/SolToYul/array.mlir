@@ -26,6 +26,36 @@ module {
 
 module {
   sol.contract @C {
+    // An in-bounds constant index is base + i * 32 with no check. A constant
+    // past the end is bounds-checked.
+    // CHECK-LABEL: yul.func @const_1d : (i256) -> (i256, i256)
+    // CHECK-NEXT:  ^bb0(%[[BASE:.*]]: i256):
+    // CHECK-NOT:     yul.cmp
+    // CHECK:         %[[OFF:.*]] = yul.constant 64{{$}}
+    // CHECK:         %[[P:.*]] = yul.add %[[BASE]], %[[OFF]]
+    // CHECK:         yul.mload %[[P]]
+    // CHECK:         %[[I3:.*]] = yul.constant 3{{$}}
+    // CHECK:         %[[C3:.*]] = yul.constant 3{{$}}
+    // CHECK:         %[[OOB:.*]] = yul.cmp uge, %[[I3]], %[[C3]]
+    // CHECK:         yul.if %[[OOB]] {
+    // CHECK:           %[[C50:.*]] = yul.constant 50
+    // CHECK:           yul.func_call @__sol.panic(%[[C50]])
+    sol.func @const_1d(%a: !sol.array<3 x ui256, Memory>) -> (ui256, ui256) {
+      %c2 = sol.constant 2 : ui256
+      %0 = sol.gep %a, %c2 : !sol.array<3 x ui256, Memory>, ui256, !sol.ptr<ui256, Memory>
+      %1 = sol.load %0 : !sol.ptr<ui256, Memory>, ui256
+      %c3 = sol.constant 3 : ui256
+      %2 = sol.gep %a, %c3 : !sol.array<3 x ui256, Memory>, ui256, !sol.ptr<ui256, Memory>
+      %3 = sol.load %2 : !sol.ptr<ui256, Memory>, ui256
+      sol.return %1, %3 : ui256, ui256
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
     // The outer element is a pointer to the inner array.
     // CHECK-LABEL: yul.func @ui_2d : (i256, i256) -> i256
     // CHECK:         %[[C4:.*]] = yul.constant 4{{$}}
