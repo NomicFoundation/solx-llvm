@@ -205,6 +205,10 @@ module {
 // CHECK:         %[[LEN:.*]] = yul.mload %[[ARR]]
 // CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc
 // CHECK:         yul.mstore %[[P]], %[[LEN]]
+// CHECK-NEXT:    %[[C32:.*]] = yul.constant 32
+// CHECK-NEXT:    %[[SPAN:.*]] = yul.mul %[[LEN]], %[[C32]]
+// CHECK-NEXT:    %[[END:.*]] = yul.add %{{.*}}, %[[SPAN]]
+// CHECK-NEXT:    yul.cmp ugt, %[[END]], %arg1
 // CHECK-NOT:     yul.for
 // CHECK:         %[[SZ:.*]] = yul.mul %[[LEN]], %{{.*}}
 // CHECK-NEXT:    yul.mcopy %{{.*}}, %{{.*}}, %[[SZ]]
