@@ -169,20 +169,20 @@ module {
 !Scd = !sol.struct<(ui8, !sol.fixedbytes<19>, si72, !sol.string<CallData>), CallData>
 #Contract = #sol<ContractKind Contract>
 
-// The 128-byte head is one word per member; the string member gets its own
-// allocation, filled from calldata.
-// CHECK-LABEL: yul.func @__sol.clone_struct.calldata.memory.struct$_$_ui8_$_fixedbytes$_19_$_$_si72_$_string$_CallData_$_$_$_CallData_$ : (i256) -> i256
-// CHECK:         %[[HEAD:.*]] = yul.constant 128
+// The 128-byte head must fit in calldata and is one word per member; the
+// string member gets its own allocation, filled from calldata.
+// CHECK-LABEL: yul.func @f5 : (i256) -> i256
+// CHECK:         %[[CDS:.*]] = yul.calldatasize
+// CHECK-NEXT:    %[[HEAD:.*]] = yul.constant 128
+// CHECK-NEXT:    %[[END:.*]] = yul.add %arg0, %[[HEAD]]
+// CHECK-NEXT:    yul.cmp ugt, %[[END]], %[[CDS]]
 // CHECK:         %[[P:.*]] = yul.mload
-// CHECK:         yul.add %[[HEAD]],
-// CHECK:         %[[SP:.*]] = yul.add %[[P]], %c96_i256
+// CHECK:         yul.calldataload %arg0
+// CHECK:         yul.mstore %[[P]],
 // CHECK:         %[[STR:.*]] = yul.func_call @__sol.alloc
 // CHECK:         yul.calldatacopy %{{[0-9]+}}, %{{[0-9]+}}, %{{[0-9]+}}{{$}}
-// CHECK:         yul.mstore %[[SP]], %[[STR]]
+// CHECK:         yul.mstore %{{.*}}, %[[STR]]
 // CHECK:         yul.func_return %[[P]]
-// CHECK-LABEL: yul.func @f5 : (i256) -> i256
-// CHECK:         %[[R:.*]] = yul.func_call @__sol.clone_struct.calldata.memory.struct$_$_ui8_$_fixedbytes$_19_$_$_si72_$_string$_CallData_$_$_$_CallData_$(%arg0)
-// CHECK:         yul.func_return %[[R]]
 module {
   sol.contract @C {
     sol.func @f5(%arg0: !Scd) -> !Smem {
