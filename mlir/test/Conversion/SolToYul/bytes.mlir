@@ -24,6 +24,24 @@ module {
 
 module {
   sol.contract @C {
+    // A narrow index is cleaned before the bounds check and `byte`.
+    // CHECK-LABEL: yul.func @index_narrow : (i256, i256) -> i256
+    // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256, %[[I:.*]]: i256):
+    // CHECK:         %[[MASK:.*]] = yul.constant 255{{$}}
+    // CHECK:         %[[CI:.*]] = yul.and %[[I]], %[[MASK]]
+    // CHECK:         yul.cmp uge, %[[CI]], %{{.*}}
+    // CHECK:         yul.byte %[[CI]], %[[A]]
+    sol.func @index_narrow(%a: !sol.fixedbytes<4>, %i: ui8) -> !sol.fixedbytes<1> {
+      %0 = sol.fixed_bytes_index %a[%i] : !sol.fixedbytes<4>, ui8 -> !sol.fixedbytes<1>
+      sol.return %0 : !sol.fixedbytes<1>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
     // Narrowing to bytes4 leaves the value as is.
     // CHECK-LABEL: yul.func @b54 : (i256) -> i256
     // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256):

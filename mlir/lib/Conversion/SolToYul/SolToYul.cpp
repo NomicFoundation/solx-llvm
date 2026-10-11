@@ -21,6 +21,7 @@
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Types.h"
@@ -433,7 +434,10 @@ struct FixedBytesIndexOpLowering
 
     unsigned numBytes =
         cast<sol::FixedBytesType>(op.getValue().getType()).getSize();
-    Value idx = adaptor.getIndex();
+    // Only the index is cleaned. The bounds check keeps `byte` within the
+    // leading numBytes bytes, and dirty bits only sit in the trailing ones.
+    Value idx =
+        evmB.genCleanup(op.getIndex().getType(), adaptor.getIndex(), loc);
     Value val = adaptor.getValue();
 
     // Bounds check, mirroring the legacy codegen: index >= numBytes panics
@@ -1830,6 +1834,15 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
       else
         evmB.genPanic(mlir::evm::PanicCode::ArrayOutOfBounds, cond, locArg);
     };
+    auto getInBoundsConstIdx =
+        [&](sol::ArrayType arrTy) -> std::optional<APInt> {
+      APInt constIdx;
+      if (arrTy.isDynSized() ||
+          !matchPattern(getCleanedIdx(), m_ConstantInt(&constIdx)) ||
+          constIdx.uge(arrTy.getSize()))
+        return std::nullopt;
+      return constIdx;
+    };
     sol::DataLocation dataLoc = sol::getDataLocation(baseAddrTy);
     Value res;
 
@@ -1854,10 +1867,10 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
                 sol::isNonPtrRefType(eltTy)) &&
                "NYI");
 
-        // Bounds check (always for dynamic, non-const index for static).
-        bool isConstIdx = evm::isConstantValue(idx);
-        bool needsBoundsCheck = arrTy.isDynSized() || !isConstIdx;
-        Value arrayIdx = isConstIdx ? idx : getCleanedIdx();
+        // Bounds check (always for dynamic, unless an in-bounds constant index
+        // for static).
+        bool needsBoundsCheck = !getInBoundsConstIdx(arrTy);
+        Value arrayIdx = getCleanedIdx();
 
         // The element address of a storage array: the bounds check, the
         // keccak256 of the data slot for a dynamic array, and the stride or
@@ -1884,8 +1897,8 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
 
         // An access that carries a bounds check has a body worth sharing: the
         // check, a keccak256 for dynamic arrays, and the addressing. Emit it
-        // once per (array type, bounds behaviour) and call. A constant index
-        // into a static array needs no check and stays inline.
+        // once per (array type, bounds behaviour) and call. An in-bounds
+        // constant index into a static array needs no check and stays inline.
         if (needsBoundsCheck) {
           // The result is the legalized element pointer: a {slot, byte
           // offset} struct for a packed element, one word otherwise.
@@ -1939,21 +1952,13 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
       if (auto arrTy = dyn_cast<sol::ArrayType>(baseAddrTy)) {
         Value addrAtIdx;
 
-        // Don't generate out-of-bounds check for constant indexing of static
-        // arrays.
-        if (!isa<BlockArgument>(idx) &&
-            isa<yul::ConstantOp>(idx.getDefiningOp()) && !arrTy.isDynSized()) {
-          APInt constIdx = cast<yul::ConstantOp>(idx.getDefiningOp())
-                               .getValue()
-                               .zextOrTrunc(256);
-          // FIXME: Should this be done by the verifier?
-          assert(constIdx.ult(arrTy.getSize()));
+        // Don't generate out-of-bounds check for in-bounds constant indexing of
+        // static arrays.
+        if (std::optional<APInt> constIdx = getInBoundsConstIdx(arrTy)) {
           APInt stride = evm::getArrayEltStride(arrTy);
           addrAtIdx = r.create<yul::AddOp>(
-              loc, remappedBaseAddr, bExt.genI256Const(constIdx * stride));
-        }
-
-        if (!addrAtIdx) {
+              loc, remappedBaseAddr, bExt.genI256Const(*constIdx * stride));
+        } else {
           //
           // Generate PanicCode::ArrayOutOfBounds check.
           //
@@ -1984,7 +1989,6 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
             addrAtIdx = r.create<yul::AddOp>(loc, remappedBaseAddr, scaledIdx);
           }
         }
-        assert(addrAtIdx);
 
         // For calldata pointers to inner elements that have dynamic content,
         // resolve the ABI relative-offset word in the head area.
