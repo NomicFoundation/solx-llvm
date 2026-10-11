@@ -119,6 +119,7 @@ struct ConvertSolToYulPass
         sol::CDivOp,
         sol::AddModOp,
         sol::MulModOp,
+        sol::DivisorOp,
         sol::ExpOp,
         sol::Keccak256Op,
         sol::Sha256Op,

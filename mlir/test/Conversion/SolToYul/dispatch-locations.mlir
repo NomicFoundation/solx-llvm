@@ -9,6 +9,7 @@
 
 #Constructor = #sol<FunctionKind Constructor>
 #Contract = #sol<ContractKind Contract>
+#Initializer = #sol<FunctionKind Initializer>
 #NonPayable = #sol<StateMutability NonPayable>
 
 #file = #llvm.di_file<"C.sol" in "/src">
@@ -23,6 +24,7 @@
 
 // CHECK-LABEL: yul.object @C {
 // CHECK:         yul.mstore {{.*}} loc("C.sol":1:1)
+// CHECK:         yul.func_call @init() : () -> () loc("C.sol":1:1)
 // CHECK:         yul.callvalue loc("C.sol":2:3)
 // CHECK:         yul.codecopy {{.*}} loc("C.sol":2:3)
 // CHECK:         yul.func_call @ctor({{.*}}) : (i256) -> () loc("C.sol":2:3)
@@ -42,6 +44,9 @@
 // CHECK:       } loc(fused<#llvm.di_compile_unit<{{.*}}>>["C.sol":1:1])
 
 sol.contract @C {
+  sol.func @init() attributes {kind = #Initializer, state_mutability = #NonPayable} {
+    sol.return loc(#loc_init)
+  } loc(#loc_init)
   sol.func @ctor(%arg0: ui256 loc(#loc_ctor)) attributes {kind = #Constructor, orig_fn_type = (ui256) -> (), state_mutability = #NonPayable} {
     sol.return loc(#loc_ctor)
   } loc(#loc_ctor_sp)
@@ -56,3 +61,4 @@ sol.contract @C {
 #loc_ctor_sp = loc(fused<#sp_ctor>[#loc_ctor])
 #loc_f = loc("C.sol":3:3)
 #loc_f_sp = loc(fused<#sp_f>[#loc_f])
+#loc_init = loc("C.sol":4:3)

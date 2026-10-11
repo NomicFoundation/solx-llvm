@@ -308,7 +308,8 @@ def Sol_FunctionKind :
     I32EnumAttr<"FunctionKind", "Represents the kind of functions",
                  [I32EnumAttrCase<"Constructor", 0>,
                   I32EnumAttrCase<"Fallback", 1>,
-                  I32EnumAttrCase<"Receive", 2>]> {
+                  I32EnumAttrCase<"Receive", 2>,
+                  I32EnumAttrCase<"Initializer", 3>]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::sol";
 }

@@ -86,13 +86,12 @@ def Sol_ContractCastOp : Sol_Op<"contract_cast",
 }
 
 // This operation can panic.
-def Sol_EnumCastOp : Sol_Op<"enum_cast",
-  [DeclareOpInterfaceMethods<CastOpInterface>]
->{
+def Sol_EnumCastOp : Sol_Op<"enum_cast"> {
   let arguments = (ins Sol_Int:$inp);
   let results = (outs Sol_Int:$out);
 
   let assemblyFormat = "$inp attr-dict `:` type($inp) `to` type($out)";
+  let hasVerifier = 1;
 }
 
 // TODO: folder
@@ -192,8 +191,15 @@ def Sol_NotOp : Sol_Op<"not", [Pure, SameOperandsAndResultType]> {
 def Sol_AddModOp : Sol_ModOp<"addmod">;
 def Sol_MulModOp : Sol_ModOp<"mulmod">;
 
+def Sol_DivisorOp : Sol_Op<"divisor", [SameOperandsAndResultType]> {
+  let arguments = (ins AnyUnsignedInteger:$value);
+  let results = (outs AnyUnsignedInteger:$result);
+
+  let assemblyFormat = "$value attr-dict `:` type($result)";
+}
+
 def Sol_Keccak256Op : Sol_Op<"keccak256"> {
-  let arguments = (ins Sol_StringType:$addr);
+  let arguments = (ins Sol_AggType:$addr);
   let results = (outs Sol_FixedBytesType:$result);
 }
 
@@ -473,10 +479,11 @@ def Sol_FixedBytes4SelectorType : Type<
 
 def Sol_EncodeOp : Sol_Op<"encode", [AttrSizedOperandSegments]> {
   // When $packed is set, values are encoded without per-element padding.
-  // When $selector is set, it is prepended as the first 4 bytes while $ins are
-  // ABI-encoded as a tuple.
+  // When $selector is set, it, or the first 4 bytes of the hash of a signature
+  // string, is prepended while $ins are ABI-encoded as a tuple.
   let arguments = (ins Variadic<AnyType>:$ins,
-                       Optional<Sol_FixedBytes4SelectorType>:$selector,
+                       Optional<AnyTypeOf<[Sol_FixedBytes4SelectorType,
+                                           Sol_StringType]>>:$selector,
                        UnitAttr:$packed);
   // FIXME: AnyType -> Sol_StringType causes the asm printer to miss the prefix!
   let results = (outs AnyType:$res);
