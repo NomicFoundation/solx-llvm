@@ -1242,7 +1242,8 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
                                 loc);
     if (sizeVar) {
       Value roundedSize = bExt.genRoundUpToMultiple<32>(sizeVar);
-      Value memPtr = genMemAllocForDynArray(sizeVar, roundedSize, loc);
+      Value memPtr = genMemAllocForDynArray(sizeVar, roundedSize, loc,
+                                            /*genLengthPanicGuard=*/true);
       if (zeroInit) {
         Value dataPtr =
             b.create<yul::AddOp>(loc, memPtr, bExt.genI256Const(32));
@@ -3758,10 +3759,12 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
     if (arrTy.isDynSized()) {
       Value i256Size = genLoad(addr);
       srcAddr = b.create<yul::AddOp>(loc, addr, thirtyTwo);
-      guards.requireDynamicArraySpan(srcAddr, i256Size, eltTy);
 
+      // The allocation precedes the span check: its panic rejects a length
+      // whose span would wrap around and slip past the bounds test.
       dstAddr = genMemAllocForDynArray(
           i256Size, b.create<yul::MulOp>(loc, i256Size, thirtyTwo), loc, true);
+      guards.requireDynamicArraySpan(srcAddr, i256Size, eltTy);
       ret = dstAddr;
       // Skip the size fields in both the addresses.
       dstAddr = b.create<yul::AddOp>(loc, dstAddr, thirtyTwo);
@@ -3818,20 +3821,25 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
     Value tailAddr = addr;
     Value sizeInBytes = genLoad(tailAddr);
     // The range check must precede the end check: a near-2^256 length wraps
-    // the end address computation around and slips past the bounds test.
-    guards.requireUint64(sizeInBytes, ABIDecodeGuards::kInvalidByteArrayLength);
+    // the end address computation around and slips past the bounds test. A
+    // calldata reference reverts on it, a memory copy panics in its allocation.
+    bool inCallData = stringTy.getDataLocation() == sol::DataLocation::CallData;
+    Value dstAddr;
+    if (inCallData)
+      guards.requireUint64(sizeInBytes,
+                           ABIDecodeGuards::kInvalidByteArrayLength);
+    else
+      dstAddr = genMemAllocForDynArray(
+          sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc, true);
     Value thirtyTwo = bExt.genI256Const(32);
     Value srcDataAddr = b.create<yul::AddOp>(loc, tailAddr, thirtyTwo);
     Value endAddr = b.create<yul::AddOp>(loc, srcDataAddr, sizeInBytes);
     guards.requireEndInBounds(endAddr,
                               ABIDecodeGuards::kInvalidByteArrayLength);
 
-    if (stringTy.getDataLocation() == sol::DataLocation::CallData)
+    if (inCallData)
       return bExt.genLLVMStruct({srcDataAddr, sizeInBytes});
 
-    // Copy the decoded string to a new memory allocation.
-    Value dstAddr = genMemAllocForDynArray(
-        sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc, true);
     Value dstDataAddr = b.create<yul::AddOp>(loc, dstAddr, thirtyTwo);
 
     if (fromMem)

@@ -2425,6 +2425,19 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
     sol::DataLocation dstDataLoc = sol::getDataLocation(dstTy);
     assert(!isa<sol::MappingType>(srcTy));
 
+    // A calldata struct is copied to memory by decoding it against the end of
+    // calldata, which validates every nested offset and length.
+    if (dstDataLoc == sol::DataLocation::Memory &&
+        srcDataLoc == sol::DataLocation::CallData &&
+        isa<sol::StructType>(srcTy)) {
+      Value src = adaptor.getInp();
+      r.replaceOp(op, evmB.genABITupleDecoding(
+                          dstTy, src, /*fromMem=*/false, /*tupleStart=*/src,
+                          /*tupleEnd=*/r.create<yul::CallDataSizeOp>(loc),
+                          /*topLevel=*/false, loc));
+      return success();
+    }
+
     if (dstDataLoc == sol::DataLocation::Memory &&
         sol::isNonPtrRefType(srcTy)) {
       r.replaceOp(op, genAllocateAndCopy(getModule(op), adaptor.getInp(), srcTy,
