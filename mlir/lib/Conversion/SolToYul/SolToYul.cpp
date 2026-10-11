@@ -334,6 +334,7 @@ struct ContractCastOpLowering
 // When doing int -> enum cast, we need to do a cleanup on input and output
 // type. For enum -> int, there is no need to cleanup on the output type, as the
 // enum value is always in the valid range and thus also valid as an int value.
+// A cast of an enum to its own type is that range check alone.
 struct EnumCastOpLowering
     : public CleanedOperandsLowering<sol::EnumCastOp, EnumCastOpLowering> {
   using Base = CleanedOperandsLowering<sol::EnumCastOp, EnumCastOpLowering>;
@@ -341,7 +342,8 @@ struct EnumCastOpLowering
 
   LogicalResult rewriteCleaned(sol::EnumCastOp op, ConversionPatternRewriter &r,
                                Value val) const {
-    if (isa<sol::EnumType>(op.getType())) {
+    if (isa<sol::EnumType>(op.getType()) &&
+        !isa<sol::EnumType>(op.getInp().getType())) {
       Location loc = op.getLoc();
       evm::Builder evmB(getModule(op), r, loc);
       val = evmB.genCleanup(op.getType(), val, loc);
@@ -923,18 +925,6 @@ static Value getCryptoHashLowering(OpT op, uint32_t preCompieAddr,
   return res;
 }
 
-template <typename ModOpT>
-static Value genYulModOp(ModuleOp module, ConversionPatternRewriter &r,
-                         Location loc, Value x, Value y, Value mod) {
-  mlir::solgen::BuilderExt bExt(r, loc);
-  evm::Builder evmB(module, r, loc);
-
-  auto zero = bExt.genI256Const(0);
-  auto modEqZero = bExt.genCmp(yul::CmpPredicate::eq, mod, zero);
-  evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, modEqZero);
-  return r.create<ModOpT>(loc, x, y, mod);
-}
-
 namespace {
 
 struct ShlOpLowering
@@ -1171,9 +1161,7 @@ struct AddModOpLowering
 
   LogicalResult rewriteCleaned(sol::AddModOp op, ConversionPatternRewriter &r,
                                Value x, Value y, Value mod) const {
-    Location loc = op.getLoc();
-    Value result = genYulModOp<yul::AddModOp>(getModule(op), r, loc, x, y, mod);
-    r.replaceOp(op, result);
+    r.replaceOpWithNewOp<yul::AddModOp>(op, x, y, mod);
     return success();
   }
 };
@@ -1185,9 +1173,26 @@ struct MulModOpLowering
 
   LogicalResult rewriteCleaned(sol::MulModOp op, ConversionPatternRewriter &r,
                                Value x, Value y, Value mod) const {
+    r.replaceOpWithNewOp<yul::MulModOp>(op, x, y, mod);
+    return success();
+  }
+};
+
+struct DivisorOpLowering
+    : public CleanedOperandsLowering<sol::DivisorOp, DivisorOpLowering> {
+  using Base = CleanedOperandsLowering<sol::DivisorOp, DivisorOpLowering>;
+  using Base::Base;
+
+  LogicalResult rewriteCleaned(sol::DivisorOp op, ConversionPatternRewriter &r,
+                               Value val) const {
     Location loc = op.getLoc();
-    Value result = genYulModOp<yul::MulModOp>(getModule(op), r, loc, x, y, mod);
-    r.replaceOp(op, result);
+    mlir::solgen::BuilderExt bExt(r, loc);
+    evm::Builder evmB(getModule(op), r, loc);
+
+    auto zero = bExt.genI256Const(0);
+    auto valEqZero = bExt.genCmp(yul::CmpPredicate::eq, val, zero);
+    evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, valEqZero);
+    r.replaceOp(op, val);
     return success();
   }
 };
@@ -1233,16 +1238,23 @@ struct Keccak256OpLowering : public OpConversionPattern<sol::Keccak256Op> {
   LogicalResult matchAndRewrite(sol::Keccak256Op op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
-    mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(op), r, loc);
 
     Type ty = op.getAddr().getType();
     sol::DataLocation dataLoc = sol::getDataLocation(ty);
 
-    Value dataLen = evmB.genLoad(adaptor.getAddr(), dataLoc);
-    auto dataSlot = evmB.genDataAddrPtr(adaptor.getAddr(), ty);
-    r.replaceOpWithNewOp<yul::Keccak256Op>(op, dataSlot, dataLen);
+    if (isa<sol::StringType>(ty) && dataLoc == sol::DataLocation::Memory) {
+      Value dataLen = evmB.genLoad(adaptor.getAddr(), dataLoc);
+      auto dataSlot = evmB.genDataAddrPtr(adaptor.getAddr(), ty);
+      r.replaceOpWithNewOp<yul::Keccak256Op>(op, dataSlot, dataLen);
+      return success();
+    }
 
+    Value scratchStart = evmB.genFreePtr();
+    Value scratchEnd = evmB.genABIEncodingPacked(
+        TypeRange{ty}, ValueRange{adaptor.getAddr()}, scratchStart, loc);
+    Value scratchSize = r.create<yul::SubOp>(loc, scratchEnd, scratchStart);
+    r.replaceOpWithNewOp<yul::Keccak256Op>(op, scratchStart, scratchSize);
     return success();
   }
 };
@@ -2840,10 +2852,12 @@ struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
       evmB.genFreePtrUpd(freePtr, allocationSize);
     } else if (op.getSelector()) {
       assert(adaptor.getSelector() && "selector operand is required");
+      Type selectorTy = op.getSelector().getType();
 
       Value selectorAddr =
           r.create<yul::AddOp>(loc, freePtr, bExt.genI256Const(32));
-      r.create<yul::MStoreOp>(loc, selectorAddr, adaptor.getSelector());
+      if (!isa<sol::StringType>(selectorTy))
+        r.create<yul::MStoreOp>(loc, selectorAddr, adaptor.getSelector());
 
       Value tupleStart =
           r.create<yul::AddOp>(loc, selectorAddr, bExt.genI256Const(4));
@@ -2853,6 +2867,20 @@ struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
       r.create<yul::MStoreOp>(loc, freePtr, dataSize);
       Value allocationSize = r.create<yul::SubOp>(loc, tupleEnd, freePtr);
       evmB.genFreePtrUpd(freePtr, allocationSize);
+
+      if (isa<sol::StringType>(selectorTy)) {
+        Value pos = evmB.genFreePtr();
+        Value len = evmB.genCopyStringDataToMemory(adaptor.getSelector(),
+                                                   selectorTy, pos);
+        Value hash = r.create<yul::Keccak256Op>(loc, pos, len);
+        Value selector = r.create<yul::AndOp>(
+            loc, hash, bExt.genI256Const(APInt::getHighBitsSet(256, 32)));
+        Value data = r.create<yul::AndOp>(
+            loc, r.create<yul::MLoadOp>(loc, selectorAddr),
+            bExt.genI256Const(APInt::getLowBitsSet(256, 224)));
+        r.create<yul::MStoreOp>(loc, selectorAddr,
+                                r.create<yul::OrOp>(loc, data, selector));
+      }
     } else {
       Value tupleStart =
           r.create<yul::AddOp>(loc, freePtr, bExt.genI256Const(32));
@@ -2942,15 +2970,6 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
       addr = evmB.genCleanup(op.getAddr().getType(), addr, loc);
     // old codegen end
 
-    if (extCodeSizeCheck) {
-      // Generate the revert code.
-      auto extCodeSize = r.create<yul::ExtCodeSizeOp>(loc, addr);
-      auto isExtCodeSizeZero =
-          bExt.genCmp(yul::CmpPredicate::eq, extCodeSize, bExt.genI256Const(0));
-      evmB.genDebugRevertWithMsg(isExtCodeSizeZero,
-                                 "Target contract does not contain code");
-    }
-
     // Generate the store of the selector.
     Value selectorAddr = evmB.genFreePtr();
     Value shiftedSelector = r.create<yul::ArithShlOp>(
@@ -2962,6 +2981,15 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
         r.create<yul::AddOp>(loc, selectorAddr, bExt.genI256Const(4));
     Value tupleEnd =
         evmB.genABIEncoding(abiInputTys, adaptor.getIns(), tupleStart);
+
+    if (extCodeSizeCheck) {
+      // Generate the revert code.
+      auto extCodeSize = r.create<yul::ExtCodeSizeOp>(loc, addr);
+      auto isExtCodeSizeZero =
+          bExt.genCmp(yul::CmpPredicate::eq, extCodeSize, bExt.genI256Const(0));
+      evmB.genDebugRevertWithMsg(isExtCodeSizeZero,
+                                 "Target contract does not contain code");
+    }
 
     // Calculate the return size statically and/or check if it's dynamic. This
     // is copied from solidity::frontend::ReturnInfo.
@@ -3688,17 +3716,6 @@ struct EmitOpLowering : public OpConversionPattern<sol::EmitOp> {
       Type origTy = origIdxArg.getType();
       Value val = remappedOperands[argIdx++];
 
-      // Reference-type indexed arg: topic = keccak256(packed_encode(arg)).
-      if (isa<sol::StringType, sol::ArrayType, sol::StructType>(origTy)) {
-        Value scratchStart = evmB.genFreePtr();
-        Value scratchEnd = evmB.genABIEncodingPacked(
-            TypeRange{origTy}, ValueRange{val}, scratchStart, loc);
-        Value scratchSize = r.create<yul::SubOp>(loc, scratchEnd, scratchStart);
-        indexedArgs.push_back(
-            r.create<yul::Keccak256Op>(loc, scratchStart, scratchSize));
-        continue;
-      }
-
       // Value-type indexed arg: cleanup-and-widen to i256 (LogOp expects i256
       // topics).
       Value topic = isa<sol::ExtFuncRefType>(origTy)
@@ -4304,13 +4321,14 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
         contractLoc, std::string(op.getName()) + "_deployed");
 
     SmallVector<sol::FuncOp, 4> ifcFns;
-    sol::FuncOp ctor, receiveFn, fallbackFn;
+    sol::FuncOp ctor, initializer, receiveFn, fallbackFn;
     SmallVector<uint32_t, 4> selectors;
     size_t reservedMemSize = 0;
     SmallVector<sol::ImmutableOp, 2> immOps;
 
-    // Track relevant types of functions (with selector, ctor, fallback,
-    // receive) immutables (and reserved memory) etc; Remove state variables.
+    // Track relevant types of functions (with selector, ctor, initializer,
+    // fallback, receive) immutables (and reserved memory) etc; Remove state
+    // variables.
     for (Operation &i :
          llvm::make_early_inc_range(op.getBody()->getOperations())) {
       // Functions
@@ -4334,6 +4352,10 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
             assert(!receiveFn);
             receiveFn = fn;
             break;
+          case sol::FunctionKind::Initializer:
+            assert(!initializer);
+            initializer = fn;
+            break;
           }
         }
 
@@ -4351,24 +4373,26 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       }
     }
 
-    if (ctor) {
-      // Clone functions reachable from the ctor to creation and runtime
-      // objects.
-      llvm::SetVector<FunctionOpInterface> reachableFns;
-      getReachableFuncs(ctor, reachableFns);
-      ctor->moveBefore(creationObj.getEntryBlock(),
-                       creationObj.getEntryBlock()->begin());
-      for (FunctionOpInterface reachableFn : reachableFns) {
-        Operation *fnOp = reachableFn.getOperation();
-        if (fnOp == ctor.getOperation())
-          continue;
-        // Clone in the creation object and move the original to runtime object.
-        r.clone(*fnOp);
-        fnOp->moveBefore(runtimeObj.getEntryBlock(),
-                         runtimeObj.getEntryBlock()->begin());
-        if (auto solFn = dyn_cast<sol::FuncOp>(fnOp))
-          solFn.setRuntimeAttr(r.getUnitAttr());
-      }
+    // Clone functions reachable from the initializer and the ctor to creation
+    // and runtime objects.
+    llvm::SetVector<FunctionOpInterface> reachableFns;
+    for (sol::FuncOp fn : {initializer, ctor}) {
+      if (!fn)
+        continue;
+      getReachableFuncs(fn, reachableFns);
+      fn->moveBefore(creationObj.getEntryBlock(),
+                     creationObj.getEntryBlock()->begin());
+    }
+    for (FunctionOpInterface reachableFn : reachableFns) {
+      Operation *fnOp = reachableFn.getOperation();
+      if (fnOp == initializer.getOperation() || fnOp == ctor.getOperation())
+        continue;
+      // Clone in the creation object and move the original to runtime object.
+      r.clone(*fnOp);
+      fnOp->moveBefore(runtimeObj.getEntryBlock(),
+                       runtimeObj.getEntryBlock()->begin());
+      if (auto solFn = dyn_cast<sol::FuncOp>(fnOp))
+        solFn.setRuntimeAttr(r.getUnitAttr());
     }
 
     for (Operation &i : llvm::make_early_inc_range(*op.getBody())) {
@@ -4387,6 +4411,9 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     r.setInsertionPointToStart(creationObj.getEntryBlock());
 
     genFreePtrInit(r, loc, reservedMemSize);
+
+    if (initializer)
+      r.create<sol::CallOp>(loc, initializer, /*operands=*/ValueRange{});
 
     // The constructor's check, argument decoding and call run the constructor,
     // so they are at its location.
@@ -4568,7 +4595,8 @@ void evm::populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv) {
            DivOrModOpLowering<sol::DivOp, yul::SDivOp, yul::ArithDivOp>,
            DivOrModOpLowering<sol::ModOp, yul::SModOp, yul::ArithModOp>,
            ExpOpLowering, ShrOpLowering, ShlOpLowering, CmpOpLowering,
-           AddModOpLowering, MulModOpLowering>(tyConv, pats.getContext());
+           AddModOpLowering, MulModOpLowering, DivisorOpLowering>(
+      tyConv, pats.getContext());
 }
 
 void evm::populateCheckedArithPats(RewritePatternSet &pats,
