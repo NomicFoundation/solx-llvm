@@ -434,7 +434,8 @@ struct FixedBytesIndexOpLowering
 
     unsigned numBytes =
         cast<sol::FixedBytesType>(op.getValue().getType()).getSize();
-    Value idx = adaptor.getIndex();
+    Value idx =
+        evmB.genCleanup(op.getIndex().getType(), adaptor.getIndex(), loc);
     Value val = adaptor.getValue();
 
     // Bounds check, mirroring the legacy codegen: index >= numBytes panics
@@ -1771,17 +1772,12 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
                 sol::isNonPtrRefType(eltTy)) &&
                "NYI");
 
-        // Bounds check (always for dynamic, non-const index for static).
-        bool isConstIdx = !isa<BlockArgument>(idx) &&
-                          isa<yul::ConstantOp>(idx.getDefiningOp());
-        Value arrayIdx = isConstIdx ? idx : getCleanedIdx();
-        if (arrTy.isDynSized() || !isConstIdx) {
-          Value size = arrTy.isDynSized()
-                           ? evmB.genDynSize(remappedBaseAddr, baseAddrTy)
-                           : bExt.genI256Const(arrTy.getSize());
-          auto panicCond = bExt.genCmp(yul::CmpPredicate::uge, arrayIdx, size);
-          genBoundsCheck(panicCond);
-        }
+        Value arrayIdx = getCleanedIdx();
+        Value size = arrTy.isDynSized()
+                         ? evmB.genDynSize(remappedBaseAddr, baseAddrTy)
+                         : bExt.genI256Const(arrTy.getSize());
+        auto panicCond = bExt.genCmp(yul::CmpPredicate::uge, arrayIdx, size);
+        genBoundsCheck(panicCond);
 
         // Base slot: keccak256(slot) for dynamic, slot for static.
         Value baseSlot = arrTy.isDynSized()
@@ -1834,54 +1830,36 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
     case sol::DataLocation::Memory: {
       // Memory/calldata array
       if (auto arrTy = dyn_cast<sol::ArrayType>(baseAddrTy)) {
+        //
+        // Generate PanicCode::ArrayOutOfBounds check.
+        //
+        Value size;
+        if (arrTy.isDynSized())
+          size = evmB.genDynSize(remappedBaseAddr, baseAddrTy);
+        else
+          size = bExt.genI256Const(arrTy.getSize());
+
+        // Generate `if iszero(lt(index, <arrayLen>(baseRef)))` (yul).
+        auto panicCond =
+            bExt.genCmp(yul::CmpPredicate::uge, getCleanedIdx(), size);
+        genBoundsCheck(panicCond);
+
+        //
+        // Generate the address.
+        //
+        // In memory every element occupies one 32-byte slot: value types are
+        // stored directly, reference types (arrays, structs) are stored as
+        // pointers.  In calldata the stride is the ABI head size of the
+        // element type.
+        Value stride = bExt.genI256Const(evm::getArrayEltStride(arrTy));
+        Value scaledIdx = r.create<yul::MulOp>(loc, getCleanedIdx(), stride);
         Value addrAtIdx;
-
-        // Don't generate out-of-bounds check for constant indexing of static
-        // arrays.
-        if (!isa<BlockArgument>(idx) &&
-            isa<yul::ConstantOp>(idx.getDefiningOp()) && !arrTy.isDynSized()) {
-          APInt constIdx = cast<yul::ConstantOp>(idx.getDefiningOp())
-                               .getValue()
-                               .zextOrTrunc(256);
-          // FIXME: Should this be done by the verifier?
-          assert(constIdx.ult(arrTy.getSize()));
-          APInt stride = evm::getArrayEltStride(arrTy);
-          addrAtIdx = r.create<yul::AddOp>(
-              loc, remappedBaseAddr, bExt.genI256Const(constIdx * stride));
+        if (arrTy.isDynSized()) {
+          Value dataAddr = evmB.genDataAddrPtr(remappedBaseAddr, baseAddrTy);
+          addrAtIdx = r.create<yul::AddOp>(loc, dataAddr, scaledIdx);
+        } else {
+          addrAtIdx = r.create<yul::AddOp>(loc, remappedBaseAddr, scaledIdx);
         }
-
-        if (!addrAtIdx) {
-          //
-          // Generate PanicCode::ArrayOutOfBounds check.
-          //
-          Value size;
-          if (arrTy.isDynSized())
-            size = evmB.genDynSize(remappedBaseAddr, baseAddrTy);
-          else
-            size = bExt.genI256Const(arrTy.getSize());
-
-          // Generate `if iszero(lt(index, <arrayLen>(baseRef)))` (yul).
-          auto panicCond =
-              bExt.genCmp(yul::CmpPredicate::uge, getCleanedIdx(), size);
-          genBoundsCheck(panicCond);
-
-          //
-          // Generate the address.
-          //
-          // In memory every element occupies one 32-byte slot: value types are
-          // stored directly, reference types (arrays, structs) are stored as
-          // pointers.  In calldata the stride is the ABI head size of the
-          // element type.
-          Value stride = bExt.genI256Const(evm::getArrayEltStride(arrTy));
-          Value scaledIdx = r.create<yul::MulOp>(loc, getCleanedIdx(), stride);
-          if (arrTy.isDynSized()) {
-            Value dataAddr = evmB.genDataAddrPtr(remappedBaseAddr, baseAddrTy);
-            addrAtIdx = r.create<yul::AddOp>(loc, dataAddr, scaledIdx);
-          } else {
-            addrAtIdx = r.create<yul::AddOp>(loc, remappedBaseAddr, scaledIdx);
-          }
-        }
-        assert(addrAtIdx);
 
         // For calldata pointers to inner elements that have dynamic content,
         // resolve the ABI relative-offset word in the head area.
