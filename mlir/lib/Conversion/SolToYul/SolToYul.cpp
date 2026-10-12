@@ -1597,7 +1597,16 @@ struct PushOpLowering : public OpConversionPattern<sol::PushOp> {
 
     Type inpTy = op.getInp().getType();
     if (isa<sol::StringType>(inpTy)) {
-      r.replaceOp(op, evmB.genPushVoidToString(adaptor.getInp(), loc));
+      // The zero push of a string is shared by every site. The result is
+      // the legalized {slot, byte offset} address of the new byte.
+      Type resTy = getTypeConverter()->convertType(op.getType());
+      r.replaceOp(op, evmB.genHelperCall(
+                          evm::helpersym::pushStorageString(/*zero=*/true),
+                          {adaptor.getInp()}, resTy,
+                          [&](ValueRange args, Location bodyLoc) {
+                            return evmB.genPushVoidToString(args[0], bodyLoc);
+                          },
+                          loc));
       return success();
     }
 
@@ -1651,7 +1660,15 @@ struct PushStringOpLowering : public OpConversionPattern<sol::PushStringOp> {
             ? r.create<yul::ArithShrOp>(loc, val, bExt.genI256Const(248))
                   .getResult()
             : val;
-    evmB.genPushToString(adaptor.getAddr(), byte, loc);
+    // The push is shared by every site. It takes the string slot and the
+    // byte, right-aligned.
+    evmB.genHelperCall(
+        evm::helpersym::pushStorageString(/*zero=*/false),
+        {adaptor.getAddr(), byte},
+        [&](ValueRange args, Location bodyLoc) {
+          evmB.genPushToString(args[0], args[1], bodyLoc);
+        },
+        loc);
     r.eraseOp(op);
 
     return success();
@@ -1671,13 +1688,23 @@ struct PopOpLowering : public OpConversionPattern<sol::PopOp> {
     Value slot = adaptor.getInp();
 
     if (isa<sol::StringType>(inpTy)) {
-      Value data = evmB.genLoad(slot, sol::DataLocation::Storage, loc);
-      Value oldSize = evmB.genStorageStringLength(data, loc);
-      // Generate the empty array panic check.
-      Value panicCond =
-          bExt.genCmp(yul::CmpPredicate::eq, oldSize, bExt.genI256Const(0));
-      evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond);
-      evmB.genPopString(slot, data, oldSize, loc);
+      // The string pop (length decoding, empty panic, clear of the removed
+      // byte, length update) is shared by every site.
+      evmB.genHelperCall(
+          evm::helpersym::popStorageString(), {slot},
+          [&](ValueRange args, Location bodyLoc) {
+            Value slot = args[0];
+            Value data =
+                evmB.genLoad(slot, sol::DataLocation::Storage, bodyLoc);
+            Value oldSize = evmB.genStorageStringLength(data, bodyLoc);
+            Value panicCond =
+                bExt.genCmp(yul::CmpPredicate::eq, oldSize,
+                            bExt.genI256Const(0, bodyLoc), bodyLoc);
+            evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond,
+                          bodyLoc);
+            evmB.genPopString(slot, data, oldSize, bodyLoc);
+          },
+          loc);
       r.eraseOp(op);
       return success();
     }

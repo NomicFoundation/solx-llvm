@@ -1918,6 +1918,16 @@ void evm::Builder::genStringStore(std::string const &str, Value addr,
 Value evm::Builder::genStorageStringLength(Value lengthSlot,
                                            std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
+  return genHelperCall(
+      helpersym::storageStringLength(), {lengthSlot}, b.getIntegerType(256),
+      [&](ValueRange a, Location bodyLoc) {
+        return genStorageStringLengthInline(a[0], bodyLoc);
+      },
+      loc);
+}
+
+Value evm::Builder::genStorageStringLengthInline(Value lengthSlot,
+                                                 Location loc) {
   mlir::solgen::BuilderExt bExt(b, loc);
 
   // For the storage we follow YUL's implementation to get length:
@@ -3400,9 +3410,10 @@ Value evm::Builder::genCloneToMemory(Type ty, Value src,
   // An array clone that needs a loop is emitted once per type and called:
   // every storage source (sload per slot), and a calldata source whose
   // elements are not plain 32-byte words. A calldata array of words is one
-  // calldatacopy and stays inline, as does a string. Every struct clone is
-  // outlined: an identified struct may be self-referential, and the helper
-  // recurses at runtime through its members.
+  // calldatacopy and stays inline, as does a calldata or memory string. A
+  // storage string clone decodes the length and walks the slots, and is
+  // shared. Every struct clone is outlined: an identified struct may be
+  // self-referential, and the helper recurses at runtime through its members.
   std::string sym;
   if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
     if (srcDataLoc == sol::DataLocation::Storage ||
@@ -3411,6 +3422,9 @@ Value evm::Builder::genCloneToMemory(Type ty, Value src,
       sym = helpersym::cloneArrayToMemory(srcDataLoc, arrTy);
   } else if (auto structTy = dyn_cast<sol::StructType>(ty)) {
     sym = helpersym::cloneStructToMemory(srcDataLoc, structTy);
+  } else if (isa<sol::StringType>(ty) &&
+             srcDataLoc == sol::DataLocation::Storage) {
+    sym = helpersym::cloneStringToMemory(srcDataLoc);
   }
   if (sym.empty())
     return genCopyInline(ty, ty, src, /*dstAddr=*/{}, srcDataLoc,

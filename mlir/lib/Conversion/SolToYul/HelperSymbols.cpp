@@ -140,6 +140,10 @@ std::string evm::helpersym::cloneStructToMemory(sol::DataLocation src,
                           {locName(src), "memory", structKey(ty)});
 }
 
+std::string evm::helpersym::cloneStringToMemory(sol::DataLocation src) {
+  return makeHelperSymbol("clone_string", {locName(src), "memory"});
+}
+
 std::string evm::helpersym::cloneArrayToMemory(sol::DataLocation src,
                                                sol::ArrayType ty) {
   return makeHelperSymbol("clone_array",
@@ -168,6 +172,10 @@ std::string evm::helpersym::clearStorageStringTail() {
 
 std::string evm::helpersym::copyStringBytesStorageToMemory() {
   return makeHelperSymbol("copy_string_bytes", {"storage", "memory"});
+}
+
+std::string evm::helpersym::storageStringLength() {
+  return makeHelperSymbol("storage_string_length", {});
 }
 
 std::string evm::helpersym::allocMemoryArray(bool zeroInit, sol::ArrayType ty) {
@@ -224,6 +232,17 @@ std::string evm::helpersym::indexStorageArray(sol::ArrayType arrTy,
   if (noPanicBounds)
     fields.push_back("nopanic");
   return makeHelperSymbol("index_storage_array", fields);
+}
+
+std::string evm::helpersym::pushStorageString(bool zero) {
+  SmallVector<StringRef> fields;
+  if (zero)
+    fields.push_back("zero");
+  return makeHelperSymbol("push_storage_string", fields);
+}
+
+std::string evm::helpersym::popStorageString() {
+  return makeHelperSymbol("pop_storage_string", {});
 }
 
 std::string evm::helpersym::pushStorageArray(sol::ArrayType ty) {

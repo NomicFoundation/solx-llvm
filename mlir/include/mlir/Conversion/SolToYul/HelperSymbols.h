@@ -56,6 +56,15 @@ std::string copyStructToStorage(mlir::sol::DataLocation src,
 std::string cloneStructToMemory(mlir::sol::DataLocation src,
                                 mlir::sol::StructType ty);
 
+/// `__sol.clone_string.storage.memory`
+///
+/// Emitted for an allocating copy of a storage string into memory: a storage
+/// string read, returned or encoded. A calldata or memory source is one bulk
+/// copy and stays inline. Allocates the memory string, writes the length,
+/// copies the bytes through \ref copyStringBytesStorageToMemory and returns
+/// the new pointer.
+std::string cloneStringToMemory(mlir::sol::DataLocation src);
+
 /// `__sol.clone_array.<src>.memory.<ty>`
 ///
 /// Emitted for an allocating copy of an array into memory that needs a loop:
@@ -101,6 +110,15 @@ std::string clearStorageStringTail();
 /// Copies the raw bytes for both the inline and the out-of-place layout,
 /// without writing the length word.
 std::string copyStringBytesStorageToMemory();
+
+/// `__sol.storage_string_length`
+///
+/// Emitted for every length read of a storage string or bytes: a length
+/// query, an index, a copy or a push. Takes the loaded length slot and
+/// returns the length of the inline and the out-of-place layout, panicking
+/// on an encoding that is neither. The body reads only the slot word, so one
+/// helper serves every storage string of the unit.
+std::string storageStringLength();
 
 /// `__sol.alloc_array.<zeroed|uninit>.memory.<ty>`
 ///
@@ -155,6 +173,21 @@ std::string abiEncodeTuple(bool padded, bool dynamicInplace,
 /// index against the length, hashes the slot of a dynamic array and returns
 /// the element slot, plus the byte offset for packed elements.
 std::string indexStorageArray(mlir::sol::ArrayType arrTy, bool noPanicBounds);
+
+/// `__sol.push_storage_string[.zero]`
+///
+/// Emitted for every `push` on a storage string or bytes: with a value, or
+/// `.zero` for the argument-less push that appends a zero byte and returns
+/// the address of the new byte. Handles the inline and the out-of-place
+/// layout and the switch between them.
+std::string pushStorageString(bool zero);
+
+/// `__sol.pop_storage_string`
+///
+/// Emitted for every `pop` on a storage string or bytes. Panics if empty,
+/// clears the removed byte and stores the new length, switching back to the
+/// inline layout at 31 bytes.
+std::string popStorageString();
 
 /// `__sol.push_storage_array.<ty>`
 ///
