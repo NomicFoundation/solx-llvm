@@ -58,3 +58,20 @@ Location mlir::evm::fuseArtificialSubprogram(ModuleOp mod, StringRef name,
   return fuseSubprogram(fusedCompileUnit.getMetadata(), name, declLoc,
                         LLVM::DIFlags::Artificial);
 }
+
+Location mlir::evm::freshSubprogram(Location loc) {
+  auto fused = dyn_cast<FusedLocWith<LLVM::DISubprogramAttr>>(loc);
+  if (!fused)
+    return loc;
+
+  LLVM::DISubprogramAttr subprogram = fused.getMetadata();
+  MLIRContext *context = loc.getContext();
+  auto fresh = LLVM::DISubprogramAttr::get(
+      context, DistinctAttr::create(UnitAttr::get(context)),
+      subprogram.getCompileUnit(), subprogram.getScope(), subprogram.getName(),
+      subprogram.getLinkageName(), subprogram.getFile(), subprogram.getLine(),
+      subprogram.getScopeLine(), subprogram.getSubprogramFlags(),
+      subprogram.getType(), subprogram.getRetainedNodes(),
+      subprogram.getAnnotations(), subprogram.getFlags());
+  return FusedLoc::get(context, fused.getLocations(), fresh);
+}
