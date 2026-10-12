@@ -285,6 +285,11 @@ private:
                                     mlir::Value dstAddr, mlir::Location loc);
 
   /// Inline expansion behind genCopyStringDataFromStorageToMemory.
+  /// Inline expansion behind genStorageStringLength: decodes the length of
+  /// the inline and the out-of-place layout from \p lengthSlot and panics on
+  /// an encoding that is neither.
+  Value genStorageStringLengthInline(Value lengthSlot, Location loc);
+
   void genCopyStringDataFromStorageToMemoryInline(mlir::Value src,
                                                   mlir::Value lengthSlot,
                                                   mlir::Value length,
@@ -454,7 +459,9 @@ public:
   void genStringStore(std::string const &str, Value addr,
                       std::optional<Location> locArg = std::nullopt);
 
-  /// Generates length of a string in storage.
+  /// Returns the length of a storage string from its loaded \p lengthSlot,
+  /// through the shared `__sol.storage_string_length` helper (see
+  /// genStorageStringLengthInline).
   mlir::Value
   genStorageStringLength(mlir::Value lengthSlot,
                          std::optional<mlir::Location> locArg = std::nullopt);

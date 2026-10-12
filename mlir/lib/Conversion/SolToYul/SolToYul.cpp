@@ -4249,14 +4249,15 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 
     // Generate the call to constructor (if required).
     if (ctor && op.getKind() != sol::ContractKind::Library) {
-      auto progSize = r.create<yul::DataSizeOp>(ctorLoc, creationObj.getName());
-      auto codeSize = r.create<yul::CodeSizeOp>(ctorLoc);
-      auto argSize = r.create<yul::SubOp>(ctorLoc, codeSize, progSize);
-      Value tupleStart = ctorEvmB.genMemAlloc(argSize);
-      r.create<yul::CodeCopyOp>(ctorLoc, tupleStart, progSize, argSize);
       std::vector<Value> decodedArgs;
       FunctionType ctorFnTy = *ctor.getOrigFnType();
       if (!ctorFnTy.getInputs().empty()) {
+        auto progSize =
+            r.create<yul::DataSizeOp>(ctorLoc, creationObj.getName());
+        auto codeSize = r.create<yul::CodeSizeOp>(ctorLoc);
+        auto argSize = r.create<yul::SubOp>(ctorLoc, codeSize, progSize);
+        Value tupleStart = ctorEvmB.genMemAlloc(argSize);
+        r.create<yul::CodeCopyOp>(ctorLoc, tupleStart, progSize, argSize);
         ctorEvmB.genABITupleDecoding(
             ctorFnTy.getInputs(), tupleStart,
             /*tupleEnd=*/r.create<yul::AddOp>(ctorLoc, tupleStart, argSize),
