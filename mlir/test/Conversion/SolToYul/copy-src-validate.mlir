@@ -4,14 +4,29 @@
 // element with the source element type, then convert to the destination
 // element type.
 
+// Same-type copies into an unpacked element store the cleaned word unmasked.
+// CHECK-LABEL: yul.func @cd2s_i136_i136
+// CHECK:           %[[V:.*]] = yul.calldataload
+// CHECK-NEXT:      %[[C16:.*]] = yul.constant 16
+// CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C16]], %[[V]]
+// CHECK-NEXT:      yul.cmp ne, %[[V]], %[[S]]
+// CHECK:           yul.revert
+// CHECK:           yul.sstore %{{.*}}, %[[S]]
+
+// CHECK-LABEL: yul.func @m2s_i136_i136
+// CHECK:         yul.for
+// CHECK:         yul.for
+// CHECK:           %[[V:.*]] = yul.mload
+// CHECK-NEXT:      %[[C16:.*]] = yul.constant 16
+// CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C16]], %[[V]]
+// CHECK-NEXT:      yul.sstore %{{.*}}, %[[S]]
+
 // CHECK-LABEL: yul.func @m2s_i8_i136
 // CHECK:         yul.for
 // CHECK:           %[[V:.*]] = yul.mload
 // CHECK-NEXT:      %[[C0:.*]] = yul.constant 0
 // CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
-// CHECK-NEXT:      %[[M136:.*]] = yul.constant 87112285931760246646623899502532662132735
-// CHECK-NEXT:      %[[F:.*]] = yul.and %[[S]], %[[M136]]
-// CHECK-NEXT:      yul.sstore %{{.*}}, %[[F]]
+// CHECK-NEXT:      yul.sstore %{{.*}}, %[[S]]
 
 // CHECK-LABEL: yul.func @cd2s_i8_i16
 // CHECK:         yul.for
@@ -29,9 +44,7 @@
 // CHECK:           %[[V:.*]] = yul.arith_shr
 // CHECK-NEXT:      %[[C0:.*]] = yul.constant 0
 // CHECK-NEXT:      %[[S:.*]] = yul.signextend %[[C0]], %[[V]]
-// CHECK-NEXT:      %[[M136:.*]] = yul.constant 87112285931760246646623899502532662132735
-// CHECK-NEXT:      %[[F:.*]] = yul.and %[[S]], %[[M136]]
-// CHECK-NEXT:      yul.sstore %{{.*}}, %[[F]]
+// CHECK-NEXT:      yul.sstore %{{.*}}, %[[S]]
 
 // Packed -> packed storage repack: sign-extend the int8 field into int16.
 // CHECK-LABEL: yul.func @s2s_i8_i16
@@ -190,6 +203,16 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
     sol.func @m2s_i8_i136(%arg0: !sol.array<? x si8, Memory>) attributes {orig_fn_type = (!sol.array<? x si8, Memory>) -> (), selector = 12 : i32, state_mutability = #NonPayable} {
       %0 = sol.addr_of @si136 : !sol.array<? x si136, Storage>
       sol.copy %arg0, %0 : !sol.array<? x si8, Memory>, !sol.array<? x si136, Storage>
+      sol.return
+    }
+    sol.func @m2s_i136_i136(%arg0: !sol.array<? x si136, Memory>) attributes {orig_fn_type = (!sol.array<? x si136, Memory>) -> (), selector = 13 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @si136 : !sol.array<? x si136, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x si136, Memory>, !sol.array<? x si136, Storage>
+      sol.return
+    }
+    sol.func @cd2s_i136_i136(%arg0: !sol.array<? x si136, CallData>) attributes {orig_fn_type = (!sol.array<? x si136, CallData>) -> (), selector = 14 : i32, state_mutability = #NonPayable} {
+      %0 = sol.addr_of @si136 : !sol.array<? x si136, Storage>
+      sol.copy %arg0, %0 : !sol.array<? x si136, CallData>, !sol.array<? x si136, Storage>
       sol.return
     }
   } {kind = #Contract}
