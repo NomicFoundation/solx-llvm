@@ -16,14 +16,17 @@
 
 #include "mlir/Conversion/SolToYul/EVMUtil.h"
 #include "mlir/Conversion/SolToYul/EVMConstants.h"
+#include "mlir/Conversion/SolToYul/SolToYul.h"
 #include "mlir/Conversion/SolToYul/Util.h"
 #include "mlir/Dialect/Sol/DebugInfo.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include <functional>
+#include <tuple>
 
 using namespace mlir;
 
@@ -717,17 +720,6 @@ static void emitRepackStorageToStorageCopyLoop(OpBuilder &b, Location loc,
   }
 }
 
-// Returns true when a calldata array element type can be copied directly as a
-// 32-byte word in the fast-path array copy.
-bool canFastCopyCalldataArray(Type eltTy) {
-  if (auto intTy = dyn_cast<IntegerType>(eltTy))
-    // TODO: Can we allow signed integers here as well?
-    return intTy.getWidth() == 256 && !intTy.isSigned();
-
-  auto bytesTy = dyn_cast<sol::FixedBytesType>(eltTy);
-  return bytesTy && bytesTy.getSize() == 32;
-}
-
 // Centralizes common ABI decode bounds checks and the canonical diagnostic
 // messages used when those checks fail.
 struct ABIDecodeGuards {
@@ -774,6 +766,17 @@ struct ABIDecodeGuards {
     evmB.genDebugRevertWithMsg(invalid, msg, loc);
   }
 
+  /// Resolves a tail reference: loads the offset word at \p head from memory
+  /// or calldata, checks that it fits 64 bits (\p msg otherwise) and returns
+  /// \p base plus the offset.
+  Value resolveTailOffset(Value head, Value base, bool fromMem,
+                          char const *msg) {
+    Value offset = fromMem ? Value(b.create<yul::MLoadOp>(loc, head))
+                           : Value(b.create<yul::CallDataLoadOp>(loc, head));
+    requireUint64(offset, msg);
+    return b.create<yul::AddOp>(loc, base, offset);
+  }
+
   // Validates that a computed end address stays within the tuple boundary.
   void requireEndInBounds(Value endAddr, char const *msg) {
     Value invalid = bExt.genCmp(yul::CmpPredicate::ugt, endAddr, tupleEnd);
@@ -806,6 +809,49 @@ struct ABIDecodeGuards {
   }
 };
 } // namespace
+
+bool evm::isWordElt(Type ty) {
+  // Every 256-bit pattern is a valid value, whatever the signedness.
+  if (auto intTy = dyn_cast<IntegerType>(ty))
+    return intTy.getWidth() == 256;
+
+  auto bytesTy = dyn_cast<sol::FixedBytesType>(ty);
+  return bytesTy && bytesTy.getSize() == 32;
+}
+
+// Returns true when a memory array is coded by a loop over its elements
+// rather than one bulk copy: its elements are not plain 32-byte words.
+static bool memArrayNeedsLoop(sol::ArrayType arrTy) {
+  return arrTy.getDataLocation() == sol::DataLocation::Memory &&
+         !evm::isWordElt(arrTy.getEltType());
+}
+
+void evm::Builder::genBulkCopy(Value dstAddr, Value srcAddr, Value length,
+                               sol::DataLocation srcDataLoc, Location loc,
+                               bool withCleanup) {
+  if (srcDataLoc == sol::DataLocation::Memory)
+    b.create<yul::MCopyOp>(loc, dstAddr, srcAddr, length);
+  else if (srcDataLoc == sol::DataLocation::CallData)
+    b.create<yul::CallDataCopyOp>(loc, dstAddr, srcAddr, length);
+  else
+    llvm_unreachable("Unexpected data location");
+
+  if (withCleanup) {
+    // Canonicalize the trailing bytes of a variable-length copy by clearing
+    // the word at dst + length.
+    mlir::solgen::BuilderExt bExt(b, loc);
+    Value cleanupAddr = b.create<yul::AddOp>(loc, dstAddr, length);
+    b.create<yul::MStoreOp>(loc, cleanupAddr, bExt.genI256Const(0, loc));
+  }
+}
+
+void evm::Builder::genBulkWordCopy(Value dstAddr, Value srcAddr, Value count,
+                                   sol::DataLocation srcDataLoc, Location loc) {
+  mlir::solgen::BuilderExt bExt(b, loc);
+  genBulkCopy(dstAddr, srcAddr,
+              b.create<yul::MulOp>(loc, count, bExt.genI256Const(32)),
+              srcDataLoc, loc);
+}
 
 unsigned evm::getAlignment(evm::AddrSpace addrSpace) {
   // Stack objects are compiler-generated i256 cells, 32-byte aligned per the
@@ -1124,11 +1170,55 @@ Value evm::Builder::genMemAllocForDynArray(Value sizeVar, Value sizeInBytes,
   return memPtr;
 }
 
-/// Recursively generates the memory allocation and initialization code for
-/// the memory-located aggregate type \p ty.
+// Returns true when \p v is a compile-time constant. The type converter may
+// leave a single materialization cast over the constant, which is looked
+// through. The check runs on the raw length, before the allocation entry
+// wraps a narrow literal in cleanup arithmetic, so nothing else is expected
+// in between.
+static bool isConstantValue(Value v) {
+  if (auto cast = v.getDefiningOp<UnrealizedConversionCastOp>();
+      cast && cast->getNumOperands() == 1)
+    v = cast->getOperand(0);
+  // yul.constant is not ConstantLike, so it is matched by kind.
+  return v.getDefiningOp<yul::ConstantOp>() || matchPattern(v, m_Constant());
+}
+
+Value evm::Builder::genMemAllocArray(sol::ArrayType arrTy, bool zeroInit,
+                                     Value sizeVar, int64_t recDepth,
+                                     Location loc) {
+  SmallVector<Value> args;
+  if (sizeVar)
+    args.push_back(sizeVar);
+  return genHelperCall(
+      helpersym::allocMemoryArray(zeroInit, arrTy), args, b.getIntegerType(256),
+      [&](ValueRange a, Location bodyLoc) {
+        return genMemAllocInline(arrTy, zeroInit, /*initVals=*/{},
+                                 sizeVar ? a[0] : Value(), recDepth, bodyLoc);
+      },
+      loc);
+}
+
 Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
                                 Value sizeVar, int64_t recDepth,
                                 std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  // A static array of reference-typed elements allocates its rows in a loop,
+  // emitted once per type. A dynamic array below the outermost call has no
+  // rows to allocate: its slot gets the empty-array sentinel.
+  auto arrTy = dyn_cast<sol::ArrayType>(ty);
+  if (arrTy && initVals.empty() && !arrTy.isDynSized() &&
+      sol::isNonPtrRefType(arrTy.getEltType()))
+    return genMemAllocArray(arrTy, zeroInit, /*sizeVar=*/{}, recDepth, loc);
+
+  return genMemAllocInline(ty, zeroInit, initVals, sizeVar, recDepth, loc);
+}
+
+/// Recursively generates the memory allocation and initialization code for
+/// the memory-located aggregate type \p ty.
+Value evm::Builder::genMemAllocInline(Type ty, bool zeroInit,
+                                      ValueRange initVals, Value sizeVar,
+                                      int64_t recDepth,
+                                      std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
@@ -1284,13 +1374,25 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
+  // A dynamic array of reference-typed elements with a runtime length
+  // allocates its rows in a loop, emitted once per type. A constant length
+  // (`new T[](3)`) stays inline: the optimizer unrolls and folds the row loop
+  // against the constant, which a helper boundary would hide. Constness is
+  // decided on the raw value, before the cleanup below wraps a narrow literal
+  // in arithmetic.
+  auto arrTy = dyn_cast<sol::ArrayType>(ty);
+  bool outlineRows = arrTy && arrTy.isDynSized() && initVals.empty() &&
+                     sol::isNonPtrRefType(arrTy.getEltType()) && sizeVar &&
+                     !isConstantValue(sizeVar);
+
   // If sizeVar and sizeVarTy are provided, insert cleanup for sizeVar. This is
   // necessary as sizeVar may contain dirty high bits.
   if (sizeVar && sizeVarTy)
     sizeVar = genCleanup(sizeVarTy, sizeVar, loc);
 
-  return genMemAlloc(ty, zeroInit, initVals, sizeVar,
-                     /*recDepth=*/-1, loc);
+  if (outlineRows)
+    return genMemAllocArray(arrTy, zeroInit, sizeVar, /*recDepth=*/-1, loc);
+  return genMemAlloc(ty, zeroInit, initVals, sizeVar, /*recDepth=*/-1, loc);
 }
 
 Value evm::Builder::genDynSize(Value addr, Type ty,
@@ -1303,11 +1405,9 @@ Value evm::Builder::genDynSize(Value addr, Type ty,
     return b.create<LLVM::ExtractValueOp>(loc, i256Ty, addr,
                                           b.getDenseI64ArrayAttr({1}));
 
-  Value sizeSlot = genLoad(addr, dataLoc, loc);
   if (isa<sol::StringType>(ty) && dataLoc == sol::DataLocation::Storage)
-    return genStorageStringLength(sizeSlot, loc);
-
-  return sizeSlot;
+    return genStringLength(addr, ty, loc).first;
+  return genLoad(addr, dataLoc, loc);
 }
 
 Value evm::Builder::genDataAddrPtr(Value addr, Type ty,
@@ -1361,8 +1461,8 @@ Value evm::Builder::genDynBytesToFixedBytes(Value src, Type srcTy,
   Value length = nullptr;
   Value loadedWord = nullptr;
   if (srcDataLoc == sol::DataLocation::Storage) {
-    Value lengthSlot = genLoad(src, srcDataLoc, loc);
-    length = genStorageStringLength(lengthSlot, loc);
+    Value lengthSlot;
+    std::tie(length, lengthSlot) = genStringLength(src, srcTy, loc);
 
     // If length > 31, the payload lives in the out-of-place data area and the
     // first word must be loaded from there. Otherwise the payload is packed
@@ -1573,6 +1673,15 @@ Value evm::Builder::genPackedStorageAddr(Value baseSlot, Value idx, Type eltTy,
   auto [slot, byteOffset] = genPackedStorageAddrPair(
       baseSlot, idx, sol::getNumBytes(eltTy), isDataLeftAligned, loc);
   return bExt.genLLVMStruct({slot, byteOffset});
+}
+
+Value evm::Builder::genStorageEltAddr(Value dataSlot, Value idx,
+                                      sol::ArrayType arrTy, Location loc) {
+  Type eltTy = arrTy.getEltType();
+  if (sol::canBePacked(eltTy))
+    return genPackedStorageAddr(dataSlot, idx, eltTy,
+                                /*isDataLeftAligned=*/false, loc);
+  return genAddrAtIdx(dataSlot, idx, arrTy, sol::DataLocation::Storage, loc);
 }
 
 static Value genPunchHoleInValue(OpBuilder &b, Value value, Value shiftBits,
@@ -1838,7 +1947,7 @@ Value evm::Builder::genStorageStringLength(Value lengthSlot,
   Value panicCond =
       bExt.genCmp(yul::CmpPredicate::eq, isOutOfPlaceEnc, lengthLT32);
 
-  genPanic(mlir::evm::PanicCode::StorageEncodingError, panicCond);
+  genPanic(mlir::evm::PanicCode::StorageEncodingError, panicCond, loc);
 
   return length;
 }
@@ -1862,14 +1971,12 @@ void evm::Builder::genClearStringStorageTail(Value dstAddr, Value oldLength,
                                              Value newLength,
                                              std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  auto i256Ty = b.getIntegerType(256);
-  sol::FuncOp fn = getOrCreateHelperFn(
-      helpersym::clearStringTail(), {i256Ty, i256Ty, i256Ty}, {},
+  genHelperCall(
+      helpersym::clearStorageStringTail(), {dstAddr, oldLength, newLength},
       [&](ValueRange args, Location bodyLoc) {
         genClearStringStorageTailInline(args[0], args[1], args[2], bodyLoc);
-        b.create<sol::ReturnOp>(bodyLoc);
-      });
-  b.create<sol::CallOp>(loc, fn, ValueRange{dstAddr, oldLength, newLength});
+      },
+      loc);
 }
 
 void evm::Builder::genClearStringStorageTailInline(Value dstAddr,
@@ -1914,37 +2021,19 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
                                           std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   sol::DataLocation srcDataLoc = sol::getDataLocation(ty);
-  auto i256Ty = b.getIntegerType(256);
 
-  // Calldata string references are fat pointers, which do not fit the plain
-  // i256 helper signature. Unpack the raw data address and the length here
-  // and pass them to a helper with a three argument signature.
-  if (srcDataLoc == sol::DataLocation::CallData) {
-    Value dataAddr = genDataAddrPtr(src, srcDataLoc, loc);
-    Value length = genDynSize(src, ty, loc);
-    sol::FuncOp fn = getOrCreateHelperFn(
-        helpersym::copy(srcDataLoc, sol::DataLocation::Storage, "string"),
-        {i256Ty, i256Ty, i256Ty}, {}, [&](ValueRange args, Location bodyLoc) {
-          genCopyStringToStorageInline(args[0], ty, args[2], bodyLoc,
-                                       /*srcLength=*/args[1]);
-          b.create<sol::ReturnOp>(bodyLoc);
-        });
-    b.create<sol::CallOp>(loc, fn, ValueRange{dataAddr, length, dstAddr});
-    return;
-  }
-
-  sol::FuncOp fn = getOrCreateHelperFn(
-      helpersym::copy(srcDataLoc, sol::DataLocation::Storage, "string"),
-      {i256Ty, i256Ty}, {}, [&](ValueRange args, Location bodyLoc) {
+  // The source is the legalized string reference: a calldata fat pointer
+  // stays one struct argument.
+  genHelperCall(
+      helpersym::copyStringToStorage(srcDataLoc), {src, dstAddr},
+      [&](ValueRange args, Location bodyLoc) {
         genCopyStringToStorageInline(args[0], ty, args[1], bodyLoc);
-        b.create<sol::ReturnOp>(bodyLoc);
-      });
-  b.create<sol::CallOp>(loc, fn, ValueRange{src, dstAddr});
+      },
+      loc);
 }
 
 void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
-                                                Value dstAddr, Location loc,
-                                                Value srcLength) {
+                                                Value dstAddr, Location loc) {
   // Storage layout for `bytes` / `string` in Solidity:
   //
   // - These types use two different encodings depending on their length.
@@ -1970,21 +2059,8 @@ void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
   //
   mlir::solgen::BuilderExt bExt(b, loc);
 
-  Value lengthSlot = nullptr;
-  Value length = nullptr;
   sol::DataLocation srcDataLoc = sol::getDataLocation(ty);
-  if (srcDataLoc == sol::DataLocation::CallData) {
-    // The caller pre-decodes the fat pointer: src is the raw data address and
-    // srcLength is the length.
-    assert(srcLength && "calldata source needs a pre-decoded length");
-    length = srcLength;
-  } else if (srcDataLoc == sol::DataLocation::Memory) {
-    length = genDynSize(src, ty, loc);
-  } else {
-    assert(srcDataLoc == sol::DataLocation::Storage);
-    lengthSlot = genLoad(src, srcDataLoc, loc);
-    length = genStorageStringLength(lengthSlot, loc);
-  }
+  auto [length, lengthSlot] = genStringLength(src, ty, loc);
 
   Value oldLength = genStorageStringLength(
       genLoad(dstAddr, sol::DataLocation::Storage, loc), loc);
@@ -1999,9 +2075,7 @@ void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
   b.setInsertionPointToStart(&ifOutOfPlace.getThenRegion().front());
 
   Value dstDataArea = genDataAddrPtr(dstAddr, sol::DataLocation::Storage, loc);
-  Value srcDataAddr = srcDataLoc == sol::DataLocation::CallData
-                          ? src
-                          : genDataAddrPtr(src, srcDataLoc, loc);
+  Value srcDataAddr = genDataAddrPtr(src, srcDataLoc, loc);
   Value loopEnd = b.create<yul::AndOp>(
       loc, length, bExt.genI256Const(~APInt(256, 0x1F), loc));
 
@@ -2065,17 +2139,13 @@ void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
     // so its data occupies the high 31 bytes of `lengthSlot` and `length*2`
     // sits in the low byte. getI256MSBMaskedValue keeps exactly the top
     // `length` bytes and discards the rest, which correctly strips that low
-    // byte. For non-storage sources we load the raw data word directly (for
-    // calldata sources src already is the raw data address).
+    // byte. For non-storage sources we load the raw data word directly.
     // isNotEmptyCond above ensures length > 0, satisfying the maskLen > 0
     // precondition of getI256MSBMaskedValue.
-    Value val;
-    if (srcDataLoc == sol::DataLocation::Storage)
-      val = lengthSlot;
-    else if (srcDataLoc == sol::DataLocation::CallData)
-      val = genLoad(src, srcDataLoc, loc);
-    else
-      val = genLoad(genDataAddrPtr(src, srcDataLoc, loc), srcDataLoc, loc);
+    Value val =
+        srcDataLoc == sol::DataLocation::Storage
+            ? lengthSlot
+            : genLoad(genDataAddrPtr(src, srcDataLoc, loc), srcDataLoc, loc);
     Value maskedVal = getI256MSBMaskedValue(b, val, length, loc);
     Value doubleLength =
         b.create<yul::MulOp>(loc, length, bExt.genI256Const(2, loc));
@@ -2112,80 +2182,20 @@ Value evm::Builder::genStorageArraySlotCount(Value len, Type eltTy,
 }
 
 void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
-  // Route self-referential structures through an out-of-line helper that
-  // recurses at runtime instead. Every other type (including literal structs,
-  // which cannot be self-referential) is expanded inline.
-  if (auto structTy = dyn_cast<sol::StructType>(ty);
-      structTy && structTy.isIdentified()) {
-    // Emit (or reuse) a `sol.func` that clears the struct and call it. The
-    // struct name is the only key field: identified structs are uniqued by
-    // (name, data location), but only the Storage variant is ever cleared, so
-    // no location field is needed to keep the symbol unique (unlike the copy
-    // helpers, which embed the source and destination data locations). The
-    // helper's symbol is registered before its body is generated, so a
-    // self-reference reached while building the body (through the struct's
-    // dynamic-array members) lowers to a recursive call rather than recursing
-    // forever here.
-    auto i256Ty = b.getIntegerType(256);
-    sol::FuncOp fn = getOrCreateHelperFn(
-        helpersym::clearStorage(structTy), {i256Ty}, {},
-        [&](ValueRange args, Location bodyLoc) {
-          genClearStorageValueInline(structTy, args[0], bodyLoc);
-          b.create<sol::ReturnOp>(bodyLoc);
-        });
-    b.create<sol::CallOp>(loc, fn, ValueRange{slot});
+  if (!isa<sol::StructType, sol::ArrayType>(ty)) {
+    genClearStorageValueInline(ty, slot, loc);
     return;
   }
-  genClearStorageValueInline(ty, slot, loc);
-}
-
-/// Builds "__sol.<spelling>.<field>..." (see the helpersym doc in EVMUtil.h
-/// for the uniqueness argument).
-static std::string makeHelperSymbol(StringRef spelling,
-                                    ArrayRef<StringRef> fields) {
-  std::string sym;
-  llvm::raw_string_ostream os(sym);
-  os << "__sol." << spelling;
-  for (StringRef field : fields) {
-    assert(!field.contains('.') && "helper symbol field must not contain '.'");
-    os << '.' << field;
-  }
-  return sym;
-}
-
-std::string evm::helpersym::copy(sol::DataLocation src, sol::DataLocation dst,
-                                 StringRef tyName) {
-  return makeHelperSymbol("copy",
-                          {sol::stringifyDataLocation(src).lower(),
-                           sol::stringifyDataLocation(dst).lower(), tyName});
-}
-
-std::string evm::helpersym::clearStorage(sol::StructType ty) {
-  assert(ty.isIdentified() && "storage clear helpers are per identified "
-                              "struct");
-  return makeHelperSymbol("clear_storage", {ty.getName()});
-}
-
-std::string evm::helpersym::clearStringTail() {
-  return makeHelperSymbol("clear_string_tail", {});
-}
-
-std::string evm::helpersym::copyStringData(sol::DataLocation src,
-                                           sol::DataLocation dst) {
-  return makeHelperSymbol("copy_string_data",
-                          {sol::stringifyDataLocation(src).lower(),
-                           sol::stringifyDataLocation(dst).lower()});
-}
-
-std::string evm::helpersym::internalDispatch(bool runtime,
-                                             ArrayRef<int64_t> candidateIds) {
-  SmallVector<std::string> idStrs;
-  idStrs.reserve(candidateIds.size());
-  for (int64_t id : candidateIds)
-    idStrs.push_back(std::to_string(id));
-  SmallVector<StringRef> fields{runtime ? "rt" : "cr"};
-  llvm::append_range(fields, idStrs);
-  return makeHelperSymbol("internal_dispatch", fields);
+  std::string sym =
+      isa<sol::StructType>(ty)
+          ? helpersym::clearStorageStruct(cast<sol::StructType>(ty))
+          : helpersym::clearStorageArray(cast<sol::ArrayType>(ty));
+  genHelperCall(
+      sym, {slot},
+      [&](ValueRange args, Location bodyLoc) {
+        genClearStorageValueInline(ty, args[0], bodyLoc);
+      },
+      loc);
 }
 
 sol::FuncOp evm::Builder::getOrCreateHelperFn(
@@ -2206,11 +2216,33 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
   // functions compilable and is a subject of future removal. The pipeline
   // should stop lowering free functions that no contract references, matching
   // the upstream solc pipeline, which generates no code for them.
-  auto contract =
-      b.getInsertionBlock()->getParentOp()->getParentOfType<sol::ContractOp>();
-  Operation *host = contract ? contract.getOperation() : mod.getOperation();
-  Block *hostBlock =
-      contract ? &contract.getBodyRegion().front() : mod.getBody();
+  // Code emitted by the contract lowering itself (the dispatcher and the
+  // constructor prologue) no longer has an enclosing contract: it lives in a
+  // yul.object, which is a symbol table of its own. A helper created there is
+  // hosted by that object, so it ends up in the same module as its callers.
+  // The insertion point may sit directly in the object's entry block, as it
+  // does while the constructor arguments are decoded. Then ip is the object
+  // itself and must count as the host, or the helper would land at module
+  // scope, outside the object that calls it.
+  Operation *ip = b.getInsertionBlock()->getParentOp();
+  // ip itself when it is an op of the tag's type, else its closest ancestor
+  // of that type. Operation::getParentOfType starts at the parent and would
+  // skip ip.
+  auto selfOrParentOfType = [ip](auto tag) {
+    using OpTy = decltype(tag);
+    if (auto self = dyn_cast<OpTy>(ip))
+      return self;
+    return ip->getParentOfType<OpTy>();
+  };
+  auto contract = selfOrParentOfType(sol::ContractOp());
+  auto object =
+      contract ? yul::ObjectOp() : selfOrParentOfType(yul::ObjectOp());
+  Operation *host = contract ? contract.getOperation()
+                    : object ? object.getOperation()
+                             : mod.getOperation();
+  Block *hostBlock = contract ? &contract.getBodyRegion().front()
+                     : object ? &object.getBody().front()
+                              : mod.getBody();
 
   auto fnTy = FunctionType::get(b.getContext(), argTys, resTys);
 
@@ -2234,6 +2266,8 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
 
   auto fn = b.create<sol::FuncOp>(
       evm::fuseArtificialSubprogram(mod, symbol, hostLoc), symbol, fnTy);
+  if (object && object.isRuntime())
+    fn.setRuntimeAttr(b.getUnitAttr());
   Block *entry = &fn.getBody().emplaceBlock();
   SmallVector<Location> argLocs(argTys.size(), bodyLoc);
   entry->addArguments(argTys, argLocs);
@@ -2241,6 +2275,43 @@ sol::FuncOp evm::Builder::getOrCreateHelperFn(
   genBody(entry->getArguments(), bodyLoc);
 
   return fn;
+}
+
+void evm::Builder::genHelperCall(
+    StringRef symbol, ValueRange args,
+    llvm::function_ref<void(ValueRange, Location)> genBody,
+    std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  sol::FuncOp fn = getOrCreateHelperFn(symbol, args.getTypes(), {},
+                                       [&](ValueRange a, Location bodyLoc) {
+                                         genBody(a, bodyLoc);
+                                         b.create<sol::ReturnOp>(bodyLoc);
+                                       });
+  b.create<sol::CallOp>(loc, fn, args);
+}
+
+Value evm::Builder::genHelperCall(
+    StringRef symbol, ValueRange args, Type resTy,
+    llvm::function_ref<Value(ValueRange, Location)> genBody,
+    std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  sol::FuncOp fn = getOrCreateHelperFn(
+      symbol, args.getTypes(), {resTy}, [&](ValueRange a, Location bodyLoc) {
+        b.create<sol::ReturnOp>(bodyLoc, ValueRange{genBody(a, bodyLoc)});
+      });
+  return b.create<sol::CallOp>(loc, fn, args).getResult(0);
+}
+
+SmallVector<Value> evm::Builder::genHelperCall(
+    StringRef symbol, ValueRange args, TypeRange resTys,
+    llvm::function_ref<SmallVector<Value>(ValueRange, Location)> genBody,
+    std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  sol::FuncOp fn = getOrCreateHelperFn(
+      symbol, args.getTypes(), resTys, [&](ValueRange a, Location bodyLoc) {
+        b.create<sol::ReturnOp>(bodyLoc, genBody(a, bodyLoc));
+      });
+  return SmallVector<Value>(b.create<sol::CallOp>(loc, fn, args).getResults());
 }
 
 void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
@@ -2513,56 +2584,51 @@ void evm::Builder::genResizeDynStorageArray(Value arraySlot, Value newLen,
                            /*isDecrement=*/false, loc);
 }
 
+std::pair<Value, Value> evm::Builder::genStringLength(Value src, Type ty,
+                                                      Location loc) {
+  if (sol::getDataLocation(ty) != sol::DataLocation::Storage)
+    return {genDynSize(src, ty, loc), Value()};
+  Value lengthSlot = genLoad(src, sol::DataLocation::Storage, loc);
+  return {genStorageStringLength(lengthSlot, loc), lengthSlot};
+}
+
 Value evm::Builder::genCopyStringDataToMemory(Value src, Type ty,
                                               Value dstDataAddr,
                                               std::optional<Location> locArg,
                                               bool withCleanup) {
   Location loc = locArg ? *locArg : defLoc;
+  auto [length, lengthSlot] = genStringLength(src, ty, loc);
+  genCopyStringBytesToMemory(src, ty, lengthSlot, length, dstDataAddr, loc,
+                             withCleanup);
+  return length;
+}
+
+void evm::Builder::genCopyStringBytesToMemory(Value src, Type ty,
+                                              Value lengthSlot, Value length,
+                                              Value dstDataAddr, Location loc,
+                                              bool withCleanup) {
   sol::DataLocation srcDataLoc = sol::getDataLocation(ty);
   if (srcDataLoc == sol::DataLocation::Storage) {
-    Value lengthSlot = genLoad(src, srcDataLoc, loc);
-    Value length = genStorageStringLength(lengthSlot, loc);
     genCopyStringDataFromStorageToMemory(src, lengthSlot, length, dstDataAddr,
                                          loc);
-    return length;
+    return;
   }
-
-  Value length = genDynSize(src, ty, loc);
-  Value srcDataAddr = genDataAddrPtr(src, srcDataLoc, loc);
-  if (srcDataLoc == sol::DataLocation::Memory)
-    b.create<yul::MCopyOp>(loc, dstDataAddr, srcDataAddr, length);
-  else if (srcDataLoc == sol::DataLocation::CallData)
-    b.create<yul::CallDataCopyOp>(loc, dstDataAddr, srcDataAddr, length);
-  else
-    llvm_unreachable("Unexpected data location");
-
-  if (withCleanup) {
-    // Canonicalize trailing bytes after variable-length payload copies by
-    // clearing the word at dst + length.
-    mlir::solgen::BuilderExt bExt(b, loc);
-    Value cleanupAddr = b.create<yul::AddOp>(loc, dstDataAddr, length);
-    b.create<yul::MStoreOp>(loc, cleanupAddr, bExt.genI256Const(0, loc));
-  }
-
-  return length;
+  genBulkCopy(dstDataAddr, genDataAddrPtr(src, srcDataLoc, loc), length,
+              srcDataLoc, loc, withCleanup);
 }
 
 void evm::Builder::genCopyStringDataFromStorageToMemory(
     Value src, Value lengthSlot, Value length, Value dstDataAddr,
     std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  auto i256Ty = b.getIntegerType(256);
-  sol::FuncOp fn =
-      getOrCreateHelperFn(helpersym::copyStringData(sol::DataLocation::Storage,
-                                                    sol::DataLocation::Memory),
-                          {i256Ty, i256Ty, i256Ty, i256Ty}, {},
-                          [&](ValueRange args, Location bodyLoc) {
-                            genCopyStringDataFromStorageToMemoryInline(
-                                args[0], args[1], args[2], args[3], bodyLoc);
-                            b.create<sol::ReturnOp>(bodyLoc);
-                          });
-  b.create<sol::CallOp>(loc, fn,
-                        ValueRange{src, lengthSlot, length, dstDataAddr});
+  genHelperCall(
+      helpersym::copyStringBytesStorageToMemory(),
+      {src, lengthSlot, length, dstDataAddr},
+      [&](ValueRange args, Location bodyLoc) {
+        genCopyStringDataFromStorageToMemoryInline(args[0], args[1], args[2],
+                                                   args[3], bodyLoc);
+      },
+      loc);
 }
 
 void evm::Builder::genCopyStringDataFromStorageToMemoryInline(Value src,
@@ -2631,7 +2697,7 @@ void evm::Builder::genPushToString(Value srcAddr, Value value,
 
   Value panicCond = bExt.genCmp(yul::CmpPredicate::ugt, oldLength,
                                 bExt.genI256Const(APInt(256, 1).shl(64), loc));
-  genPanic(mlir::evm::PanicCode::ResourceError, panicCond);
+  genPanic(mlir::evm::PanicCode::ResourceError, panicCond, loc);
 
   Value isOutOfPlace = bExt.genCmp(yul::CmpPredicate::ugt, oldLength,
                                    bExt.genI256Const(31, loc));
@@ -2699,7 +2765,7 @@ Value evm::Builder::genPushVoidToString(Value srcAddr,
 
   Value panicCond = bExt.genCmp(yul::CmpPredicate::ugt, oldLength,
                                 bExt.genI256Const(APInt(256, 1).shl(64), loc));
-  genPanic(mlir::evm::PanicCode::ResourceError, panicCond);
+  genPanic(mlir::evm::PanicCode::ResourceError, panicCond, loc);
 
   Type i256Ty = IntegerType::get(b.getContext(), 256,
                                  IntegerType::SignednessSemantics::Signless);
@@ -2772,7 +2838,7 @@ Value evm::Builder::genStringItemAddress(Value srcAddr, Value idx,
   Value length = genStorageStringLength(data, loc);
 
   auto panicCond = bExt.genCmp(yul::CmpPredicate::uge, idx, length);
-  genPanic(mlir::evm::PanicCode::ArrayOutOfBounds, panicCond);
+  genPanic(mlir::evm::PanicCode::ArrayOutOfBounds, panicCond, loc);
 
   Value isOutOfPlace =
       bExt.genCmp(yul::CmpPredicate::ugt, length, bExt.genI256Const(31, loc));
@@ -2902,6 +2968,10 @@ void evm::Builder::genPopString(Value srcAddr, Value oldData, Value length,
 // |                            | Stg->Mem/CD: compact-read loop: extract +    |
 // |                            |   cleanup + store (32-byte word per elt).    |
 // +----------------------------+----------------------------------------------+
+// | Array, word elt, Mem/CD -> | calldatacopy / mcopy of the whole payload.   |
+// |   Mem (256-bit int,        |   Nested arrays: once per innermost row      |
+// |   bytes32)                 |   from the generic fallback.                 |
+// +----------------------------+----------------------------------------------+
 // | Array, generic fallback    | any->any: yul.for over [0, len):             |
 // |   (npacked on both sides,  |   genAddrAtIdx, then resolve CD/Mem ref      |
 // |   or neither side is Stg)  |   pointers, then genCopy per element.        |
@@ -2911,13 +2981,57 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
                            sol::DataLocation dstDataLoc,
                            std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  mlir::solgen::BuilderExt bExt(b, loc);
-
-  assert(!isa<sol::MappingType>(srcTy) && !isa<sol::MappingType>(dstTy));
 
   // Compile-time SSA identity check.
   if (srcAddr == dstAddr)
     return;
+
+  // An array copy whose elements cannot be bulk copied is a loop over the
+  // elements, plus the length update and the tail clear for a storage
+  // destination. Emit it once per type pair and call. A copy that lowers to a
+  // single calldatacopy or mcopy stays inline.
+  auto dstArrTy = dyn_cast<sol::ArrayType>(dstTy);
+  auto srcArrTy = dyn_cast<sol::ArrayType>(srcTy);
+  // A copy between two non-storage locations whose elements are 32-byte words
+  // needing no cleanup is one calldatacopy or mcopy. The element types are
+  // compared, not the array types, which differ in their data location.
+  bool bulk = dstArrTy && srcArrTy &&
+              dstDataLoc != sol::DataLocation::Storage &&
+              srcDataLoc != sol::DataLocation::Storage &&
+              srcArrTy.getEltType() == dstArrTy.getEltType() &&
+              isWordElt(dstArrTy.getEltType());
+  if (dstArrTy && !bulk) {
+    genHelperCall(
+        helpersym::copyArray(srcDataLoc, dstDataLoc, srcArrTy, dstArrTy),
+        {srcAddr, dstAddr},
+        [&](ValueRange a, Location bodyLoc) {
+          genCopyInline(srcTy, dstTy, a[0], a[1], srcDataLoc, dstDataLoc,
+                        bodyLoc);
+        },
+        loc);
+    return;
+  }
+
+  genCopyInline(srcTy, dstTy, srcAddr, dstAddr, srcDataLoc, dstDataLoc, loc);
+}
+
+Value evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
+                                  Value dstAddr, sol::DataLocation srcDataLoc,
+                                  sol::DataLocation dstDataLoc,
+                                  std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  mlir::solgen::BuilderExt bExt(b, loc);
+
+  assert(!isa<sol::MappingType>(srcTy) && !isa<sol::MappingType>(dstTy));
+  // A null destination is a clone into memory. Every other destination is
+  // given, so the checks below that compare or write through dstAddr only
+  // ever see a value.
+  assert((dstAddr || dstDataLoc == sol::DataLocation::Memory) &&
+         "a null destination must be in memory");
+
+  // Compile-time SSA identity check.
+  if (srcAddr == dstAddr)
+    return dstAddr;
 
   bool srcIsStorage = srcDataLoc == sol::DataLocation::Storage;
   bool dstIsStorage = dstDataLoc == sol::DataLocation::Storage;
@@ -2945,17 +3059,27 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
         length = bExt.genI256Const(srcArrTy.getSize());
         srcDataAddr = srcAddr;
       }
-      // Update dst array length.
-      if (dstIsStorage)
+      // Update dst array length. A null destination is a clone: allocate the
+      // length word and the row table first.
+      if (dstIsStorage) {
         genResizeDynStorageArray(dstAddr, length, dstArrTy.getEltType(), loc);
-      else
+      } else {
+        if (!dstAddr) {
+          Value bytes =
+              b.create<yul::MulOp>(loc, length, bExt.genI256Const(32));
+          dstAddr = genMemAlloc(
+              b.create<yul::AddOp>(loc, bytes, bExt.genI256Const(32)), loc);
+        }
         genStore(length, dstAddr, dstDataLoc, loc);
+      }
 
       dstDataAddr = genDataAddrPtr(dstAddr, dstDataLoc, loc);
     } else {
       // Static destination array: loop over the source length, then zero any
       // tail slots in the destination that the source doesn't cover.
       length = bExt.genI256Const(srcArrTy.getSize());
+      if (!dstAddr)
+        dstAddr = genMemAlloc(dstArrTy.getSize().getZExtValue() * 32, loc);
       dstDataAddr = dstAddr;
       srcDataAddr = srcAddr;
       if (dstIsStorage && srcArrTy.getSize().ult(dstArrTy.getSize())) {
@@ -3028,7 +3152,7 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
           Value lastMasked = b.create<yul::AndOp>(loc, lastRaw, partialMask);
           b.create<yul::SStoreOp>(loc, lastDstSlot, lastMasked);
         }
-        return;
+        return dstAddr;
       }
 
       // Packed src -> packed dst, different element sizes
@@ -3036,7 +3160,7 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
         emitRepackStorageToStorageCopyLoop(b, loc, length, srcDataAddr,
                                            dstDataAddr, srcEltTy,
                                            srcEltByteSize, dstEltByteSize);
-        return;
+        return dstAddr;
       }
 
       // Non-packed src -> packed dst.
@@ -3067,7 +3191,7 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
                   b.create<yul::AddOp>(loc, srcAddr, bExt.genI256Const(1));
               return std::make_pair(newAccum, nextSrcAddr);
             });
-        return;
+        return dstAddr;
       }
 
       // Packed src -> non-packed dst.
@@ -3092,7 +3216,7 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
                                                bExt.genI256Const(maskBits));
               genStore(val, dstAddr, sol::DataLocation::Storage, loc);
             });
-        return;
+        return dstAddr;
       }
     }
 
@@ -3107,7 +3231,7 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
             Value val = genCleanupPackedStorageValue(srcEltTy, shifted, loc);
             genStore(val, dstAddr, dstDataLoc, loc);
           });
-      return;
+      return dstAddr;
     }
 
     // Memory/CallData -> storage dst packed: pack source elements into slots.
@@ -3139,38 +3263,51 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
                 b.create<yul::AddOp>(loc, srcAddr, bExt.genI256Const(32));
             return std::make_pair(newAccum, nextSrcAddr);
           });
-      return;
+      return dstAddr;
     }
 
-    // Resolve a element address before recursing:
+    // Memory/CallData -> Memory with word-sized elements that need no
+    // cleanup: both sides hold one 32-byte word per element, so the payload
+    // is one bulk copy. A nested array reaches this path once per innermost
+    // row through the generic loop below.
+    if (!srcIsStorage && dstDataLoc == sol::DataLocation::Memory &&
+        srcEltTy == dstEltTy && isWordElt(dstEltTy)) {
+      genBulkWordCopy(dstDataAddr, srcDataAddr, length, srcDataLoc, loc);
+      return dstAddr;
+    }
+
+    // Resolve the source element address before recursing:
     // - calldata with dynamic children: load the relative offset and validate
     //   bounds via genCalldataAccessRef.
     // - memory reference types: dereference the pointer stored in the slot.
     // - storage: addresses are direct.
-    auto resolveEltAddr = [&](Value addr, Type eltTy,
-                              sol::DataLocation dataLoc) -> Value {
-      if (dataLoc == sol::DataLocation::CallData &&
-          sol::hasDynamicallySizedElt(eltTy))
-        return genCalldataAccessRef(eltTy, srcDataAddr, addr,
+    auto resolveSrcEltAddr = [&](Value addr) -> Value {
+      if (srcDataLoc == sol::DataLocation::CallData &&
+          sol::hasDynamicallySizedElt(srcEltTy))
+        return genCalldataAccessRef(srcEltTy, srcDataAddr, addr,
                                     /*isNonABI=*/true, loc);
-      if (dataLoc == sol::DataLocation::Memory && sol::isNonPtrRefType(eltTy))
-        return genLoad(addr, dataLoc, loc);
+      if (srcDataLoc == sol::DataLocation::Memory &&
+          sol::isNonPtrRefType(srcEltTy))
+        return genLoad(addr, srcDataLoc, loc);
       return addr;
     };
+    // A reference element of a memory destination is a fresh object: clone
+    // it and store its pointer in the row slot.
+    bool cloneElts = !dstIsStorage && sol::isNonPtrRefType(dstEltTy);
 
     bExt.createCountedLoop(
         bExt.genI256Const(0), length, bExt.genI256Const(1), ValueRange{},
         [&](OpBuilder &b, Location loc, Value i256IndVar, ValueRange) {
-          Value srcAddrI =
-              genAddrAtIdx(srcDataAddr, i256IndVar, srcArrTy, srcDataLoc, loc);
+          Value srcAddrI = resolveSrcEltAddr(
+              genAddrAtIdx(srcDataAddr, i256IndVar, srcArrTy, srcDataLoc, loc));
           Value dstAddrI =
               genAddrAtIdx(dstDataAddr, i256IndVar, dstArrTy, dstDataLoc, loc);
-
-          srcAddrI = resolveEltAddr(srcAddrI, srcEltTy, srcDataLoc);
-          dstAddrI = resolveEltAddr(dstAddrI, dstEltTy, dstDataLoc);
-
-          genCopy(srcEltTy, dstEltTy, srcAddrI, dstAddrI, srcDataLoc,
-                  dstDataLoc, loc);
+          if (cloneElts)
+            genStore(genCloneToMemory(srcEltTy, srcAddrI, srcDataLoc, loc),
+                     dstAddrI, dstDataLoc, loc);
+          else
+            genCopy(srcEltTy, dstEltTy, srcAddrI, dstAddrI, srcDataLoc,
+                    dstDataLoc, loc);
           return SmallVector<Value>{};
         });
   } else if (sol::canBePacked(dstTy)) {
@@ -3213,43 +3350,104 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
     }
     genStore(val, dstAddr, dstDataLoc, loc);
   } else if (isa<sol::StringType>(dstTy)) {
-    if (dstDataLoc == sol::DataLocation::Storage) {
+    if (dstIsStorage) {
       genCopyStringToStorage(srcAddr, srcTy, dstAddr, loc);
-    } else if (dstDataLoc == sol::DataLocation::Memory) {
-      Value dstDataAddr = genDataAddrPtr(dstAddr, dstDataLoc, loc);
-      Value length =
-          genCopyStringDataToMemory(srcAddr, srcTy, dstDataAddr, loc);
-      // Write the string length.
+    } else {
+      auto [length, lengthSlot] = genStringLength(srcAddr, srcTy, loc);
+      // A null destination is a clone: allocate the length word and the
+      // padded bytes first.
+      if (!dstAddr)
+        dstAddr = genMemAlloc(
+            b.create<yul::AddOp>(loc, bExt.genRoundUpToMultiple<32>(length),
+                                 bExt.genI256Const(32)),
+            loc);
       genStore(length, dstAddr, dstDataLoc, loc);
+      genCopyStringBytesToMemory(srcAddr, srcTy, lengthSlot, length,
+                                 genDataAddrPtr(dstAddr, dstDataLoc, loc), loc);
     }
   } else if (auto dstStructTy = dyn_cast<sol::StructType>(dstTy)) {
-    // Struct copies to memory are handled by DataLocCastOpLowering.
-    // genCopy only sees struct copies whose destination is storage.
-    if (dstDataLoc != sol::DataLocation::Storage)
-      llvm_unreachable(
-          "struct -> memory copy must be lowered by DataLocCastOpLowering");
     auto srcStructTy = cast<sol::StructType>(srcTy);
-
-    // For recursive structures out-of-line the per-struct copy into a helper
-    // that recurses at runtime (nested struct members/elements call back into
-    // genCopy, which dispatches to the same helper).
-    if (dstStructTy.isIdentified()) {
-      auto i256Ty = b.getIntegerType(256);
-      sol::FuncOp fn = getOrCreateHelperFn(
-          helpersym::copy(srcDataLoc, sol::DataLocation::Storage,
-                          dstStructTy.getName()),
-          {i256Ty, i256Ty}, {}, [&](ValueRange args, Location bodyLoc) {
-            genStructToStorageCopyInline(srcStructTy, dstStructTy, args[0],
-                                         args[1], srcDataLoc, bodyLoc);
-            b.create<sol::ReturnOp>(bodyLoc);
-          });
-      b.create<sol::CallOp>(loc, fn, ValueRange{srcAddr, dstAddr});
-    } else {
-      genStructToStorageCopyInline(srcStructTy, dstStructTy, srcAddr, dstAddr,
-                                   srcDataLoc, loc);
+    if (!dstIsStorage) {
+      // A null destination is a clone: allocate the member table first.
+      if (!dstAddr)
+        dstAddr = genMemAlloc(dstStructTy.getMemberTypes().size() * 32, loc);
+      genStructToMemoryCopyInline(srcStructTy, srcAddr, dstAddr, srcDataLoc,
+                                  loc);
+      return dstAddr;
     }
+    // Out-of-line the per-struct copy into a helper, one per struct type.
+    // For recursive structures the helper also recurses at runtime (nested
+    // struct members/elements call back into genCopy, which dispatches to
+    // the same helper).
+    genHelperCall(
+        helpersym::copyStructToStorage(srcDataLoc, srcStructTy, dstStructTy),
+        {srcAddr, dstAddr},
+        [&](ValueRange args, Location bodyLoc) {
+          genStructToStorageCopyInline(srcStructTy, dstStructTy, args[0],
+                                       args[1], srcDataLoc, bodyLoc);
+        },
+        loc);
   } else {
     llvm_unreachable("Unexpected type to copy");
+  }
+  return dstAddr;
+}
+
+Value evm::Builder::genCloneToMemory(Type ty, Value src,
+                                     sol::DataLocation srcDataLoc,
+                                     std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  // An array clone that needs a loop is emitted once per type and called:
+  // every storage source (sload per slot), and a calldata source whose
+  // elements are not plain 32-byte words. A calldata array of words is one
+  // calldatacopy and stays inline, as does a string. Every struct clone is
+  // outlined: an identified struct may be self-referential, and the helper
+  // recurses at runtime through its members.
+  std::string sym;
+  if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
+    if (srcDataLoc == sol::DataLocation::Storage ||
+        (srcDataLoc == sol::DataLocation::CallData &&
+         !isWordElt(arrTy.getEltType())))
+      sym = helpersym::cloneArrayToMemory(srcDataLoc, arrTy);
+  } else if (auto structTy = dyn_cast<sol::StructType>(ty)) {
+    sym = helpersym::cloneStructToMemory(srcDataLoc, structTy);
+  }
+  if (sym.empty())
+    return genCopyInline(ty, ty, src, /*dstAddr=*/{}, srcDataLoc,
+                         sol::DataLocation::Memory, loc);
+
+  return genHelperCall(
+      sym, {src}, b.getIntegerType(256),
+      [&](ValueRange a, Location bodyLoc) {
+        return genCopyInline(ty, ty, a[0], /*dstAddr=*/{}, srcDataLoc,
+                             sol::DataLocation::Memory, bodyLoc);
+      },
+      loc);
+}
+
+void evm::Builder::genStructToMemoryCopyInline(sol::StructType structTy,
+                                               Value srcAddr, Value dstAddr,
+                                               sol::DataLocation srcDataLoc,
+                                               Location loc) {
+  mlir::solgen::BuilderExt bExt(b, loc);
+  ArrayRef<Type> memberTypes = structTy.getMemberTypes();
+  auto reader = makeStructMemberReader(structTy, b, loc, srcAddr);
+  for (auto [i, memberTy] : llvm::enumerate(memberTypes)) {
+    Value dstHeadSlot =
+        b.create<yul::AddOp>(loc, dstAddr, bExt.genI256Const(i * 32));
+    Value srcResult = reader->read(i);
+    Value val;
+    if (sol::isNonPtrRefType(memberTy))
+      val = genCloneToMemory(memberTy, srcResult,
+                             sol::getDataLocation(memberTy), loc);
+    else if (isa<sol::ExtFuncRefType>(memberTy))
+      val = genExtFuncConversion(srcResult, srcDataLoc,
+                                 sol::DataLocation::Memory, loc);
+    else
+      val = genCleanup(memberTy, srcResult, loc, srcDataLoc);
+    genStore(val, dstHeadSlot, sol::DataLocation::Memory, loc);
+    if (i + 1 < memberTypes.size())
+      reader->advance(i);
   }
 }
 
@@ -3345,6 +3543,43 @@ Value evm::Builder::genABIEncodingImpl(
     Type ty, Value src, Value dstAddr, ABIEncodingOptions opts,
     bool dstAddrInTail, Value tupleStart, Value tailAddr, Location loc,
     std::optional<sol::DataLocation> srcDataLoc) {
+  // A memory array whose elements cannot be bulk copied is encoded by a
+  // per-element loop. Emit it once per type and mode. The helper writes the
+  // array at `dst` and returns the end of what it wrote. A dynamic array
+  // always sits in the tail, so `dst` is the tail. A static array with static
+  // elements sits in the head and leaves the caller's tail untouched.
+  // The length of a dynamic array is loaded by the caller and passed as an
+  // argument: when the array was allocated with a constant length in the same
+  // function, the optimizer folds the load to that constant, and once a
+  // single-use helper is inlined back the loop bound is constant again.
+  auto arrTy = dyn_cast<sol::ArrayType>(ty);
+  if (arrTy && memArrayNeedsLoop(arrTy)) {
+    bool dyn = arrTy.isDynSized();
+    SmallVector<Value> args{src, dstAddr};
+    if (dyn)
+      args.push_back(genDynSize(src, arrTy, loc));
+    Value end = genHelperCall(
+        helpersym::abiEncodeMemoryArray(opts.padded, opts.dynamicInplace,
+                                        arrTy),
+        args, b.getIntegerType(256),
+        [&](ValueRange a, Location bodyLoc) {
+          return genABIEncodingImplInline(
+              ty, a[0], a[1], opts, /*dstAddrInTail=*/true,
+              /*tupleStart=*/a[1], /*tailAddr=*/a[1], bodyLoc, srcDataLoc,
+              /*arrayLength=*/dyn ? a[2] : Value());
+        },
+        loc);
+    return (dstAddrInTail || opts.dynamicInplace) ? end : tailAddr;
+  }
+
+  return genABIEncodingImplInline(ty, src, dstAddr, opts, dstAddrInTail,
+                                  tupleStart, tailAddr, loc, srcDataLoc);
+}
+
+Value evm::Builder::genABIEncodingImplInline(
+    Type ty, Value src, Value dstAddr, ABIEncodingOptions opts,
+    bool dstAddrInTail, Value tupleStart, Value tailAddr, Location loc,
+    std::optional<sol::DataLocation> srcDataLoc, Value arrayLength) {
   mlir::solgen::BuilderExt bExt(b, loc);
 
   // Scalar
@@ -3490,7 +3725,7 @@ Value evm::Builder::genABIEncodingImpl(
     // Path C doesn't use dstStride: its single-cursor loop advances by the
     // recursive call's return (variable per element), not by a fixed stride.
     if (arrTy.isDynSized()) {
-      size = genDynSize(src, arrTy, loc);
+      size = arrayLength ? arrayLength : genDynSize(src, arrTy, loc);
       srcArrAddr = genDataAddrPtr(src, arrTy, loc);
     } else {
       size = bExt.genI256Const(arrTy.getSize());
@@ -3514,19 +3749,19 @@ Value evm::Builder::genABIEncodingImpl(
       tailAddr = b.create<yul::AddOp>(loc, dstArrAddr, sizeInBytes);
     }
 
-    // ---- Path (A): whole-array CallDataCopy. ---------------------------
-    if (dataLoc == sol::DataLocation::CallData &&
-        canFastCopyCalldataArray(eltTy)) {
-      if (arrTy.isDynSized()) {
-        unsigned stride = getCallDataHeadSize(eltTy);
-        APInt maxLength = APInt::getAllOnes(256).udiv(APInt(256, stride));
+    // ---- Path (A): whole-array bulk copy from calldata or memory. --------
+    // Both hold one 32-byte word per element, and word-sized elements need
+    // no cleanup, so the encoding is a byte-identical copy. A nested array
+    // reaches this path once per innermost row through path (D) below.
+    if (dataLoc != sol::DataLocation::Storage && isWordElt(eltTy)) {
+      if (dataLoc == sol::DataLocation::CallData && arrTy.isDynSized()) {
+        APInt maxLength = APInt::getAllOnes(256).udiv(APInt(256, 32));
         Value tooLongCond = bExt.genCmp(yul::CmpPredicate::ugt, size,
                                         bExt.genI256Const(maxLength));
         genDebugRevertWithMsg(tooLongCond, "ABI encoding: array data too long",
                               loc);
       }
-      Value sizeInBytes = b.create<yul::MulOp>(loc, size, dstStride);
-      b.create<yul::CallDataCopyOp>(loc, dstArrAddr, srcArrAddr, sizeInBytes);
+      genBulkWordCopy(dstArrAddr, srcArrAddr, size, dataLoc, loc);
       return tailAddr;
     }
 
@@ -3643,6 +3878,30 @@ Value evm::Builder::genABIEncoding(TypeRange tys, ValueRange vals,
                                    Value startAddr, ABIEncodingOptions opts,
                                    std::optional<mlir::Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
+  // An empty tuple writes nothing and stays inline. Every other tuple gets
+  // a helper, including a tuple of scalars: measured over the OpenZeppelin
+  // corpus, keeping scalar tuples inline gives back a third of the saving,
+  // since a scalar tuple shared by many selectors is where it pays most. A
+  // helper with one caller is folded back by the backend's always-inline
+  // pass.
+  if (tys.empty())
+    return genABIEncodingInline(tys, vals, startAddr, opts, loc);
+  SmallVector<Value> args(vals.begin(), vals.end());
+  args.push_back(startAddr);
+  return genHelperCall(
+      helpersym::abiEncodeTuple(opts.padded, opts.dynamicInplace, tys), args,
+      b.getIntegerType(256),
+      [&](ValueRange a, Location bodyLoc) {
+        return genABIEncodingInline(tys, a.drop_back(), a.back(), opts,
+                                    bodyLoc);
+      },
+      loc);
+}
+
+Value evm::Builder::genABIEncodingInline(TypeRange tys, ValueRange vals,
+                                         Value startAddr,
+                                         ABIEncodingOptions opts,
+                                         Location loc) {
   mlir::solgen::BuilderExt bExt(b, loc);
 
   // Packed (single linear cursor): walk values sequentially.
@@ -3706,10 +3965,45 @@ Value evm::Builder::genABITupleEncoding(std::string const &str, Value headStart,
   return b.create<yul::AddOp>(loc, tailAddr, stringSize);
 }
 
+// Returns true when decoding \p ty into memory emits a loop: an array whose
+// elements cannot be bulk copied, or a struct containing such an array.
+static bool decodeNeedsLoop(Type ty) {
+  if (auto arrTy = dyn_cast<sol::ArrayType>(ty))
+    return memArrayNeedsLoop(arrTy);
+  if (auto structTy = dyn_cast<sol::StructType>(ty))
+    return structTy.getDataLocation() == sol::DataLocation::Memory &&
+           llvm::any_of(structTy.getMemberTypes(), decodeNeedsLoop);
+  return false;
+}
+
 Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
                                         Value tupleStart, Value tupleEnd,
                                         bool topLevel,
                                         std::optional<mlir::Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+
+  // Loop-carrying decoders are emitted once per type and called. The body
+  // needs the value address and the tuple end for its bounds checks. The
+  // tuple start is only used by scalar and calldata-resident cases.
+  if (decodeNeedsLoop(ty)) {
+    return genHelperCall(
+        helpersym::abiDecodeToMemory(fromMem, ty), {addr, tupleEnd},
+        b.getIntegerType(256),
+        [&](ValueRange a, Location bodyLoc) {
+          return genABITupleDecodingInline(ty, a[0], fromMem,
+                                           /*tupleStart=*/a[0], a[1],
+                                           /*topLevel=*/false, bodyLoc);
+        },
+        loc);
+  }
+
+  return genABITupleDecodingInline(ty, addr, fromMem, tupleStart, tupleEnd,
+                                   topLevel, loc);
+}
+
+Value evm::Builder::genABITupleDecodingInline(
+    Type ty, Value addr, bool fromMem, Value tupleStart, Value tupleEnd,
+    bool topLevel, std::optional<mlir::Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
   ABIDecodeGuards guards(*this, b, loc, tupleEnd);
@@ -3778,6 +4072,18 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
       guards.requireFixedArraySpan(srcAddr, arrTy);
     }
 
+    // Word-sized elements that need no cleanup are laid out identically in
+    // the encoding and in memory, so the payload is one bulk copy. The span
+    // guards above validated the whole source range. A nested array reaches
+    // this path once per innermost row through the loop below.
+    if (isWordElt(eltTy)) {
+      genBulkWordCopy(dstAddr, srcAddr, size,
+                      fromMem ? sol::DataLocation::Memory
+                              : sol::DataLocation::CallData,
+                      loc);
+      return ret;
+    }
+
     bExt.createCountedLoop(
         bExt.genI256Const(0), size, bExt.genI256Const(1),
         ValueRange{dstAddr, srcAddr},
@@ -3786,14 +4092,11 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
           Value iSrcAddr = initArgs[1];
 
           if (sol::hasDynamicallySizedElt(eltTy)) {
-            Value innerOffset = genLoad(iSrcAddr);
-            guards.requireUint64(innerOffset,
-                                 ABIDecodeGuards::kInvalidArrayOffset);
-
             // The elements are offset wrt to the start of this array (after the
             // size field if dynamic) that contain the inner element.
             Value offsetFromSrcArr =
-                b.create<yul::AddOp>(loc, srcAddr, innerOffset);
+                guards.resolveTailOffset(iSrcAddr, srcAddr, fromMem,
+                                         ABIDecodeGuards::kInvalidArrayOffset);
             b.create<yul::MStoreOp>(
                 loc, iDstAddr,
                 genABITupleDecoding(eltTy, offsetFromSrcArr, fromMem,
@@ -3837,20 +4140,11 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
         sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc, true);
     Value dstDataAddr = b.create<yul::AddOp>(loc, dstAddr, thirtyTwo);
 
-    if (fromMem)
-      // TODO? Check m_evmVersion.hasMcopy() and legalize here or in sol.mcopy
-      // lowering?
-      b.create<yul::MCopyOp>(loc, dstDataAddr, srcDataAddr, sizeInBytes);
-    else
-      b.create<yul::CallDataCopyOp>(loc, dstDataAddr, srcDataAddr, sizeInBytes);
-
-    // Canonicalize the trailing bytes after a variable-length copy.
-    // This clears the 32-byte word starting at dst + length. As in the
-    // existing decode helper flow, this write may extend past the
-    // rounded payload boundary.
-    Value cleanupAddr = b.create<yul::AddOp>(loc, dstDataAddr, sizeInBytes);
-    b.create<yul::MStoreOp>(loc, cleanupAddr, bExt.genI256Const(0));
-
+    // The cleanup word may extend past the rounded payload boundary.
+    genBulkCopy(dstDataAddr, srcDataAddr, sizeInBytes,
+                fromMem ? sol::DataLocation::Memory
+                        : sol::DataLocation::CallData,
+                loc, /*withCleanup=*/true);
     return dstAddr;
   }
 
@@ -3877,10 +4171,8 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
     for (Type memTy : structTy.getMemberTypes()) {
       Value memberVal;
       if (sol::hasDynamicallySizedElt(memTy)) {
-        Value tailOffset = genLoad(srcHeadAddr);
-        guards.requireUint64(tailOffset, ABIDecodeGuards::kInvalidStructOffset);
-
-        Value tailAddr = b.create<yul::AddOp>(loc, addr, tailOffset);
+        Value tailAddr = guards.resolveTailOffset(
+            srcHeadAddr, addr, fromMem, ABIDecodeGuards::kInvalidStructOffset);
         memberVal = genABITupleDecoding(memTy, tailAddr, fromMem, addr,
                                         tupleEnd, /*topLevel=*/false, loc);
       } else {
@@ -3907,6 +4199,34 @@ void evm::Builder::genABITupleDecoding(TypeRange tys, Value tupleStart,
                                        bool fromMem,
                                        std::optional<mlir::Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
+  // An empty tuple is only the size check and stays inline. Every other
+  // tuple gets a helper, see genABIEncoding.
+  if (tys.empty()) {
+    genABITupleDecodingInline(tys, tupleStart, tupleEnd, results, fromMem, loc);
+    return;
+  }
+  // The results are the legalized element types.
+  SolTypeConverter converter;
+  SmallVector<Type> resTys;
+  for (Type ty : tys)
+    resTys.push_back(converter.convertType(ty));
+  llvm::append_range(results,
+                     genHelperCall(
+                         helpersym::abiDecodeTuple(fromMem, tys),
+                         {tupleStart, tupleEnd}, resTys,
+                         [&](ValueRange a, Location bodyLoc) {
+                           std::vector<Value> vals;
+                           genABITupleDecodingInline(tys, a[0], a[1], vals,
+                                                     fromMem, bodyLoc);
+                           return SmallVector<Value>(vals.begin(), vals.end());
+                         },
+                         loc));
+}
+
+void evm::Builder::genABITupleDecodingInline(TypeRange tys, Value tupleStart,
+                                             Value tupleEnd,
+                                             std::vector<Value> &results,
+                                             bool fromMem, Location loc) {
   mlir::solgen::BuilderExt bExt(b, loc);
   ABIDecodeGuards guards(*this, b, loc, tupleEnd);
 
@@ -3915,28 +4235,19 @@ void evm::Builder::genABITupleDecoding(TypeRange tys, Value tupleStart,
   genABITupleSizeAssert(tys, b.create<yul::SubOp>(loc, tupleEnd, tupleStart),
                         loc);
 
-  auto genLoad = [&](Value addr) -> Value {
-    if (fromMem)
-      return b.create<yul::MLoadOp>(loc, addr);
-    return b.create<yul::CallDataLoadOp>(loc, addr);
-  };
-
   // Decode the args.
   // The type of the decoded arg should be same as that of the legalized type
   // (as per the type-converter) of the original type.
   Value headAddr = tupleStart;
   for (Type ty : tys) {
-    if (sol::hasDynamicallySizedElt(ty)) {
-      Value tailOffset = genLoad(headAddr);
-      guards.requireUint64(tailOffset, ABIDecodeGuards::kInvalidTupleOffset);
-
-      Value tailAddr = b.create<yul::AddOp>(loc, tupleStart, tailOffset);
-      results.push_back(genABITupleDecoding(ty, tailAddr, fromMem, tupleStart,
-                                            tupleEnd, /*topLevel=*/true, loc));
-    } else {
-      results.push_back(genABITupleDecoding(ty, headAddr, fromMem, tupleStart,
-                                            tupleEnd, /*topLevel=*/true, loc));
-    }
+    // Resolve the head slot, then decode the element. A loop-carrying
+    // element goes to its per-type helper through genABITupleDecoding.
+    Value at = headAddr;
+    if (sol::hasDynamicallySizedElt(ty))
+      at = guards.resolveTailOffset(headAddr, tupleStart, fromMem,
+                                    ABIDecodeGuards::kInvalidTupleOffset);
+    results.push_back(genABITupleDecoding(ty, at, fromMem, tupleStart, tupleEnd,
+                                          /*topLevel=*/true, loc));
     headAddr = b.create<yul::AddOp>(loc, headAddr,
                                     bExt.genI256Const(getCallDataHeadSize(ty)));
   }

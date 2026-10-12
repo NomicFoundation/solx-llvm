@@ -1601,12 +1601,6 @@ struct PushOpLowering : public OpConversionPattern<sol::PushOp> {
       return success();
     }
 
-    Value slot = adaptor.getInp();
-    Value oldSize = r.create<yul::SLoadOp>(loc, slot);
-    Value newSize = r.create<yul::AddOp>(loc, oldSize, bExt.genI256Const(1));
-    r.create<yul::SStoreOp>(loc, slot, newSize);
-    Value dataSlot = evmB.genDataAddrPtr(slot, sol::DataLocation::Storage);
-
     // Get element type from the input type.
     Type eltTy;
     if (auto arrTy = dyn_cast<sol::ArrayType>(inpTy)) {
@@ -1615,14 +1609,27 @@ struct PushOpLowering : public OpConversionPattern<sol::PushOp> {
       llvm_unreachable("");
     }
 
-    if (sol::canBePacked(eltTy)) {
-      r.replaceOp(op, evmB.genPackedStorageAddr(dataSlot, oldSize, eltTy));
-    } else {
-      // Slot-aligned layout.
-      Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
-      Value scaledIdx = r.create<yul::MulOp>(loc, oldSize, stride);
-      r.replaceOp(op, r.create<yul::AddOp>(loc, dataSlot, scaledIdx));
-    }
+    // The push body (length update, data slot hashing, packed addressing) is
+    // emitted once per array type as a helper taking the array slot and
+    // returning the address of the new element. The result is the legalized
+    // element pointer: a {slot, byte offset} struct for a packed element, one
+    // word otherwise.
+    Type resTy = getTypeConverter()->convertType(op.getType());
+    r.replaceOp(
+        op,
+        evmB.genHelperCall(
+            evm::helpersym::pushStorageArray(cast<sol::ArrayType>(inpTy)),
+            {adaptor.getInp()}, resTy, [&](ValueRange args, Location bodyLoc) {
+              Value slot = args[0];
+              Value oldSize = r.create<yul::SLoadOp>(bodyLoc, slot);
+              Value newSize = r.create<yul::AddOp>(
+                  bodyLoc, oldSize, bExt.genI256Const(1, bodyLoc));
+              r.create<yul::SStoreOp>(bodyLoc, slot, newSize);
+              Value dataSlot = evmB.genDataAddrPtr(
+                  slot, sol::DataLocation::Storage, bodyLoc);
+              return evmB.genStorageEltAddr(
+                  dataSlot, oldSize, cast<sol::ArrayType>(inpTy), bodyLoc);
+            }));
     return success();
   }
 };
@@ -1662,33 +1669,45 @@ struct PopOpLowering : public OpConversionPattern<sol::PopOp> {
 
     Type inpTy = op.getInp().getType();
     Value slot = adaptor.getInp();
-    Value data = evmB.genLoad(slot, sol::DataLocation::Storage, loc);
-    Value oldSize = isa<sol::StringType>(inpTy)
-                        ? evmB.genStorageStringLength(data, loc)
-                        : data;
-
-    // Generate the empty array panic check.
-    Value panicCond =
-        bExt.genCmp(yul::CmpPredicate::eq, oldSize, bExt.genI256Const(0));
-    evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond);
 
     if (isa<sol::StringType>(inpTy)) {
+      Value data = evmB.genLoad(slot, sol::DataLocation::Storage, loc);
+      Value oldSize = evmB.genStorageStringLength(data, loc);
+      // Generate the empty array panic check.
+      Value panicCond =
+          bExt.genCmp(yul::CmpPredicate::eq, oldSize, bExt.genI256Const(0));
+      evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond);
       evmB.genPopString(slot, data, oldSize, loc);
       r.eraseOp(op);
       return success();
     }
-    Value newSize = r.create<yul::SubOp>(loc, oldSize, bExt.genI256Const(1));
     auto arrTy = cast<sol::ArrayType>(inpTy);
-    // Yul reference order. genClearStorageArrayTail handles both packed types
-    // and slot-aligned types (including multi-slot structs and nested
-    // dynamic arrays).
-    // isDecrement=true: newSize = oldSize-1, so the range is always non-empty
-    // and contains exactly one element; the range guard and loop are omitted.
-    evmB.genClearStorageArrayTail(slot, arrTy, newSize, oldSize,
-                                  /*isDecrement=*/true, loc);
-
-    // Write the decremented length after clearing the removed element.
-    r.create<yul::SStoreOp>(loc, slot, newSize);
+    // The array pop (length load, empty-array panic, clear of the removed
+    // element, length update) is emitted once per array type as a helper
+    // taking the array slot.
+    evmB.genHelperCall(
+        evm::helpersym::popStorageArray(arrTy), {slot},
+        [&](ValueRange args, Location bodyLoc) {
+          Value slot = args[0];
+          Value oldSize =
+              evmB.genLoad(slot, sol::DataLocation::Storage, bodyLoc);
+          Value panicCond = bExt.genCmp(yul::CmpPredicate::eq, oldSize,
+                                        bExt.genI256Const(0, bodyLoc), bodyLoc);
+          evmB.genPanic(mlir::evm::PanicCode::EmptyArrayPop, panicCond,
+                        bodyLoc);
+          Value newSize = r.create<yul::SubOp>(bodyLoc, oldSize,
+                                               bExt.genI256Const(1, bodyLoc));
+          // Yul reference order. genClearStorageArrayTail handles both packed
+          // types and slot-aligned types (including multi-slot structs and
+          // nested dynamic arrays).
+          // isDecrement=true: newSize = oldSize-1, so the range is always
+          // non-empty and contains exactly one element. The range guard and
+          // loop are omitted.
+          evmB.genClearStorageArrayTail(slot, arrTy, newSize, oldSize,
+                                        /*isDecrement=*/true, bodyLoc);
+          // Write the decremented length after clearing the removed element.
+          r.create<yul::SStoreOp>(bodyLoc, slot, newSize);
+        });
 
     r.eraseOp(op);
     return success();
@@ -1741,11 +1760,12 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         cleanedIdx = evmB.genCleanup(op.getIdx().getType(), idx, loc);
       return cleanedIdx;
     };
-    auto genBoundsCheck = [&](Value cond) {
+    auto genBoundsCheck = [&](Value cond,
+                              std::optional<Location> locArg = std::nullopt) {
       if (op.getNoPanicBounds())
-        evmB.genRevert(cond);
+        evmB.genRevert(cond, locArg);
       else
-        evmB.genPanic(mlir::evm::PanicCode::ArrayOutOfBounds, cond);
+        evmB.genPanic(mlir::evm::PanicCode::ArrayOutOfBounds, cond, locArg);
     };
     sol::DataLocation dataLoc = sol::getDataLocation(baseAddrTy);
     Value res;
@@ -1774,27 +1794,48 @@ struct GepOpLowering : public OpConversionPattern<sol::GepOp> {
         // Bounds check (always for dynamic, non-const index for static).
         bool isConstIdx = !isa<BlockArgument>(idx) &&
                           isa<yul::ConstantOp>(idx.getDefiningOp());
+        bool needsBoundsCheck = arrTy.isDynSized() || !isConstIdx;
         Value arrayIdx = isConstIdx ? idx : getCleanedIdx();
-        if (arrTy.isDynSized() || !isConstIdx) {
-          Value size = arrTy.isDynSized()
-                           ? evmB.genDynSize(remappedBaseAddr, baseAddrTy)
-                           : bExt.genI256Const(arrTy.getSize());
-          auto panicCond = bExt.genCmp(yul::CmpPredicate::uge, arrayIdx, size);
-          genBoundsCheck(panicCond);
-        }
 
-        // Base slot: keccak256(slot) for dynamic, slot for static.
-        Value baseSlot = arrTy.isDynSized()
-                             ? evmB.genDataAddrPtr(remappedBaseAddr, baseAddrTy)
-                             : remappedBaseAddr;
+        // The element address of a storage array: the bounds check, the
+        // keccak256 of the data slot for a dynamic array, and the stride or
+        // packed-slot arithmetic. \p slot and \p index are the array's slot
+        // and the already-cleaned index. Everything is built at \p l: the
+        // op's location inline, the helper's location in a helper.
+        auto genElementAddr = [&](Value slot, Value index,
+                                  Location l) -> Value {
+          if (needsBoundsCheck) {
+            Value size = arrTy.isDynSized()
+                             ? evmB.genDynSize(slot, baseAddrTy, l)
+                             : bExt.genI256Const(arrTy.getSize(), l);
+            auto panicCond =
+                bExt.genCmp(yul::CmpPredicate::uge, index, size, l);
+            genBoundsCheck(panicCond, l);
+          }
 
-        if (sol::canBePacked(eltTy)) {
-          res = evmB.genPackedStorageAddr(baseSlot, arrayIdx, eltTy);
+          // Base slot: keccak256(slot) for dynamic, slot for static.
+          Value baseSlot = arrTy.isDynSized()
+                               ? evmB.genDataAddrPtr(slot, baseAddrTy, l)
+                               : slot;
+          return evmB.genStorageEltAddr(baseSlot, index, arrTy, l);
+        };
+
+        // An access that carries a bounds check has a body worth sharing: the
+        // check, a keccak256 for dynamic arrays, and the addressing. Emit it
+        // once per (array type, bounds behaviour) and call. A constant index
+        // into a static array needs no check and stays inline.
+        if (needsBoundsCheck) {
+          // The result is the legalized element pointer: a {slot, byte
+          // offset} struct for a packed element, one word otherwise.
+          Type resTy = getTypeConverter()->convertType(op.getType());
+          res = evmB.genHelperCall(
+              evm::helpersym::indexStorageArray(arrTy, op.getNoPanicBounds()),
+              {remappedBaseAddr, arrayIdx}, resTy,
+              [&](ValueRange args, Location bodyLoc) {
+                return genElementAddr(args[0], args[1], bodyLoc);
+              });
         } else {
-          // Slot-aligned layout.
-          Value stride = bExt.genI256Const(sol::getStorageSlotCount(eltTy));
-          Value scaledIdx = r.create<yul::MulOp>(loc, arrayIdx, stride);
-          res = r.create<yul::AddOp>(loc, baseSlot, scaledIdx);
+          res = genElementAddr(remappedBaseAddr, arrayIdx, loc);
         }
 
       } else if (auto structTy = dyn_cast<sol::StructType>(baseAddrTy)) {
@@ -2272,209 +2313,18 @@ struct StoreOpLowering : public OpConversionPattern<sol::StoreOp> {
 struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
   using OpConversionPattern<sol::DataLocCastOp>::OpConversionPattern;
 
-  // srcDataLoc is passed explicitly because scalar element types (e.g. ui256)
-  // carry no data-location annotation and sol::getDataLocation would return
-  // stack for them. The top-level caller derives it from the array type, all
-  // recursive calls propagate it directly.
-  Value genAllocateAndCopy(ModuleOp mod, Value srcAddr, Type ty,
-                           sol::DataLocation srcDataLoc, PatternRewriter &r,
-                           Location loc) const {
-    mlir::solgen::BuilderExt bExt(r, loc);
-    evm::Builder evmB(mod, r, loc);
-
-    sol::DataLocation dstDataLoc = sol::DataLocation::Memory;
-
-    if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
-      Value size, dstAddr, dstDataAddr, srcDataAddr;
-      if (arrTy.isDynSized()) {
-        size = evmB.genDynSize(srcAddr, ty);
-        dstAddr = evmB.genMemAllocForDynArray(
-            size, r.create<yul::MulOp>(loc, size, bExt.genI256Const(32)));
-        dstDataAddr = evmB.genDataAddrPtr(dstAddr, dstDataLoc);
-        srcDataAddr = evmB.genDataAddrPtr(srcAddr, srcDataLoc);
-      } else {
-        size = bExt.genI256Const(arrTy.getSize());
-        dstAddr = evmB.genMemAlloc(arrTy.getSize().getZExtValue() * 32);
-        dstDataAddr = dstAddr;
-        srcDataAddr = srcAddr;
-      }
-
-      // Determine element data location: inner array types carry it explicitly,
-      // scalar elements inherit from the parent array.
-      Type eltTy = arrTy.getEltType();
-      sol::DataLocation eltSrcDataLoc = sol::getDataLocation(eltTy);
-      if (eltSrcDataLoc == sol::DataLocation::Stack)
-        eltSrcDataLoc = srcDataLoc;
-
-      // Packed element types in storage require a specialized extraction loop
-      // that reads multiple elements per slot. The generic element-by-element
-      // loop below cannot handle packed {slot, byteOffset} addressing.
-      if (sol::canBePacked(eltTy) && sol::getNumBytes(eltTy) <= 16 &&
-          srcDataLoc == sol::DataLocation::Storage) {
-        evmB.genCopy(arrTy, arrTy, srcAddr, dstAddr, srcDataLoc, dstDataLoc,
-                     loc);
-        return dstAddr;
-      }
-
-      // Non-reference value elements in calldata are laid out contiguously, one
-      // ABI word (32 bytes) per element, matching the memory layout exactly.
-      // Use calldatacopy to copy the entire payload in one operation.
-      // TODO: Support multi-dimensional arrays.
-      if (srcDataLoc == sol::DataLocation::CallData &&
-          sol::canBePacked(eltTy) && (sol::getNumBytes(eltTy) == 32)) {
-        Value sizeInBytes = r.create<yul::MulOp>(
-            loc, size, bExt.genI256Const(evm::getCallDataHeadSize(eltTy)));
-        r.create<yul::CallDataCopyOp>(loc, dstDataAddr, srcDataAddr,
-                                      sizeInBytes);
-        return dstAddr;
-      }
-
-      bExt.createCountedLoop(
-          bExt.genI256Const(0), size, bExt.genI256Const(1), ValueRange{},
-          [&](OpBuilder &b, Location loc, Value i256IndVar, ValueRange) {
-            Value srcAddrI = evmB.genAddrAtIdx(srcDataAddr, i256IndVar, arrTy,
-                                               srcDataLoc, loc);
-            Value dstAddrI = evmB.genAddrAtIdx(dstDataAddr, i256IndVar, arrTy,
-                                               dstDataLoc, loc);
-            // For calldata sources with dynamic inner elements, resolve the ABI
-            // relative-offset word in the head area.
-            if (srcDataLoc == sol::DataLocation::CallData &&
-                sol::hasDynamicallySizedElt(eltTy))
-              srcAddrI = evmB.genCalldataAccessRef(eltTy, srcDataAddr, srcAddrI,
-                                                   /*isNonABI=*/true, loc);
-            Value subElm =
-                genAllocateAndCopy(mod, srcAddrI, eltTy, eltSrcDataLoc, r, loc);
-            evmB.genStore(subElm, dstAddrI, dstDataLoc);
-            return SmallVector<Value>{};
-          });
-      return dstAddr;
-    }
-
-    if (isa<sol::StringType>(ty)) {
-      if (srcDataLoc == sol::DataLocation::CallData) {
-        Value sizeInBytes = evmB.genDynSize(srcAddr, ty);
-        Value memAddr = evmB.genMemAllocForDynArray(
-            sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes));
-        Value srcDataAddr = evmB.genDataAddrPtr(srcAddr, srcDataLoc, loc);
-        Value dstDataAddr = evmB.genDataAddrPtr(memAddr, dstDataLoc, loc);
-        r.create<yul::CallDataCopyOp>(loc, dstDataAddr, srcDataAddr,
-                                      sizeInBytes);
-        return memAddr;
-      }
-      if (srcDataLoc == sol::DataLocation::Storage) {
-        Value sizeSlot = evmB.genLoad(srcAddr, srcDataLoc, loc);
-        Value size = evmB.genStorageStringLength(sizeSlot, loc);
-        Value dstAddr = evmB.genMemAllocForDynArray(
-            size, bExt.genRoundUpToMultiple<32>(size));
-        Value dstDataAddr =
-            evmB.genDataAddrPtr(dstAddr, sol::DataLocation::Memory, loc);
-        evmB.genStore(size, dstAddr, sol::DataLocation::Memory, loc);
-        evmB.genCopyStringDataFromStorageToMemory(srcAddr, sizeSlot, size,
-                                                  dstDataAddr, loc);
-        return dstAddr;
-      }
-      llvm_unreachable("NYI: StringType source data location");
-    }
-
-    if (auto structTy = dyn_cast<sol::StructType>(ty)) {
-      // Identified structs are self-referential; copying them inline would
-      // recurse forever in the compiler. Out-of-line the per-struct copy into a
-      // helper that recurses at runtime (nested struct members/elements call
-      // back into genAllocateAndCopy, which dispatches to the same helper).
-      if (structTy.isIdentified()) {
-        auto i256Ty = r.getIntegerType(256);
-        sol::FuncOp fn = evmB.getOrCreateHelperFn(
-            evm::helpersym::copy(srcDataLoc, sol::DataLocation::Memory,
-                                 structTy.getName()),
-            {i256Ty}, {i256Ty}, [&](ValueRange args, Location bodyLoc) {
-              Value memPtr = genStructToMemoryInline(mod, args[0], structTy,
-                                                     srcDataLoc, r, bodyLoc);
-              r.create<sol::ReturnOp>(bodyLoc, ValueRange{memPtr});
-            });
-        return r.create<sol::CallOp>(loc, fn, ValueRange{srcAddr}).getResult(0);
-      }
-      return genStructToMemoryInline(mod, srcAddr, structTy, srcDataLoc, r,
-                                     loc);
-    }
-
-    assert(sol::canBePacked(ty));
-    Value val = evmB.genLoad(srcAddr, srcDataLoc);
-    if (isa<sol::ExtFuncRefType>(ty))
-      return evmB.genExtFuncConversion(val, srcDataLoc,
-                                       sol::DataLocation::Memory, loc);
-    unsigned shift = 0;
-    if (srcDataLoc == sol::DataLocation::Storage && sol::isBytesLikeType(ty))
-      shift = (32 - sol::getNumBytes(ty)) * 8;
-    if (shift > 0)
-      val = r.create<yul::ArithShlOp>(loc, val, bExt.genI256Const(shift));
-    val = evmB.genCleanup(ty, val, loc, srcDataLoc);
-    return val;
-  }
-
-  // Inline expansion behind genAllocateAndCopy for a struct: allocates the
-  // memory head area and copies each member from \p srcAddr (data location
-  // \p srcDataLoc), recursing through genAllocateAndCopy for aggregate members
-  // so that nested identified structs are dispatched to their out-of-line
-  // helper. Returns the memory pointer of the copied struct.
-  Value genStructToMemoryInline(ModuleOp mod, Value srcAddr,
-                                sol::StructType structTy,
-                                sol::DataLocation srcDataLoc,
-                                PatternRewriter &r, Location loc) const {
-    mlir::solgen::BuilderExt bExt(r, loc);
-    evm::Builder evmB(mod, r, loc);
-
-    ArrayRef<Type> memberTypes = structTy.getMemberTypes();
-    unsigned numMembers = memberTypes.size();
-
-    // Allocate head area: one 32-byte slot per member.
-    Value dstBase = evmB.genMemAlloc(numMembers * 32);
-    auto reader = evmB.makeStructMemberReader(structTy, r, loc, srcAddr);
-
-    for (uint64_t i = 0; i < numMembers; ++i) {
-      Type memberTy = memberTypes[i];
-      Value dstHeadSlot =
-          r.create<yul::AddOp>(loc, dstBase, bExt.genI256Const(i * 32));
-      Value srcResult = reader->read(i);
-
-      if (sol::isNonPtrRefType(memberTy)) {
-        Value memPtr = genAllocateAndCopy(
-            mod, srcResult, memberTy, sol::getDataLocation(memberTy), r, loc);
-        evmB.genStore(memPtr, dstHeadSlot, sol::DataLocation::Memory);
-      } else {
-        Value cleanedResult;
-        if (isa<sol::ExtFuncRefType>(memberTy)) {
-          cleanedResult = evmB.genExtFuncConversion(
-              srcResult, srcDataLoc, sol::DataLocation::Memory, loc);
-        } else {
-          cleanedResult = evmB.genCleanup(memberTy, srcResult, loc, srcDataLoc);
-        }
-        evmB.genStore(cleanedResult, dstHeadSlot, sol::DataLocation::Memory);
-      }
-      if (i + 1 < numMembers)
-        reader->advance(i);
-    }
-    return dstBase;
-  }
-
   LogicalResult matchAndRewrite(sol::DataLocCastOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
-    Location loc = op.getLoc();
-    evm::Builder evmB(getModule(op), r, loc);
-
     Type srcTy = op.getInp().getType();
-    Type dstTy = op.getType();
-    sol::DataLocation srcDataLoc = sol::getDataLocation(srcTy);
-    sol::DataLocation dstDataLoc = sol::getDataLocation(dstTy);
     assert(!isa<sol::MappingType>(srcTy));
+    if (sol::getDataLocation(op.getType()) != sol::DataLocation::Memory ||
+        !sol::isNonPtrRefType(srcTy))
+      llvm_unreachable("Unexpected data location cast");
 
-    if (dstDataLoc == sol::DataLocation::Memory &&
-        sol::isNonPtrRefType(srcTy)) {
-      r.replaceOp(op, genAllocateAndCopy(getModule(op), adaptor.getInp(), srcTy,
-                                         srcDataLoc, r, loc));
-      return success();
-    }
-
-    llvm_unreachable("Unexpected data location cast");
+    evm::Builder evmB(getModule(op), r, op.getLoc());
+    r.replaceOp(op, evmB.genCloneToMemory(srcTy, adaptor.getInp(),
+                                          sol::getDataLocation(srcTy)));
+    return success();
   }
 };
 
@@ -3965,20 +3815,16 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
     return undefs;
   }
 
-  /// Generates the dispatch function that switches over the candidate
-  /// functions of the caller's phase. Outlining this reduces the caller's
-  /// stack pressure.
-  yul::FuncOp genDispatchFn(StringRef name, ArrayRef<int64_t> candidateIds,
-                            FunctionType calleeTy, FunctionType dispatchFnTy,
-                            bool callerRuntime, sol::ICallOp op,
-                            ConversionPatternRewriter &r) const {
-    // The dispatch function is generated and shared by every call of these
-    // candidates: its subprogram is artificial at the line of the module
-    // hosting it, and its body and arguments are at line 0.
-    ModuleOp mod = getModule(op);
-    Location loc = evm::artificialLoc(mod.getLoc());
+  /// Builds the body of the dispatch helper, which switches over the
+  /// candidate functions of the caller's phase. \p args are the helper's
+  /// arguments: the function id, then the callee's arguments. Outlining the
+  /// switch reduces the caller's stack pressure.
+  void genDispatchBody(ValueRange args, Location loc,
+                       ArrayRef<int64_t> candidateIds, FunctionType calleeTy,
+                       bool callerRuntime, sol::ICallOp op,
+                       ConversionPatternRewriter &r) const {
     Operation *symTab = SymbolTable::getNearestSymbolTable(op);
-    evm::Builder evmB(mod, r, loc);
+    evm::Builder evmB(getModule(op), r, loc);
 
     // Resolve the candidate ids in the caller's phase.
     DenseSet<int64_t> candidateIdSet(candidateIds.begin(), candidateIds.end());
@@ -3999,29 +3845,15 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
       }
     });
 
-    OpBuilder::InsertionGuard insertGuard(r);
-    r.setInsertionPointAfter(op->getParentOfType<sol::FuncOp>());
-
-    auto fn = r.create<yul::FuncOp>(
-        evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name,
-        dispatchFnTy);
-
-    SmallVector<Location> argLocs(dispatchFnTy.getNumInputs(), loc);
-    Block *entry = r.createBlock(&fn.getBody(), fn.getBody().end(),
-                                 dispatchFnTy.getInputs(), argLocs);
-    r.setInsertionPointToStart(entry);
-    ValueRange calleeArgs = entry->getArguments().drop_front();
-
     // Candidates exist, but none in the caller's phase: no valid id can reach
     // this call, so unconditionally panic.
     if (caseFns.empty()) {
       evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
-      r.create<yul::FuncReturnOp>(loc,
-                                  genUndefs(calleeTy.getResults(), loc, r));
-      return fn;
+      r.create<sol::ReturnOp>(loc, genUndefs(calleeTy.getResults(), loc, r));
+      return;
     }
 
-    auto calleeIntTy = cast<IntegerType>(dispatchFnTy.getInput(0));
+    auto calleeIntTy = cast<IntegerType>(args[0].getType());
     SmallVector<APInt> caseVals;
     caseVals.reserve(caseIds.size());
     for (int64_t caseId : caseIds)
@@ -4030,9 +3862,9 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
         RankedTensorType::get(static_cast<int64_t>(caseVals.size()),
                               calleeIntTy),
         caseVals);
-    auto switchOp = r.create<yul::SwitchOp>(loc, calleeTy.getResults(),
-                                            entry->getArgument(0), caseIdsAttr,
-                                            caseIds.size());
+    auto switchOp = r.create<yul::SwitchOp>(loc, calleeTy.getResults(), args[0],
+                                            caseIdsAttr, caseIds.size());
+    ValueRange calleeArgs = args.drop_front();
     for (size_t i = 0; i < caseFns.size(); ++i) {
       r.setInsertionPointToStart(&switchOp.getCaseRegions()[i].emplaceBlock());
       auto call = r.create<yul::FuncCallOp>(loc, calleeTy.getResults(),
@@ -4040,14 +3872,11 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
                                             calleeArgs);
       r.create<yul::YieldOp>(loc, call.getResults());
     }
-
     r.setInsertionPointToStart(&switchOp.getDefaultRegion().emplaceBlock());
     evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
     r.create<yul::YieldOp>(loc, genUndefs(calleeTy.getResults(), loc, r));
-
-    r.setInsertionPointToEnd(entry);
-    r.create<yul::FuncReturnOp>(loc, switchOp.getResults());
-    return fn;
+    r.setInsertionPointAfter(switchOp);
+    r.create<sol::ReturnOp>(loc, switchOp.getResults());
   }
 
   LogicalResult matchAndRewrite(sol::ICallOp op, OpAdaptor adaptor,
@@ -4067,9 +3896,9 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
 
     // No valid id can reach this call: panic inline. Cannot outline: the
     // symbol is keyed by the ids alone, so empty sets of different signatures
-    // would collide on `__sol.internal_dispatch.<rt|cr>`.
+    // would collide on `__sol.dispatch_internal_call.<runtime|creation>`.
+    evm::Builder evmB(getModule(op), r, loc);
     if (candidateIds->empty()) {
-      evm::Builder evmB(getModule(op), r, loc);
       evmB.genPanic(mlir::evm::PanicCode::InvalidInternalFunction);
       r.replaceOp(op, genUndefs(convertedResTys, loc, r));
       return success();
@@ -4079,33 +3908,22 @@ struct ICallOpLowering : public OpConversionPattern<sol::ICallOp> {
         r.getContext(), calleeArgs.getTypes(), convertedResTys);
     SmallVector<Type> dispatchInputTys{adaptor.getCallee().getType()};
     llvm::append_range(dispatchInputTys, calleeTy.getInputs());
-    auto dispatchFnTy = mlir::FunctionType::get(
-        r.getContext(), dispatchInputTys, calleeTy.getResults());
 
-    // Contract lowering has already relocated the caller into a
-    // creation/runtime object; standalone free functions stay hosted at
-    // module level.
-    Operation *symTab = SymbolTable::getNearestSymbolTable(op);
-    assert((isa<yul::ObjectOp, ModuleOp>(symTab)) &&
-           "expected an object or module scoped caller");
+    // The helper is hosted by the caller's object, or by the module for a
+    // standalone free function, and shared by every call of these
+    // candidates.
     bool callerRuntime = op->getParentOfType<sol::FuncOp>().getRuntime();
-    std::string dispatchFnName =
-        evm::helpersym::internalDispatch(callerRuntime, *candidateIds);
-    Operation *found = SymbolTable::lookupSymbolIn(symTab, dispatchFnName);
-    auto dispatchFn = dyn_cast_or_null<yul::FuncOp>(found);
-    if (!dispatchFn) {
-      assert(!found && "dispatch symbol clashes with a non-function");
-      dispatchFn = genDispatchFn(dispatchFnName, *candidateIds, calleeTy,
-                                 dispatchFnTy, callerRuntime, op, r);
-    } else {
-      assert(dispatchFn.getFunctionType() == dispatchFnTy &&
-             "dispatch symbol clashes with an incompatible function");
-    }
+    sol::FuncOp dispatchFn = evmB.getOrCreateHelperFn(
+        evm::helpersym::dispatchInternalCall(callerRuntime, *candidateIds),
+        dispatchInputTys, convertedResTys,
+        [&](ValueRange args, Location bodyLoc) {
+          genDispatchBody(args, bodyLoc, *candidateIds, calleeTy, callerRuntime,
+                          op, r);
+        });
 
     SmallVector<Value> callArgs{adaptor.getCallee()};
     llvm::append_range(callArgs, calleeArgs);
-    r.replaceOpWithNewOp<yul::FuncCallOp>(
-        op, convertedResTys, FlatSymbolRefAttr::get(dispatchFn), callArgs);
+    r.replaceOpWithNewOp<sol::CallOp>(op, dispatchFn, callArgs);
     return success();
   }
 };
@@ -4301,7 +4119,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     auto creationObj = r.create<yul::ObjectOp>(contractLoc, op.getName());
     r.setInsertionPointToStart(&creationObj.getBody().front());
     auto runtimeObj = r.create<yul::ObjectOp>(
-        contractLoc, std::string(op.getName()) + "_deployed");
+        contractLoc,
+        (llvm::Twine(op.getName()) + yul::ObjectOp::kRuntimeSuffix).str());
 
     SmallVector<sol::FuncOp, 4> ifcFns;
     sol::FuncOp ctor, receiveFn, fallbackFn;

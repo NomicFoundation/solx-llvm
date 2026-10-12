@@ -398,6 +398,10 @@ def Yul_ObjectOp : Yul_Op<"object", [Symbol, SymbolTable, NoTerminator,
 
   let extraClassDeclaration = [{
     Block *getEntryBlock() { return &getBody().front(); }
+    /// The name suffix of a contract's runtime object.
+    static constexpr llvm::StringLiteral kRuntimeSuffix = "_deployed";
+    /// Whether this is a contract's runtime object.
+    bool isRuntime() { return getName().ends_with(kRuntimeSuffix); }
   }];
 
   let assemblyFormat = "$sym_name $body attr-dict";

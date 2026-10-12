@@ -1669,9 +1669,7 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
 
     StringRef objName = obj.getName();
 
-    // Is this a runtime object?
-    // FIXME: Is there a better way to check this?
-    if (objName.ends_with("_deployed")) {
+    if (obj.isRuntime()) {
       auto runtimeMod = r.create<ModuleOp>(loc, objName);
       auto parentMod = obj->getParentOfType<ModuleOp>();
       assert(parentMod && "object should be nested in a module");
