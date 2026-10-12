@@ -1,10 +1,11 @@
 // RUN: mlir-opt %s --convert-sol-to-yul -mlir-print-debuginfo \
 // RUN:   -mlir-print-local-scope | FileCheck %s
 
-// The code the contract lowering generates is at the contract's location. A
-// dispatch case runs its interface function, and the creation code's argument
-// decoding and call run the constructor, so they are at that function's
-// location. The compile unit and the subprograms stay on the contract and the
+// The code the contract lowering generates is at the contract's location,
+// including the call value test hoisted above the switch when no route is
+// payable. A dispatch case runs its interface function, and the creation
+// code's argument decoding and call run the constructor, so they are at that
+// function's location. The compile unit and the subprograms stay on the contract and the
 // functions.
 
 #Constructor = #sol<FunctionKind Constructor>
@@ -30,9 +31,10 @@
 // CHECK:         yul.return {{.*}} loc("C.sol":1:1)
 // CHECK-LABEL:   yul.object @C_deployed {
 // CHECK:           yul.calldatasize loc("C.sol":1:1)
+// CHECK:           yul.callvalue loc("C.sol":1:1)
 // CHECK:           yul.arith_shr {{.*}} loc("C.sol":1:1)
 // CHECK:           case 1 {
-// CHECK-NEXT:        yul.callvalue loc("C.sol":3:3)
+// CHECK-NOT:         yul.callvalue
 // CHECK:             yul.func_call @f({{.*}}) : (i256) -> i256 loc("C.sol":3:3)
 // CHECK:             yul.return {{.*}} loc("C.sol":3:3)
 // CHECK:           yul.revert {{.*}} loc("C.sol":1:1)
