@@ -3879,8 +3879,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
   /// Generates the dispatch to interface functions.
   void genDispatch(sol::ContractOp contrOp,
                    SmallVector<uint32_t, 4> const &selectors,
-                   SmallVector<sol::FuncOp, 4> &ifcFns, PatternRewriter &r,
-                   Location loc) const {
+                   SmallVector<sol::FuncOp, 4> &ifcFns, sol::FuncOp fallbackFn,
+                   PatternRewriter &r, Location loc) const {
     mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(contrOp), r, loc);
 
@@ -3897,6 +3897,19 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     if (ifcFns.empty())
       return;
 
+    // One call value test serves the whole switch when no route reachable
+    // from it accepts value: the cases are the interface functions, and the
+    // default falls through to the fallback. A receive function is only
+    // reached with empty calldata, outside the `calldatasize >= 4` block, so
+    // it does not count. A library emits no test, its functions cannot be
+    // payable.
+    auto isPayable = [](sol::FuncOp fn) {
+      return fn.getStateMutability() == sol::StateMutability::Payable;
+    };
+    bool hoistCallValChk = contrOp.getKind() != sol::ContractKind::Library &&
+                           llvm::none_of(ifcFns, isPayable) &&
+                           (!fallbackFn || !isPayable(fallbackFn));
+
     // Generate `if iszero(lt(calldatasize(), 4))` and set the insertion point
     // to its then block.
     auto callDataSz = r.create<yul::CallDataSizeOp>(loc);
@@ -3905,6 +3918,9 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     auto ifOp = bExt.createIf(callDataSzCmp);
     OpBuilder::InsertionGuard insertGuard(r);
     r.setInsertionPointToStart(&ifOp.getThenRegion().front());
+
+    if (hoistCallValChk)
+      genCallValChk(getModule(contrOp), r, loc);
 
     // Load the selector from the calldata.
     auto callDataLd = r.create<yul::CallDataLoadOp>(loc, bExt.genI256Const(0));
@@ -3957,7 +3973,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
         }
       }
 
-      if (contrOp.getKind() != sol::ContractKind::Library &&
+      if (!hoistCallValChk && contrOp.getKind() != sol::ContractKind::Library &&
           stateMutability != sol::StateMutability::Payable) {
         genCallValChk(getModule(contrOp), r, fnLoc);
       }
@@ -4090,7 +4106,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     genFreePtrInit(contrOp, r, loc);
 
     // Generate the dispatch to interface functions.
-    genDispatch(contrOp, fns.selectors, fns.ifc, r, loc);
+    genDispatch(contrOp, fns.selectors, fns.ifc, fns.fallback, r, loc);
 
     // Generate receive function.
     if (fns.receive) {

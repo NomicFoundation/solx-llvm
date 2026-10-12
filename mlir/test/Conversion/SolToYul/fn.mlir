@@ -6,7 +6,9 @@
 
 // Each case decodes its argument tuple and encodes its result tuple through
 // the helper of its types; the argument validation lives in the decoders.
+// No route is payable, so the call value is tested once above the switch.
 // CHECK-LABEL: yul.object @C_deployed {
+// CHECK:         yul.callvalue
 // CHECK:         %[[W:.*]] = yul.calldataload
 // CHECK:         %[[C224:.*]] = yul.constant 224{{$}}
 // CHECK:         %[[SEL:.*]] = yul.arith_shr %[[W]], %[[C224]]
@@ -35,7 +37,7 @@
 // CHECK:           %[[T:.*]]:2 = yul.func_call @tuple() : () -> (i256, i256)
 // CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256.ui256(%[[T]]#0, %[[T]]#1,
 // CHECK:         case 638722032 {
-// CHECK:           yul.callvalue
+// CHECK-NOT:       yul.callvalue
 // CHECK:           yul.func_call @empty() : () -> ()
 // CHECK:           %[[MEM:.*]] = yul.mload
 // CHECK:           %[[Z:.*]] = yul.constant 0{{$}}
