@@ -1623,11 +1623,10 @@ Value evm::Builder::genCleanupPackedStorageValue(
   }
 
   if (auto intTy = dyn_cast<IntegerType>(eltTy)) {
-    // In packed storage, bool occupies one byte. Mask to the loaded storage
-    // byte before applying generic bool cleanup.
+    // A bool occupies one storage byte and is read unnormalized.
     if (intTy.getWidth() == 1) {
       APInt mask = APInt::getLowBitsSet(256, 8);
-      value = b.create<yul::AndOp>(loc, value, bExt.genI256Const(mask, loc));
+      return b.create<yul::AndOp>(loc, value, bExt.genI256Const(mask, loc));
     }
     return genIntCleanup(intTy.getWidth(), intTy.isSigned(), value, loc);
   }
@@ -3122,7 +3121,7 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
               Value dstAddr) {
             Value shifted = b.create<yul::ArithShrOp>(loc, slotVal, shiftBits);
             Value val = genCleanupPackedStorageValue(srcEltTy, shifted, loc);
-            genStore(val, dstAddr, dstDataLoc, loc);
+            genStore(genCleanup(srcEltTy, val, loc), dstAddr, dstDataLoc, loc);
           });
       return;
     }
@@ -3139,9 +3138,7 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
             Value val = genLoad(srcAddr, srcDataLoc, loc);
             // Clean against the source type: the destination's cleanup accepts
             // values the source type cannot encode.
-            if (srcDataLoc == sol::DataLocation::CallData ||
-                srcEltTy != dstEltTy)
-              val = genCleanup(srcEltTy, val, loc, srcDataLoc);
+            val = genCleanup(srcEltTy, val, loc, srcDataLoc);
 
             // ExtFuncRef is not handled here, as it occupies a full slot in
             // array.
@@ -3226,20 +3223,10 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
       else if (srcIsStorage && !dstIsStorage)
         val =
             b.create<yul::ArithShlOp>(loc, val, bExt.genI256Const(alignShift));
-    } else {
-      if (dstIsStorage) {
-        if (srcDataLoc == sol::DataLocation::CallData)
-          val = genCleanup(dstTy, val, loc, /*shouldRevert=*/true);
-        // Storage write-side: AND-mask to zero upper bits, matching old codegen
-        // LValue.cpp (chopSignBits=true). genCleanup for signed ints
-        // returns signextend, which would set upper bits to 1 for negative
-        // values and corrupt the storage slot.
-        unsigned storageBits = sol::getNumBytes(dstTy) * 8;
-        APInt fieldMask = APInt::getLowBitsSet(256, storageBits);
-        val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
-      } else {
-        val = genCleanup(dstTy, val, loc, srcDataLoc);
-      }
+    } else if (!srcIsStorage || !dstIsStorage) {
+      // An element alone in its slot is stored as its cleaned word, and a
+      // storage-to-storage copy moves the word as is.
+      val = genCleanup(dstTy, val, loc, srcDataLoc);
     }
     genStore(val, dstAddr, dstDataLoc, loc);
   } else if (isa<sol::StringType>(dstTy)) {
@@ -3581,9 +3568,8 @@ Value evm::Builder::genABIEncodingImpl(
             b, loc, size, dstArrAddr, srcArrAddr, dstStride,
             bExt.genI256Const(sol::getStorageSlotCount(eltTy)),
             [&](OpBuilder &, Location loc, Value iSrcAddr, Value iDstAddr) {
-              Value srcVal = genLoad(iSrcAddr, dataLoc, loc);
-              if (isa<sol::ExtFuncRefType>(eltTy))
-                srcVal = genExtFuncUnpack(srcVal, /*inStorage=*/true, loc);
+              Value srcVal = genCleanupPackedStorageValue(
+                  eltTy, genLoad(iSrcAddr, dataLoc, loc), loc);
               genABIEncodingImpl(eltTy, srcVal, iDstAddr, sub, dstAddrInTail,
                                  tupleStart, tailAddr, loc, dataLoc);
             });
