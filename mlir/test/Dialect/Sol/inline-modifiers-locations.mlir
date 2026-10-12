@@ -6,7 +6,15 @@
 // return - is at line 0. Everything cloned from the source keeps its own
 // location. A layer's scope uses its invocation's location, and a `return`
 // gives its location to both the store of its operands and the sol.leave that
-// exits the layer.
+// exits the layer. An inline assembly function cloned with its modifier gets a
+// subprogram of its own on every clone.
+
+#file = #llvm.di_file<"Modified.sol" in "/src">
+#cu = #llvm.di_compile_unit<id = distinct[0]<>, sourceLanguage = DW_LANG_C,
+ file = #file, isOptimized = false, emissionKind = Full>
+#sp_one = #llvm.di_subprogram<id = distinct[1]<>, compileUnit = #cu,
+ scope = #file, name = "one", file = #file, line = 12, scopeLine = 12,
+ subprogramFlags = Definition>
 
 module {
   sol.contract @Modified {
@@ -24,6 +32,30 @@ module {
       sol.return %c42 : ui256 loc(#loc_return)
     } loc(#loc_function)
   } {kind = #sol<ContractKind Contract>} loc(#loc_contract)
+  sol.contract @Assembly {
+    sol.modifier @m() {
+      sol.inline_asm {
+        yul.func @one : () -> i256 {
+          %c1 = yul.constant 1 loc(#loc_one_body)
+          yul.func_return %c1 : i256 loc(#loc_one_body)
+        } loc(fused<#sp_one>["Modified.sol":12:9])
+      } loc(#loc_asm)
+      sol.placeholder loc(#loc_asm)
+      sol.return loc(#loc_asm)
+    } loc(#loc_asm)
+    sol.func @first() {
+      sol.modifier_invocation @m {
+        sol.yield loc(#loc_asm)
+      } loc(#loc_asm)
+      sol.return loc(#loc_asm)
+    } loc(#loc_asm)
+    sol.func @second() {
+      sol.modifier_invocation @m {
+        sol.yield loc(#loc_asm)
+      } loc(#loc_asm)
+      sol.return loc(#loc_asm)
+    } loc(#loc_asm)
+  } {kind = #sol<ContractKind Contract>} loc(#loc_contract)
 } loc(#loc_contract)
 
 #loc_contract = loc("Modified.sol":2:1)
@@ -34,6 +66,8 @@ module {
 #loc_function = loc("Modified.sol":8:5)
 #loc_invocation = loc("Modified.sol":8:30)
 #loc_return = loc("Modified.sol":9:9)
+#loc_asm = loc("Modified.sol":11:5)
+#loc_one_body = loc("Modified.sol":13:11)
 
 // CHECK-LABEL: sol.func @f
 // CHECK:         sol.alloca {{.*}} loc("Modified.sol":0:0)
@@ -53,3 +87,10 @@ module {
 // CHECK:         } loc("Modified.sol":8:30)
 // CHECK:         sol.load {{.*}} loc("Modified.sol":0:0)
 // CHECK-NEXT:    sol.return {{.*}} loc("Modified.sol":0:0)
+
+// CHECK-LABEL: sol.func @first
+// CHECK:         yul.func @one
+// CHECK:         } loc(fused<#llvm.di_subprogram<id = distinct[0]<>, {{.*}}name = "one"
+// CHECK-LABEL: sol.func @second
+// CHECK:         yul.func @one
+// CHECK:         } loc(fused<#llvm.di_subprogram<id = distinct[2]<>, {{.*}}name = "one"
