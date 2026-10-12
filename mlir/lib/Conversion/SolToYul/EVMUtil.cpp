@@ -3094,11 +3094,6 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
               auto srcIntTy = dyn_cast<IntegerType>(srcEltTy);
               if (srcIntTy && srcIntTy.isSigned()) {
                 val = genCleanupPackedStorageValue(srcEltTy, extracted, loc);
-                if (dstEltByteSize < 32)
-                  val = b.create<yul::AndOp>(
-                      loc, val,
-                      bExt.genI256Const(
-                          APInt::getLowBitsSet(256, dstEltByteSize * 8)));
               } else {
                 Value widened = b.create<yul::ArithShlOp>(
                     loc, extracted, bExt.genI256Const(widenShift));
@@ -3208,14 +3203,9 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
       assert(dstIsStorage && "element conversion only on copies into storage");
       val = srcIsStorage ? genCleanupPackedStorageValue(srcTy, val, loc)
                          : genCleanup(srcTy, val, loc, srcDataLoc);
-      if (alignShift > 0) {
+      if (alignShift > 0)
         val =
             b.create<yul::ArithShrOp>(loc, val, bExt.genI256Const(alignShift));
-      } else if (sol::getNumBytes(dstTy) < 32) {
-        APInt fieldMask =
-            APInt::getLowBitsSet(256, sol::getNumBytes(dstTy) * 8);
-        val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
-      }
     } else if (alignShift > 0) {
       if (srcDataLoc == sol::DataLocation::CallData)
         val = genCleanup(dstTy, val, loc, /*shouldRevert=*/true);
@@ -3227,19 +3217,8 @@ void evm::Builder::genCopy(Type srcTy, Type dstTy, Value srcAddr, Value dstAddr,
         val =
             b.create<yul::ArithShlOp>(loc, val, bExt.genI256Const(alignShift));
     } else {
-      if (dstIsStorage) {
-        if (srcDataLoc == sol::DataLocation::CallData)
-          val = genCleanup(dstTy, val, loc, /*shouldRevert=*/true);
-        // Storage write-side: AND-mask to zero upper bits, matching old codegen
-        // LValue.cpp (chopSignBits=true). genCleanup for signed ints
-        // returns signextend, which would set upper bits to 1 for negative
-        // values and corrupt the storage slot.
-        unsigned storageBits = sol::getNumBytes(dstTy) * 8;
-        APInt fieldMask = APInt::getLowBitsSet(256, storageBits);
-        val = b.create<yul::AndOp>(loc, val, bExt.genI256Const(fieldMask));
-      } else {
-        val = genCleanup(dstTy, val, loc, srcDataLoc);
-      }
+      // Upstream array copies mask only packed elements to their width.
+      val = genCleanup(dstTy, val, loc, srcDataLoc);
     }
     genStore(val, dstAddr, dstDataLoc, loc);
   } else if (isa<sol::StringType>(dstTy)) {
