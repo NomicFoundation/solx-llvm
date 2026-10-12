@@ -41,16 +41,16 @@ Value BuilderExt::genLLVMStruct(ValueRange vals,
 }
 
 LLVM::GlobalOp BuilderExt::getStringLiteralGlobalOp(llvm::StringRef literal,
-                                                    ModuleOp mod) {
+                                                    sol::ContractOp contr) {
   OpBuilder::InsertionGuard insertGuard(b);
-  b.setInsertionPointToStart(mod.getBody());
+  b.setInsertionPointToStart(contr.getBody());
   auto strAttr = b.getStringAttr(literal);
   Type i8Type = b.getIntegerType(8);
   Type arrayType = LLVM::LLVMArrayType::get(i8Type, literal.size());
 
   // Generate a unique name of a global that doesn't clash
   // with existing symbols.
-  mlir::SymbolTable symbolTable(mod);
+  mlir::SymbolTable symbolTable(contr);
   unsigned uniquingCounter = 0;
   llvm::SmallString<128> globName = mlir::SymbolTable::generateSymbolName<128>(
       "__data_in_code_",

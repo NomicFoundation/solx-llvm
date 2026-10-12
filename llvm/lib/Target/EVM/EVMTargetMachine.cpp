@@ -152,6 +152,7 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineStartEPCallback(
       [](ModulePassManager &PM, OptimizationLevel Level) {
         PM.addPass(EVMFoldMemoryGuardPass());
+        PM.addPass(EVMLowerSetImmutablesPass());
         if (Level != OptimizationLevel::O0)
           PM.addPass(EVMAlwaysInlinePass());
         PM.addPass(EVMLinkRuntimePass());
@@ -188,6 +189,10 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
          ArrayRef<PassBuilder::PipelineElement>) {
         if (PassName == "evm-fold-memory-guard") {
           PM.addPass(EVMFoldMemoryGuardPass());
+          return true;
+        }
+        if (PassName == "evm-lower-set-immutables") {
+          PM.addPass(EVMLowerSetImmutablesPass());
           return true;
         }
         if (PassName == "evm-mark-recursive-functions") {

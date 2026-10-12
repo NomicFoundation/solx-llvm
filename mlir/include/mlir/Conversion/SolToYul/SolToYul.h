@@ -14,9 +14,14 @@
 #ifndef MLIR_CONVERSION_SOLTOYUL_SOLTOYUL_H
 #define MLIR_CONVERSION_SOLTOYUL_SOLTOYUL_H
 
+#include "mlir/Dialect/Sol/Sol.h"
+#include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 
 namespace mlir {
 
@@ -30,8 +35,58 @@ public:
   SolTypeConverter();
 };
 
+/// The internal function pointer dispatch of a module. Inline assembly can
+/// retype a pointer, so a call reaches every target that takes and returns as
+/// many words. The pass records its contract's creation_func_refs before
+/// stage 2 erases the contract. Stage 1 records each sol.func_constant's target
+/// and turns each sol.icall into a call of its dispatch function, one per
+/// lowered signature, declared at its first call. The pass gives the dispatch
+/// functions their bodies after stage 2 has moved the functions into their
+/// object.
+class InternalDispatch {
+public:
+  /// The words a function takes and returns.
+  using WordCounts = std::pair<unsigned, unsigned>;
+
+  explicit InternalDispatch(const TypeConverter &tyConv) : tyConv(tyConv) {}
+
+  /// Records the functions `contr` lists in its creation_func_refs.
+  void addCreationFuncRefs(sol::ContractOp contr);
+
+  /// Records `fn` as a target of the calls that take and return as many words
+  /// as it does.
+  void addTarget(sol::FuncOp fn);
+
+  /// Returns the dispatch function `icall` calls, of `dispatchFnTy`: the
+  /// pointer ahead of the callee's arguments, to the callee's results. The
+  /// first call of that signature declares it, so every call names an existing
+  /// function.
+  yul::FuncOp getOrCreateDispatchFn(sol::ICallOp icall,
+                                    FunctionType dispatchFnTy,
+                                    PatternRewriter &r);
+
+  /// Gives each declared dispatch function its body, a switch over the targets
+  /// of its word counts, and places it after its first caller.
+  void genDispatchFns();
+
+private:
+  struct Request {
+    yul::FuncOp fn;
+    sol::FuncOp caller;
+  };
+
+  const TypeConverter &tyConv;
+  DenseMap<WordCounts, DenseSet<int64_t>> targets;
+  llvm::MapVector<FunctionType, Request> requests;
+};
+
 /// Adds the conversion patterns of unchecked arithmetic ops in the sol dialect.
 void populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv);
+
+/// Adds the conversion patterns of internal function pointers: the constants
+/// and the calls through them, which `dispatch` records.
+void populateInternalFuncPtrPats(RewritePatternSet &pats, TypeConverter &tyConv,
+                                 InternalDispatch &dispatch);
 
 /// Adds the conversion patterns of crypto ops in the sol dialect.
 void populateCryptoPats(RewritePatternSet &pats, TypeConverter &tyConv);
@@ -70,19 +125,16 @@ void populateFuncBoundaryPats(RewritePatternSet &pats, TypeConverter &tyConv);
 /// Adds the conversion pattern of sol.func.
 void populateFuncOpPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
-/// Adds late Sol-to-Yul patterns that require legalized signatures and
-/// contract runtime/creation placement.
-void populateLateSolToYulPats(RewritePatternSet &pats, TypeConverter &tyConv);
-
 /// Adds the conversion pattern of sol.contract.
 void populateContractPat(RewritePatternSet &pats);
 
 /// Adds patterns for sol.inline_asm and related ops.
 void populateInlineAsmPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
-void populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv);
+void populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv,
+                        InternalDispatch &dispatch);
 
-void populateStage2Pats(RewritePatternSet &pats, TypeConverter &tyConv);
+void populateStage2Pats(RewritePatternSet &pats);
 
 } // namespace evm
 } // namespace mlir

@@ -251,6 +251,32 @@ Speculation::Speculatability LoadOp::getSpeculatability() {
 }
 
 //===----------------------------------------------------------------------===//
+// LoadImmutableOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LoadImmutableOp::verify() {
+  // The creation code reads an immutable from its memory cell.
+  auto contr = (*this)->getParentOfType<ContractOp>();
+  if (!contr || !contr.getRuntime())
+    return emitOpError("expects to load '") << getName() << "' in runtime code";
+  return success();
+}
+
+LogicalResult
+LoadImmutableOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto immutable =
+      symbolTable.lookupNearestSymbolFrom<ImmutableOp>(*this, getNameAttr());
+  if (!immutable)
+    return emitOpError("expects '")
+           << getName() << "' to reference a sol.immutable";
+  if (immutable.getType() != getVal().getType())
+    return emitOpError("expects type ")
+           << immutable.getType() << " of '" << getName() << "', not "
+           << getVal().getType();
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // StoreOp
 //===----------------------------------------------------------------------===//
 
@@ -784,6 +810,81 @@ void FuncOp::print(OpAsmPrinter &p) {
   function_interface_impl::printFunctionOp(
       p, *this, /*isVariadic=*/false, getFunctionTypeAttrName(),
       getArgAttrsAttrName(), getResAttrsAttrName());
+}
+
+//===----------------------------------------------------------------------===//
+// FuncConstantOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+FuncConstantOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto fn = symbolTable.lookupNearestSymbolFrom<FuncOp>(*this, getSymAttr());
+  if (!fn || !fn.getId())
+    return emitOpError("expects '")
+           << getSym() << "' to be a sol.func with an id";
+  if (fn.getFunctionType() != getAddr().getType().getFuncTy())
+    return emitOpError("expects type ")
+           << fn.getFunctionType() << " of '" << getSym() << "', not "
+           << getAddr().getType().getFuncTy();
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// ContractOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ContractOp::verify() {
+  // A module lowers to a single object, whose entry code becomes the module's
+  // entry function.
+  for (Operation &sibling : *getOperation()->getBlock())
+    if (&sibling != getOperation() && isa<ContractOp>(sibling))
+      return emitOpError("expects no other sol.contract in its module, found '")
+             << cast<ContractOp>(sibling).getSymName() << "'";
+  if (!getCreationFuncRefs().empty() && !getRuntime())
+    return emitOpError("expects creation func refs only in runtime code");
+  return success();
+}
+
+LogicalResult ContractOp::verifyRegions() {
+  // The creation code keeps the immutables in consecutive memory cells and
+  // dispatches no call. Receive and fallback run in the runtime code, a
+  // constructor in the creation code.
+  uint64_t position = 0;
+  for (ImmutableOp immutable : getBody()->getOps<ImmutableOp>()) {
+    if (immutable.getIndex() != position)
+      return emitOpError("expects immutable '")
+             << immutable.getSymName() << "' to carry index " << position
+             << ", not " << immutable.getIndex();
+    ++position;
+  }
+  if (getRuntime()) {
+    for (FuncOp fn : getBody()->getOps<FuncOp>())
+      if (fn.getKind() == FunctionKind::Constructor)
+        return emitOpError("expects function '")
+               << fn.getSymName() << "' of kind Constructor in creation code";
+    return success();
+  }
+  for (FuncOp fn : getBody()->getOps<FuncOp>()) {
+    std::optional<FunctionKind> kind = fn.getKind();
+    if (kind == FunctionKind::Receive || kind == FunctionKind::Fallback)
+      return emitOpError("expects function '")
+             << fn.getSymName() << "' of kind " << stringifyFunctionKind(*kind)
+             << " in runtime code";
+    if (fn.getSelector())
+      return emitOpError("expects function '")
+             << fn.getSymName() << "' in creation code to have no selector";
+  }
+  return success();
+}
+
+LogicalResult ContractOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  for (auto ref : getCreationFuncRefs().getAsRange<FlatSymbolRefAttr>()) {
+    auto fn = symbolTable.lookupSymbolIn<FuncOp>(*this, ref);
+    if (!fn || !fn.getId())
+      return emitOpError("expects creation func ref '")
+             << ref.getValue() << "' to be a sol.func with an id";
+  }
+  return success();
 }
 
 #define GET_OP_CLASSES

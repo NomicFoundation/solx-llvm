@@ -23,12 +23,9 @@ def Yul_FuncOp : Yul_Op<"func", [AutomaticAllocationScope,
                                   IsolatedFromAbove, Symbol]> {
   let summary = "Represents a Yul function";
   let arguments = (ins SymbolNameAttr:$sym_name,
-                       TypeAttrOf<FunctionType>:$function_type,
-                       OptionalAttr<DictArrayAttr>:$arg_attrs,
-                       OptionalAttr<DictArrayAttr>:$res_attrs,
-                       OptionalAttr<StrAttr>:$sym_visibility,
-                       // Set when the function holds memory unsafe inline assembly
-                       UnitAttr:$unsafe_asm);
+      TypeAttrOf<FunctionType>:$function_type,
+      OptionalAttr<DictArrayAttr>:$arg_attrs,
+      OptionalAttr<DictArrayAttr>:$res_attrs);
   let regions = (region AnyRegion:$body);
 
   let builders = [
@@ -380,8 +377,9 @@ def Yul_UpdFreePtrOp : Yul_Op<"upd_free_ptr"> {
 
 // FIXME: Wrap the entry code to an entry function so that we can add the
 // SingleBlock trait.
-def Yul_ObjectOp : Yul_Op<"object", [Symbol, SymbolTable, NoTerminator,
-                                     IsolatedFromAbove]> {
+def Yul_ObjectOp
+    : Yul_Op<"object", [Symbol, SymbolTable, NoTerminator, IsolatedFromAbove,
+                        HasParent<"ModuleOp">]> {
   let summary = "Represents an `object` in yul";
 
   let arguments = (ins SymbolNameAttr:$sym_name);
@@ -401,6 +399,7 @@ def Yul_ObjectOp : Yul_Op<"object", [Symbol, SymbolTable, NoTerminator,
   }];
 
   let assemblyFormat = "$sym_name $body attr-dict";
+  let hasVerifier = 1;
 }
 
 //

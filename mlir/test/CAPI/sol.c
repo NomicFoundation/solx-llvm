@@ -84,8 +84,15 @@ static void testSolPassRegistration(MlirContext ctx) {
 static void testSolPasses(MlirContext ctx) {
   fprintf(stderr, "testSolPasses\n");
 
-  MlirLocation loc = mlirLocationUnknownGet(ctx);
-  MlirModule module = mlirModuleCreateEmpty(loc);
+  // The Sol lowering takes a module holding one contract.
+  MlirModule module =
+      mlirModuleCreateParse(ctx, mlirStringRefCreateFromCString(
+                                     "module { sol.contract @C { } "
+                                     "{kind = #sol<ContractKind Contract>} }"));
+  if (mlirModuleIsNull(module)) {
+    fprintf(stderr, "Module parsing failed\n");
+    exit(EXIT_FAILURE);
+  }
   MlirOperation moduleOp = mlirModuleGetOperation(module);
 
   MlirPassManager pm = mlirPassManagerCreate(ctx);
@@ -102,11 +109,6 @@ static void testSolPasses(MlirContext ctx) {
   }
   // CHECK: pass manager run successfully
   fprintf(stderr, "pass manager run successfully\n");
-
-  mlirEvmLowerSetImmutables(module, NULL, NULL, 0);
-  mlirEvmRemoveSetImmutables(module);
-  // CHECK: immutables run successfully
-  fprintf(stderr, "immutables run successfully\n");
 
   mlirPassManagerDestroy(pm);
   mlirModuleDestroy(module);

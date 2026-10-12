@@ -31,9 +31,8 @@ namespace evm {
 /// Returns the file location `loc` reports, without what is fused onto it, or
 /// `loc` if it reports no file.
 ///
-/// This is how to put an operation at a contract's or a function's position:
-/// their locations carry a compile unit or a subprogram, which belongs on them
-/// and nowhere else.
+/// This is how to put an operation at a function's position: a function's
+/// location carries its subprogram, which belongs on it and nowhere else.
 Location sourceLoc(Location loc);
 
 /// Returns the file `loc` reports at line 0, or `loc` if it reports no file.

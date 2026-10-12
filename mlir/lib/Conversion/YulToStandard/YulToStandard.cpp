@@ -26,15 +26,9 @@
 #include "llvm/IR/IntrinsicsEVM.h"
 
 using namespace mlir;
+using solgen::getModule;
 
 namespace {
-
-template <typename OpT>
-static ModuleOp getModule(OpT op) {
-  ModuleOp mod = op->template getParentOfType<ModuleOp>();
-  assert(mod && "expected attached module");
-  return mod;
-}
 
 // Returns an existing or a new (if not found) FuncOp in the ModuleOp `mod`.
 //
@@ -1116,8 +1110,11 @@ struct SetImmutableOpLowering : public OpRewritePattern<yul::SetImmutableOp> {
 
   LogicalResult matchAndRewrite(yul::SetImmutableOp op,
                                 PatternRewriter &r) const override {
-    r.replaceOpWithNewOp<LLVM::SetImmutableOp>(op, op.getAddr(), op.getName(),
-                                               op.getVal());
+    r.replaceOpWithNewOp<LLVM::IntrCallOp>(
+        op, /*res=*/Type{}, llvm::Intrinsic::evm_setimmutable,
+        /*ins=*/ValueRange{op.getAddr(), op.getVal()},
+        /*metadata=*/r.getStrArrayAttr(op.getName()),
+        r.getStringAttr("evm.setimmutable"));
     return success();
   }
 };
@@ -1163,14 +1160,6 @@ struct MemGuardOpLowering : public OpRewritePattern<yul::MemGuardOp> {
     auto mod = op->getParentOfType<ModuleOp>();
     if (!mod)
       return failure();
-
-    // A memory-guard implies memory-safe asm. So we don't generate them if
-    // there are memory-unsafe asm.
-    if (llvm::any_of(mod.getOps<yul::FuncOp>(),
-                     [](yul::FuncOp fn) { return fn.getUnsafeAsm(); })) {
-      r.replaceOpWithNewOp<arith::ConstantOp>(op, guard);
-      return success();
-    }
 
     // The size starts at zero; the driver rewrites it when the backend asks
     // for a spill area.
@@ -1638,7 +1627,7 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
     Block *modBlk = mod.getBody();
 
     // The entry code is all ops in the object that are neither a function nor
-    // an object.
+    // a global.
     //
     // Move the entry code to the entry function and everything else to the
     // module. We need to visit the blocks that are directly nested inside
@@ -1647,7 +1636,7 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
       for (Block &block : region)
         for (Operation &nestedOp : llvm::make_early_inc_range(block))
           if (isa<func::FuncOp>(nestedOp) || isa<yul::FuncOp>(nestedOp) ||
-              isa<yul::ObjectOp>(nestedOp) || isa<LLVM::GlobalOp>(nestedOp))
+              isa<LLVM::GlobalOp>(nestedOp))
             nestedOp.moveBefore(modBlk, modBlk->end());
 
     // Terminate all blocks without terminators using the unreachable op.
@@ -1665,28 +1654,9 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
 
   LogicalResult matchAndRewrite(yul::ObjectOp obj,
                                 PatternRewriter &r) const override {
-    Location loc = obj.getLoc();
-
-    StringRef objName = obj.getName();
-
-    // Is this a runtime object?
-    // FIXME: Is there a better way to check this?
-    if (objName.ends_with("_deployed")) {
-      auto runtimeMod = r.create<ModuleOp>(loc, objName);
-      auto parentMod = obj->getParentOfType<ModuleOp>();
-      assert(parentMod && "object should be nested in a module");
-
-      // Copy module-level attributes (e.g. llvm.data_layout,
-      // llvm.target_triple, sol.evm_version) from the parent module.
-      for (NamedAttribute attr : parentMod->getDialectAttrs())
-        runtimeMod->setAttr(attr.getName(), attr.getValue());
-      moveObjToMod(obj, runtimeMod, r);
-    } else {
-      auto creationMod = obj->getParentOfType<ModuleOp>();
-      assert(creationMod);
-      creationMod.setName(objName);
-      moveObjToMod(obj, creationMod, r);
-    }
+    ModuleOp mod = getModule(obj);
+    mod.setName(obj.getName());
+    moveObjToMod(obj, mod, r);
 
     r.eraseOp(obj);
     return success();

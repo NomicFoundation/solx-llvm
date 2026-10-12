@@ -265,9 +265,6 @@ def Sol_FuncRefType : Sol_Type<"FuncRef", "func_ref"> {
   let assemblyFormat = [{ `<` $funcTy `>` }];
 }
 
-// A func ref, or the i256 function id it legalizes to.
-def Sol_FuncRefLike : AnyTypeOf<[Sol_FuncRefType, I256]>;
-
 // This represents an external function reference (address + selector).
 def Sol_ExtFuncRefType : Sol_Type<"ExtFuncRef", "ext_func_ref"> {
   let parameters = (ins "FunctionType":$funcTy);
@@ -280,6 +277,11 @@ def Sol_ExtFuncRefType : Sol_Type<"ExtFuncRef", "ext_func_ref"> {
 
 def I256Attr : SignlessIntegerAttrBase<I256,
                                        "256-bit signless integer attribute">;
+
+// Upstream's FlatSymbolRefArrayAttr has no constant builder, which a default
+// value needs.
+def Sol_FlatSymbolRefArrayAttr
+    : TypedArrayAttrBase<FlatSymbolRefAttr, "flat symbol ref array attribute">;
 
 def Sol_CmpPredicateAttr :
     I64EnumAttr<"CmpPredicate", "",

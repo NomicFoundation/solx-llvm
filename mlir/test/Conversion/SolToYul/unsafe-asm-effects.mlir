@@ -1,22 +1,18 @@
-// RUN: mlir-opt %s --convert-sol-to-yul | FileCheck %s
+// RUN: mlir-opt %s --split-input-file --convert-sol-to-yul | FileCheck %s
 
-// An inline assembly body marks its function unsafe_asm iff it holds an op
-// with a memory effect. Assigning an externally referenced solidity memory
-// variable counts as one.
+// An inline assembly body leaves its object without a memoryguard iff it holds
+// an op with a memory effect. Assigning an externally referenced solidity
+// memory variable counts as one.
 
-#Constructor = #sol<FunctionKind Constructor>
 #Contract = #sol<ContractKind Contract>
 #Default = #sol<RevertStrings Default>
 #NonPayable = #sol<StateMutability NonPayable>
 #Osaka = #sol<EvmVersion Osaka>
+
+// CHECK-LABEL: yul.object @Mload_deployed {
+// CHECK-NEXT:    yul.constant 128
 module {
-  // CHECK-LABEL: yul.object @Mload {
-  // CHECK:         yul.object @Mload_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
   sol.contract @Mload {
-    sol.func @Mload() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 5 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -24,14 +20,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Mstore {
-  // CHECK:         yul.object @Mstore_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Mstore_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Mstore {
-    sol.func @Mstore() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 11 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -40,14 +40,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Mstore8 {
-  // CHECK:         yul.object @Mstore8_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Mstore8_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Mstore8 {
-    sol.func @Mstore8() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 17 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -56,14 +60,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Mcopy {
-  // CHECK:         yul.object @Mcopy_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Mcopy_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Mcopy {
-    sol.func @Mcopy() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 23 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -73,28 +81,36 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Msize {
-  // CHECK:         yul.object @Msize_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Msize_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Msize {
-    sol.func @Msize() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 29 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %0 = yul.msize
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @CallDataCopy {
-  // CHECK:         yul.object @CallDataCopy_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @CallDataCopy_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @CallDataCopy {
-    sol.func @CallDataCopy() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 35 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -104,14 +120,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @CodeCopy {
-  // CHECK:         yul.object @CodeCopy_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @CodeCopy_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @CodeCopy {
-    sol.func @CodeCopy() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 41 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -121,14 +141,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @ExtCodeCopy {
-  // CHECK:         yul.object @ExtCodeCopy_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @ExtCodeCopy_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @ExtCodeCopy {
-    sol.func @ExtCodeCopy() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 47 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -139,14 +163,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @ReturnDataCopy {
-  // CHECK:         yul.object @ReturnDataCopy_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @ReturnDataCopy_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @ReturnDataCopy {
-    sol.func @ReturnDataCopy() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 53 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -156,14 +184,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Keccak256 {
-  // CHECK:         yul.object @Keccak256_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Keccak256_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Keccak256 {
-    sol.func @Keccak256() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 59 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -172,14 +204,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Call {
-  // CHECK:         yul.object @Call_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Call_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Call {
-    sol.func @Call() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 65 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -193,14 +229,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @CallCode {
-  // CHECK:         yul.object @CallCode_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @CallCode_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @CallCode {
-    sol.func @CallCode() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 71 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -214,14 +254,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @StaticCall {
-  // CHECK:         yul.object @StaticCall_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @StaticCall_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @StaticCall {
-    sol.func @StaticCall() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 77 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -234,14 +278,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @DelegateCall {
-  // CHECK:         yul.object @DelegateCall_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @DelegateCall_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @DelegateCall {
-    sol.func @DelegateCall() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 83 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -254,14 +302,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Return {
-  // CHECK:         yul.object @Return_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Return_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Return {
-    sol.func @Return() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 89 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -270,14 +322,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Revert {
-  // CHECK:         yul.object @Revert_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Revert_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Revert {
-    sol.func @Revert() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 95 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -286,14 +342,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Create {
-  // CHECK:         yul.object @Create_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Create_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Create {
-    sol.func @Create() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 101 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -303,14 +363,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Create2 {
-  // CHECK:         yul.object @Create2_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Create2_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Create2 {
-    sol.func @Create2() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 107 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -321,14 +385,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Log0 {
-  // CHECK:         yul.object @Log0_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Log0_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Log0 {
-    sol.func @Log0() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 113 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -337,14 +405,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Log1 {
-  // CHECK:         yul.object @Log1_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Log1_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @Log1 {
-    sol.func @Log1() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 119 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -354,14 +426,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @YulFnCalled {
-  // CHECK:         yul.object @YulFnCalled_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @YulFnCalled_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @YulFnCalled {
-    sol.func @YulFnCalled() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 125 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         yul.func @g : (i256) -> () {
@@ -378,14 +454,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @YulFnUncalled {
-  // CHECK:         yul.object @YulFnUncalled_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @YulFnUncalled_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @YulFnUncalled {
-    sol.func @YulFnUncalled() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 131 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         yul.func @g : (i256) -> () {
@@ -400,14 +480,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @MemoryLvalue {
-  // CHECK:         yul.object @MemoryLvalue_deployed {
-  // CHECK:         } {{{.*}}unsafe_asm}
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @MemoryLvalue_deployed {
+// CHECK-NEXT:    yul.constant 128
+module {
   sol.contract @MemoryLvalue {
-    sol.func @MemoryLvalue() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 143 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       %0 = sol.alloca : !sol.ptr<!sol.array<? x ui256, Memory>, Stack>
       sol.inline_asm {
@@ -417,13 +501,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @MemoryRvalue {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @MemoryRvalue_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @MemoryRvalue {
-    sol.func @MemoryRvalue() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 146 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       %0 = sol.alloca : !sol.ptr<!sol.array<? x ui256, Memory>, Stack>
       sol.inline_asm {
@@ -432,13 +521,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @SLoad {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @SLoad_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @SLoad {
-    sol.func @SLoad() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 149 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -446,13 +540,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @SStore {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @SStore_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @SStore {
-    sol.func @SStore() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 155 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -461,13 +560,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @TLoad {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @TLoad_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @TLoad {
-    sol.func @TLoad() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 161 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -475,13 +579,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @TStore {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @TStore_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @TStore {
-    sol.func @TStore() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 167 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -490,13 +599,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @CallDataLoad {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @CallDataLoad_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @CallDataLoad {
-    sol.func @CallDataLoad() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 173 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -504,26 +618,36 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Caller {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Caller_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @Caller {
-    sol.func @Caller() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 179 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %0 = yul.caller
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @Add {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @Add_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @Add {
-    sol.func @Add() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 185 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c1_i256 = yul.constant 1
@@ -532,13 +656,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @SelfDestruct {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @SelfDestruct_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @SelfDestruct {
-    sol.func @SelfDestruct() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() attributes {id = 191 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
       sol.inline_asm {
         %c0_i256 = yul.constant 0
@@ -546,13 +675,18 @@ module {
       }
       sol.return
     }
-  } {kind = #Contract}
-  // CHECK-LABEL: yul.object @StackLvalue {
-  // CHECK-NOT:     unsafe_asm
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @StackLvalue_deployed {
+// CHECK-NEXT:    yul.memoryguard 128
+module {
   sol.contract @StackLvalue {
-    sol.func @StackLvalue() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
-      sol.return
-    }
     sol.func @f() -> ui256 attributes {id = 205 : i64, orig_fn_type = () -> ui256, selector = 638722032 : i32, state_mutability = #NonPayable} {
       %0 = sol.alloca : !sol.ptr<ui256, Stack>
       %c0_ui256 = sol.constant 0 : ui256
@@ -565,5 +699,5 @@ module {
       %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
       sol.return %1 : ui256
     }
-  } {kind = #Contract}
+  } {kind = #Contract, runtime}
 }

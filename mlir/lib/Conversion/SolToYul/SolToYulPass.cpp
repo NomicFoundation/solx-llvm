@@ -16,7 +16,6 @@
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "llvm/ADT/SetVector.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTSOLTOYULPASS
@@ -63,7 +62,7 @@ struct ConvertSolToYulPass
   // TODO: Generalize this comment.
   //
   // FIXME: Some of the conversion patterns depends on the ancestor/descendant
-  // sol.func ops (e.g.: checking the runtime/creation context). Also APIs
+  // sol.func ops (e.g.: placing a dispatch after its caller). Also APIs
   // like getOrInsert*FuncOp that are used in the conversion pass works with
   // sol.func. sol.func conversion in the same conversion pass will require
   // other conversion to be able to work with sol.func and func.func. To keep
@@ -79,8 +78,8 @@ struct ConvertSolToYulPass
 
   /// Converts sol dialect ops except sol.contract and sol.func + related ops.
   /// This pass also legalizes all the sol dialect types.
-  LogicalResult runStage1Conversion(ModuleOp mod,
-                                    evm::SolTypeConverter &tyConv) {
+  LogicalResult runStage1Conversion(ModuleOp mod, evm::SolTypeConverter &tyConv,
+                                    evm::InternalDispatch &dispatch) {
     OpBuilder b(mod.getContext());
 
     ConversionTarget convTgt(getContext());
@@ -90,6 +89,8 @@ struct ConvertSolToYulPass
     convTgt.addIllegalOp<
         // clang-format off
         sol::ConstantOp,
+        sol::FuncConstantOp,
+        sol::ICallOp,
         sol::DefaultFuncConstantOp,
         sol::ExtFuncConstantOp,
         sol::ExtFuncAddrOp,
@@ -142,6 +143,7 @@ struct ConvertSolToYulPass
         sol::DeleteOp,
         sol::DataLocCastOp,
         sol::LoadOp,
+        sol::LoadImmutableOp,
         sol::StoreOp,
         sol::LengthOp,
         sol::SliceOp,
@@ -210,52 +212,32 @@ struct ConvertSolToYulPass
     convTgt.addDynamicallyLegalOp<sol::FuncOp>([&](sol::FuncOp op) {
       return tyConv.isSignatureLegal(op.getFunctionType());
     });
-    // sol.func_constant is only type-legalized here: ContractOpLowering's
-    // ctor-reachability walk needs the symbol reference intact so functions
-    // referenced as values get cloned into the creation object.
-    convTgt.addDynamicallyLegalOp<sol::CallOp, sol::ICallOp, sol::ReturnOp,
-                                  sol::LoadImmutableOp, sol::FuncConstantOp>(
+    convTgt.addDynamicallyLegalOp<sol::CallOp, sol::ReturnOp>(
         [&](Operation *op) { return tyConv.isLegal(op); });
 
     RewritePatternSet pats(&getContext());
     pats.add<ConvCastOpLowering>(tyConv, &getContext());
     populateAnyFunctionOpInterfaceTypeConversionPattern(pats, tyConv);
     pats.add<GenericTypeConversion<sol::CallOp>,
-             GenericTypeConversion<sol::ICallOp>,
-             GenericTypeConversion<sol::ReturnOp>,
-             GenericTypeConversion<sol::FuncConstantOp>>(tyConv, &getContext());
+             GenericTypeConversion<sol::ReturnOp>>(tyConv, &getContext());
 
-    evm::populateStage1Pats(pats, tyConv);
-
-    // Assign addresses to immutables.
-    // TODO: Move this to the frontend like we did for state variable slots.
-    mod.walk([&](sol::ContractOp contr) {
-      APInt immAddr(256, 128);
-      contr.walk([&](sol::ImmutableOp immOp) {
-        immOp->setAttr(
-            "addr",
-            IntegerAttr::get(IntegerType::get(&getContext(), 256), immAddr));
-        immAddr += 32;
-      });
-    });
+    evm::populateStage1Pats(pats, tyConv, dispatch);
 
     if (failed(applyPartialConversion(mod, convTgt, std::move(pats))))
       return failure();
     return success();
   }
 
-  /// Converts sol.contract and late sol ops that still need Sol context to Yul.
-  LogicalResult runStage2Conversion(ModuleOp mod,
-                                    evm::SolTypeConverter &tyConv) {
+  /// Converts sol.contract to Yul.
+  LogicalResult runStage2Conversion(ModuleOp mod) {
     ConversionTarget convTgt(getContext());
     convTgt.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
     convTgt
         .addLegalDialect<sol::SolDialect, yul::YulDialect, LLVM::LLVMDialect>();
-    convTgt.addIllegalOp<sol::ContractOp, sol::ICallOp, sol::LoadImmutableOp,
-                         sol::FuncConstantOp>();
+    convTgt.addIllegalOp<sol::ContractOp>();
 
     RewritePatternSet pats(&getContext());
-    evm::populateStage2Pats(pats, tyConv);
+    evm::populateStage2Pats(pats);
 
     if (failed(applyPartialConversion(mod, convTgt, std::move(pats))))
       return failure();
@@ -296,57 +278,28 @@ struct ConvertSolToYulPass
     return success();
   }
 
-  /// Sets the candidates attribute of every sol.icall.
-  void annotateICallCandidates(ModuleOp mod) {
-    Builder b(mod.getContext());
-    DenseMap<std::pair<Operation *, sol::FuncRefType>, SetVector<int64_t>>
-        buckets;
-    SmallVector<sol::ICallOp> icalls;
-    mod.walk([&](Operation *op) {
-      if (auto icall = dyn_cast<sol::ICallOp>(op)) {
-        icalls.push_back(icall);
-        return;
-      }
-      auto fnConst = dyn_cast<sol::FuncConstantOp>(op);
-      if (!fnConst)
-        return;
-      auto fn = SymbolTable::lookupNearestSymbolFrom<sol::FuncOp>(
-          fnConst, fnConst.getSymAttr());
-      assert(fn && fn.getId() && "unresolvable sol.func_constant");
-      buckets[{fnConst->getParentOfType<ModuleOp>().getOperation(),
-               cast<sol::FuncRefType>(fnConst.getType())}]
-          .insert(*fn.getId());
-    });
-
-    DenseMap<std::pair<Operation *, sol::FuncRefType>, DenseI64ArrayAttr>
-        bucketAttrs;
-    for (auto &[key, idSet] : buckets) {
-      SmallVector<int64_t> ids = idSet.takeVector();
-      llvm::sort(ids);
-      bucketAttrs[key] = b.getDenseI64ArrayAttr(ids);
-    }
-
-    DenseI64ArrayAttr emptyAttr = b.getDenseI64ArrayAttr({});
-    for (sol::ICallOp icall : icalls) {
-      auto it = bucketAttrs.find(
-          {icall->getParentOfType<ModuleOp>().getOperation(),
-           cast<sol::FuncRefType>(icall.getCallee().getType())});
-      icall.setCandidatesAttr(it != bucketAttrs.end() ? it->second : emptyAttr);
-    }
-  }
-
   void runOnOperation() override {
     ModuleOp mod = getOperation();
     evm::SolTypeConverter tyConv;
-    annotateICallCandidates(mod);
-    if (failed(runStage1Conversion(mod, tyConv))) {
+    evm::InternalDispatch dispatch(tyConv);
+    // The module lowers to the object of its one contract, and a nested
+    // module's contract would lower without its creation func refs.
+    auto contracts = mod.getOps<sol::ContractOp>();
+    if (!llvm::hasSingleElement(contracts) || !mod.getOps<ModuleOp>().empty()) {
+      mod.emitOpError("expects one sol.contract and no nested module");
       signalPassFailure();
       return;
     }
-    if (failed(runStage2Conversion(mod, tyConv))) {
+    dispatch.addCreationFuncRefs(*contracts.begin());
+    if (failed(runStage1Conversion(mod, tyConv, dispatch))) {
       signalPassFailure();
       return;
     }
+    if (failed(runStage2Conversion(mod))) {
+      signalPassFailure();
+      return;
+    }
+    dispatch.genDispatchFns();
     if (failed(runStage3Conversion(mod, tyConv))) {
       signalPassFailure();
       return;

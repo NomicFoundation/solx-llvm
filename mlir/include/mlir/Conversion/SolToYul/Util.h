@@ -42,6 +42,14 @@ unsigned getRoundUpToMultiple(unsigned val) {
   return ((val + (multiple - 1)) / multiple) * multiple;
 }
 
+/// Returns the module `op` is attached to.
+template <typename OpT>
+ModuleOp getModule(OpT op) {
+  ModuleOp mod = op->template getParentOfType<ModuleOp>();
+  assert(mod && "expected attached module");
+  return mod;
+}
+
 /// Extension of mlir::OpBuilder with APIs helpful for codegen in solidity.
 class BuilderExt {
   OpBuilder &b;
@@ -219,7 +227,7 @@ public:
   /// Creates a private constant LLVM global in address space 4 (code) holding
   /// the given string literal bytes, with a unique \c __data_in_code_* name.
   mlir::LLVM::GlobalOp getStringLiteralGlobalOp(llvm::StringRef literal,
-                                                mlir::ModuleOp mod);
+                                                mlir::sol::ContractOp contr);
 
   /// Generates an LLVM literal struct from the given values.
   Value genLLVMStruct(ValueRange vals,

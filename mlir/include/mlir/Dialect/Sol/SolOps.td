@@ -328,9 +328,17 @@ def Sol_StateVarOp : Sol_Op<"state_var", [Symbol]> {
 }
 
 def Sol_ImmutableOp : Sol_Op<"immutable", [Symbol]> {
-  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type);
+  let summary = "Declares an immutable of the contract";
+  let description = [{
+    `$index` is the immutable's position among its contract's immutables in
+    declaration order, which places it in the memory the creation code keeps
+    it in until it sets the immutables.
+  }];
 
-  let assemblyFormat = "$sym_name attr-dict `:` $type";
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type,
+      I64Attr:$index);
+
+  let assemblyFormat = "$sym_name `index` $index attr-dict `:` $type";
 }
 
 def Sol_AddrOfOp : Sol_Op<"addr_of", [Pure]> {
@@ -418,11 +426,14 @@ def Sol_LoadOp : Sol_Op<"load", [
   let assemblyFormat = "$addr attr-dict `:` type($addr) `,` type($out)";
 }
 
-def Sol_LoadImmutableOp : Sol_Op<"load_immutable", [Pure]> {
+def Sol_LoadImmutableOp
+    : Sol_Op<"load_immutable", [Pure, DeclareOpInterfaceMethods<
+                                          SymbolUserOpInterface>]> {
   let arguments = (ins FlatSymbolRefAttr:$name);
   let results = (outs AnyType:$val);
 
   let assemblyFormat = "$name attr-dict `:` type($val)";
+  let hasVerifier = 1;
 }
 
 def Sol_LibAddrOp : Sol_Op<"lib_addr", [Pure]> {
@@ -714,9 +725,10 @@ def Sol_LeaveOp : Sol_Op<"leave", [Terminator]> {
 
 // TODO: Modifiers doesn't return anything and it can't be external. Should we
 // replace the FunctionOpInterface here with something more appropriate?
-def Sol_ModifierOp : Sol_Op<"modifier",
-                            [AutomaticAllocationScope, FunctionOpInterface,
-                             CallableOpInterface, IsolatedFromAbove, Symbol]> {
+def Sol_ModifierOp
+    : Sol_Op<"modifier", [AutomaticAllocationScope, FunctionOpInterface,
+                          CallableOpInterface, IsolatedFromAbove, Symbol,
+                          HasParent<"ContractOp">]> {
   let arguments = (ins SymbolNameAttr:$sym_name,
                        TypeAttrOf<FunctionType>:$function_type,
                        OptionalAttr<DictArrayAttr>:$arg_attrs,
@@ -800,13 +812,13 @@ def Sol_DefaultFuncConstantOp : Sol_Op<"default_func_constant", [Pure]> {
   let assemblyFormat = "attr-dict `:` type($addr)";
 }
 
-def Sol_FuncConstantOp : Sol_Op<"func_constant", [Pure]> {
-  // TODO: SymbolUserOpInterface verifier: $sym must resolve to a sol.func with
-  // an assigned id.
+def Sol_FuncConstantOp
+    : Sol_Op<"func_constant", [Pure, DeclareOpInterfaceMethods<
+                                         SymbolUserOpInterface>]> {
   let arguments = (ins FlatSymbolRefAttr:$sym);
-  let results = (outs Sol_FuncRefLike:$addr);
+  let results = (outs Sol_FuncRefType:$addr);
 
-  let assemblyFormat = "$sym attr-dict `:` type($addr)";
+  let assemblyFormat = "$sym attr-dict `:` qualified(type($addr))";
 }
 
 def Sol_ExtFuncConstantOp : Sol_Op<"ext_func_constant", [Pure]> {
@@ -865,10 +877,13 @@ class Sol_ICallOpBase<string mnemonic, TypeConstraint calleeTy,
     "attr-dict `:` type($callee) `,` functional-type($callee_operands, results)");
 }
 
-// Indirect call for internal function pointers. $candidates holds the ids of
-// the functions referenced by a sol.func_constant of the callee type
-def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefLike,
-    (ins OptionalAttr<DenseI64ArrayAttr>:$candidates)>;
+// Indirect call for internal function pointers.
+def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefType> {
+  let assemblyFormat = [{
+    $callee `(` $callee_operands `)` attr-dict `:` qualified(type($callee)) `,`
+    functional-type($callee_operands, results)
+  }];
+}
 
 // Indirect call for external function pointers.
 def ExtICallOp : Sol_ICallOpBase<"ext_icall", Sol_ExtFuncRefType,
@@ -1247,8 +1262,8 @@ def Sol_ReturnOp : Sol_Op<"return", [Pure, Terminator]> {
 }
 
 def Sol_FuncOp : Sol_Op<"func", [AutomaticAllocationScope, CallableOpInterface,
-                                 FunctionOpInterface, IsolatedFromAbove,
-                                 Symbol]> {
+                                 FunctionOpInterface, IsolatedFromAbove, Symbol,
+                                 HasParent<"ContractOp">]> {
   // TODO: Verifier should check if
   // - fallback fn type is either `() -> ()`
   // or `(!sol.string<Calldata>) -> (!sol.string<Memory>)`
@@ -1261,11 +1276,8 @@ def Sol_FuncOp : Sol_Op<"func", [AutomaticAllocationScope, CallableOpInterface,
                        OptionalAttr<DictArrayAttr>:$res_attrs,
                        OptionalAttr<I32Attr>:$selector,
                        OptionalAttr<TypeAttrOf<FunctionType>>:$orig_fn_type,
-                       UnitAttr:$runtime,
-                       UnitAttr:$unsafe_asm,
                        OptionalAttr<Sol_FunctionKindAttr>:$kind,
                        OptionalAttr<Sol_StateMutabilityAttr>:$state_mutability,
-                       OptionalAttr<StrAttr>:$sym_visibility,
                        // Unique id used for generating dispatch table in the
                        // indirect call lowering
                        OptionalAttr<I64Attr>:$id);
@@ -1313,12 +1325,29 @@ def Sol_FuncOp : Sol_Op<"func", [AutomaticAllocationScope, CallableOpInterface,
   let hasCustomAssemblyFormat = 1;
 }
 
-def Sol_ContractOp : Sol_Op<"contract", [Symbol, SymbolTable, SingleBlock,
-                                         IsolatedFromAbove, NoTerminator]> {
-  let arguments = (ins SymbolNameAttr:$sym_name, Sol_ContractKindAttr:$kind);
+def Sol_ContractOp
+    : Sol_Op<"contract", [Symbol, SymbolTable, SingleBlock, IsolatedFromAbove,
+                          NoTerminator, HasParent<"ModuleOp">,
+                          DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "The creation or the runtime code of a contract";
+  let description = [{
+    A contract's creation code, or with `$runtime` its runtime code, each
+    lowered to an object of its own, alone in its module. `$creation_func_refs`
+    lists the functions whose pointer the creation code took, which a pointer
+    it stored can reach in the runtime code. `$unsafe_asm` marks code holding
+    memory-unsafe inline assembly, which initializes the free memory pointer
+    without a memoryguard.
+  }];
+
+  let arguments = (ins SymbolNameAttr:$sym_name, Sol_ContractKindAttr:$kind,
+      UnitAttr:$runtime,
+      DefaultValuedAttr<Sol_FlatSymbolRefArrayAttr, "{}">:$creation_func_refs,
+      UnitAttr:$unsafe_asm);
   let regions = (region SizedRegion<1>:$bodyRegion);
 
   let assemblyFormat = "$sym_name $bodyRegion attr-dict";
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
 }
 
 def Sol_StringLitOp : Sol_Op<"string_lit"> {
