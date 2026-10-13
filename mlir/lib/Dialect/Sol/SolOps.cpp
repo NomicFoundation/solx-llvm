@@ -124,12 +124,14 @@ bool ContractCastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
          isa<sol::ContractType>(outputs.front());
 }
 
-bool EnumCastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
-  assert(inputs.size() == 1 && outputs.size() == 1);
-  return (isa<IntegerType>(inputs.front()) &&
-          isa<sol::EnumType>(outputs.front())) ||
-         (isa<sol::EnumType>(inputs.front()) &&
-          isa<IntegerType>(outputs.front()));
+LogicalResult EnumCastOp::verify() {
+  Type inp = getInp().getType();
+  Type out = getOut().getType();
+  if (isa<IntegerType>(inp) && isa<sol::EnumType>(out))
+    return success();
+  if (isa<sol::EnumType>(inp) && (isa<IntegerType>(out) || inp == out))
+    return success();
+  return emitOpError("expects an integer and an enum, or an enum and itself");
 }
 
 bool BytesCastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
