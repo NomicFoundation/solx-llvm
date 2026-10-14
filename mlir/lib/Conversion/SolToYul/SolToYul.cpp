@@ -1442,7 +1442,9 @@ struct ArrayLitOpLowering : public OpConversionPattern<sol::ArrayLitOp> {
 };
 
 struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
-  using OpConversionPattern<sol::StringLitOp>::OpConversionPattern;
+  StringLitOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                      evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::StringLitOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
@@ -1464,9 +1466,8 @@ struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
       // word. Then the CODECOPY below fills only the data area.
       allocPtr =
           evmB.genMemAlloc(op.getType(), false, {}, litSize, Type{}, loc);
-      // Create a global constant initialized with the given string literal.
-      LLVM::GlobalOp globConst = bExt.getStringLiteralGlobalOp(
-          lit, op->getParentOfType<sol::ContractOp>());
+      LLVM::GlobalOp globConst = literals.getOrCreate(
+          lit, op->getParentOfType<sol::ContractOp>(), r, loc);
       auto ptrToArray =
           LLVM::LLVMPointerType::get(mod.getContext(), /*addressSpace=*/4);
       auto addrOf =
@@ -1489,6 +1490,8 @@ struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
     r.replaceOp(op, allocPtr);
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
@@ -4254,14 +4257,33 @@ void evm::populateCryptoPats(mlir::RewritePatternSet &pats,
            EcrecoverOpLowering>(tyConv, pats.getContext());
 }
 
-void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv) {
+LLVM::GlobalOp evm::StringLiteralPool::getOrCreate(StringRef literal,
+                                                   sol::ContractOp contr,
+                                                   OpBuilder &b, Location loc) {
+  auto [it, inserted] = globals.try_emplace(literal);
+  if (!inserted)
+    return it->second;
+  std::string name = ("__data_in_code." + Twine(globals.size() - 1)).str();
+  OpBuilder::InsertionGuard guard(b);
+  b.setInsertionPointToStart(contr.getBody());
+  it->second = b.create<LLVM::GlobalOp>(
+      loc, LLVM::LLVMArrayType::get(b.getIntegerType(8), literal.size()),
+      /*isConstant=*/true, LLVM::Linkage::Private, name,
+      b.getStringAttr(literal), /*alignment=*/0, /*addrSpace=*/4);
+  it->second.setUnnamedAddr(LLVM::UnnamedAddr::Global);
+  return it->second;
+}
+
+void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv,
+                          evm::StringLiteralPool &literals) {
   pats.add<AllocaOpLowering, MallocOpLowering, ArrayLitOpLowering,
            GetCallDataOpLowering, DefaultCallDataOpLowering,
            DefaultStorageOpLowering, PushOpLowering, PopOpLowering,
            GepOpLowering, MapOpLowering, LoadOpLowering, StoreOpLowering,
            DataLocCastOpLowering, LengthOpLowering, SliceOpLowering,
            CopyOpLowering, DeleteOpLowering, PushStringOpLowering,
-           StringLitOpLowering, ConcatOpLowering>(tyConv, pats.getContext());
+           ConcatOpLowering>(tyConv, pats.getContext());
+  pats.add<StringLitOpLowering>(tyConv, pats.getContext(), literals);
   pats.add<AddrOfOpLowering, LoadImmutableOpLowering>(pats.getContext());
 }
 
@@ -4530,12 +4552,13 @@ void evm::populateInternalFuncPtrPats(RewritePatternSet &pats,
 }
 
 void evm::populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv,
-                             evm::InternalDispatch &dispatch) {
+                             evm::InternalDispatch &dispatch,
+                             evm::StringLiteralPool &literals) {
   populateArithPats(pats, tyConv);
   populateInternalFuncPtrPats(pats, tyConv, dispatch);
   populateCheckedArithPats(pats, tyConv);
   populateCryptoPats(pats, tyConv);
-  populateMemPats(pats, tyConv);
+  populateMemPats(pats, tyConv, literals);
   populateAddrPat(pats, tyConv);
   populateAbiPats(pats, tyConv);
   populateExtCallPat(pats, tyConv);
