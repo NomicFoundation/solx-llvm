@@ -9,10 +9,13 @@
 
 module {
   yul.object @Test {
-    %c0_i256 = yul.constant 0
-    %c0_i256_0 = yul.constant 0
-    %0 = yul.returndatasize
-    yul.returndatacopy %c0_i256, %c0_i256_0, %0
+    yul.func @__entry : () -> () {
+      %c0_i256 = yul.constant 0
+      %c0_i256_0 = yul.constant 0
+      %0 = yul.returndatasize
+      yul.returndatacopy %c0_i256, %c0_i256_0, %0
+      yul.func_return
+    }
   }
 }
 

@@ -10,7 +10,9 @@ module {
     yul.func @halt : () -> () {
       yul.invalid
     }
-    yul.func_call @halt() : () -> ()
-    yul.unreachable
+    yul.func @__entry : () -> () {
+      yul.func_call @halt() : () -> ()
+      yul.unreachable
+    }
   }
 }

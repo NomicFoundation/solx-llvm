@@ -6,9 +6,11 @@
 
 module {
   yul.object @Test {
-    %c0_i256 = yul.constant 0
-    %c0_i256_0 = yul.constant 0
-    yul.return %c0_i256, %c0_i256_0
+    yul.func @__entry : () -> () {
+      %c0_i256 = yul.constant 0
+      %c0_i256_0 = yul.constant 0
+      yul.return %c0_i256, %c0_i256_0
+    }
   }
 }
 
@@ -38,27 +40,29 @@ module {
 
 module {
   yul.object @Test_deployed {
-    %c0_i256_1 = yul.constant 0
-    %0 = yul.mload %c0_i256_1
-    yul.switch %0 : i256
-    case 0 {
-      %c0_i256_4 = yul.constant 0
-      %c0_i256_5 = yul.constant 0
-      yul.mstore %c0_i256_4, %c0_i256_5
-      yul.yield
+    yul.func @__entry : () -> () {
+      %c0_i256_1 = yul.constant 0
+      %0 = yul.mload %c0_i256_1
+      yul.switch %0 : i256
+      case 0 {
+        %c0_i256_4 = yul.constant 0
+        %c0_i256_5 = yul.constant 0
+        yul.mstore %c0_i256_4, %c0_i256_5
+        yul.yield
+      }
+      case 1 {
+        %c0_i256_4 = yul.constant 0
+        %c1_i256 = yul.constant 1
+        yul.mstore %c0_i256_4, %c1_i256
+        yul.yield
+      }
+      default {
+        yul.yield
+      }
+      %c0_i256_2 = yul.constant 0
+      %c0_i256_3 = yul.constant 0
+      yul.return %c0_i256_2, %c0_i256_3
     }
-    case 1 {
-      %c0_i256_4 = yul.constant 0
-      %c1_i256 = yul.constant 1
-      yul.mstore %c0_i256_4, %c1_i256
-      yul.yield
-    }
-    default {
-      yul.yield
-    }
-    %c0_i256_2 = yul.constant 0
-    %c0_i256_3 = yul.constant 0
-    yul.return %c0_i256_2, %c0_i256_3
   }
 }
 

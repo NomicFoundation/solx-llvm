@@ -3,6 +3,27 @@
 // Immutables are staged in reserved memory at 128 + 32k, in declaration
 // order, until the deploy code copies them into the runtime object.
 // CHECK-LABEL: yul.object @C {
+// CHECK:         yul.memoryguard 320
+// CHECK:         yul.func_call @C()
+// CHECK:         %[[RT:.*]] = yul.mload
+// CHECK:         %[[C128:.*]] = yul.constant 128
+// CHECK:         %[[A:.*]] = yul.mload %[[C128]]
+// CHECK:         yul.setimmutable %[[RT]], "a", %[[A]]
+// CHECK:         %[[C160:.*]] = yul.constant 160
+// CHECK:         %[[B:.*]] = yul.mload %[[C160]]
+// CHECK:         yul.setimmutable %[[RT]], "b", %[[B]]
+// CHECK:         %[[C192:.*]] = yul.constant 192
+// CHECK:         %[[F:.*]] = yul.mload %[[C192]]
+// CHECK:         yul.setimmutable %[[RT]], "f", %[[F]]
+// CHECK:         %[[C224:.*]] = yul.constant 224
+// CHECK:         %[[I:.*]] = yul.mload %[[C224]]
+// CHECK:         yul.setimmutable %[[RT]], "i", %[[I]]
+// CHECK:         %[[C256:.*]] = yul.constant 256
+// CHECK:         %[[J:.*]] = yul.mload %[[C256]]
+// CHECK:         yul.setimmutable %[[RT]], "j", %[[J]]
+// CHECK:         %[[C288:.*]] = yul.constant 288
+// CHECK:         %[[H:.*]] = yul.mload %[[C288]]
+// CHECK:         yul.setimmutable %[[RT]], "h", %[[H]]
 
 // CHECK-LABEL: yul.func @init : () -> ()
 // CHECK:         %[[C4:.*]] = yul.constant 4
@@ -34,28 +55,6 @@
 // CHECK:         %[[V:.*]] = yul.mload %[[C224]]
 // CHECK:         %[[C256:.*]] = yul.constant 256
 // CHECK:         yul.mstore %[[C256]], %[[V]]
-
-// CHECK:         yul.memoryguard 320
-// CHECK:         yul.func_call @C()
-// CHECK:         %[[RT:.*]] = yul.mload
-// CHECK:         %[[C128:.*]] = yul.constant 128
-// CHECK:         %[[A:.*]] = yul.mload %[[C128]]
-// CHECK:         yul.setimmutable %[[RT]], "a", %[[A]]
-// CHECK:         %[[C160:.*]] = yul.constant 160
-// CHECK:         %[[B:.*]] = yul.mload %[[C160]]
-// CHECK:         yul.setimmutable %[[RT]], "b", %[[B]]
-// CHECK:         %[[C192:.*]] = yul.constant 192
-// CHECK:         %[[F:.*]] = yul.mload %[[C192]]
-// CHECK:         yul.setimmutable %[[RT]], "f", %[[F]]
-// CHECK:         %[[C224:.*]] = yul.constant 224
-// CHECK:         %[[I:.*]] = yul.mload %[[C224]]
-// CHECK:         yul.setimmutable %[[RT]], "i", %[[I]]
-// CHECK:         %[[C256:.*]] = yul.constant 256
-// CHECK:         %[[J:.*]] = yul.mload %[[C256]]
-// CHECK:         yul.setimmutable %[[RT]], "j", %[[J]]
-// CHECK:         %[[C288:.*]] = yul.constant 288
-// CHECK:         %[[H:.*]] = yul.mload %[[C288]]
-// CHECK:         yul.setimmutable %[[RT]], "h", %[[H]]
 
 #Constructor = #sol<FunctionKind Constructor>
 #Contract = #sol<ContractKind Contract>

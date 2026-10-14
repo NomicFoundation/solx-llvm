@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -324,12 +325,20 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
 }
 
 LogicalResult ObjectOp::verify() {
-  // A module lowers to a single object, whose entry code becomes the module's
-  // entry function.
+  // A module lowers to a single object, whose entry function becomes the
+  // module's.
   for (Operation &sibling : *getOperation()->getBlock())
     if (&sibling != getOperation() && isa<ObjectOp>(sibling))
       return emitOpError("expects no other yul.object in its module, found '")
              << cast<ObjectOp>(sibling).getSymName() << "'";
+
+  for (Operation &op : *getBody())
+    if (!isa<FunctionOpInterface, LLVM::GlobalOp>(op))
+      return emitOpError("expects only functions and globals, found '")
+             << op.getName() << "'";
+  if (!getEntryFn())
+    return emitOpError("expects a function named '")
+           << FuncOp::entryName << "'";
   return success();
 }
 

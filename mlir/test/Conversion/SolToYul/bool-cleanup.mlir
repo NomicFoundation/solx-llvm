@@ -2,6 +2,11 @@
 
 // Decoded bool[] elements are validated; the returned bool is normalized.
 // CHECK-LABEL: yul.object @C_deployed {
+// CHECK:         case 114889333 {
+// CHECK:           %[[ARR:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_i1_$_Memory_$(
+// CHECK:           %[[R:.*]] = yul.func_call @mem_bool(%[[ARR]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.i1(%[[R]],
+
 // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.i1 : (i256, i256) -> i256
 // CHECK:         %[[RB:.*]] = yul.cmp ne, %arg0, %{{.*}}
 // CHECK:         yul.mstore %arg1, %[[RB]]
@@ -22,11 +27,6 @@
 // CHECK:         %[[V:.*]] = yul.mload
 // CHECK-NOT:     yul.cmp ne
 // CHECK:         yul.func_return %[[V]] : i256
-
-// CHECK:         case 114889333 {
-// CHECK:           %[[ARR:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_i1_$_Memory_$(
-// CHECK:           %[[R:.*]] = yul.func_call @mem_bool(%[[ARR]]) : (i256) -> i256
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.i1(%[[R]],
 
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>

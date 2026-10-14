@@ -7,7 +7,9 @@
 
 module {
   yul.object @Test {
-    yul.invalid
+    yul.func @__entry : () -> () {
+      yul.invalid
+    }
   }
 }
 
