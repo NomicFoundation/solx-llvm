@@ -137,8 +137,8 @@ def Sol_FixedBytesIndexOp : Sol_Op<"fixed_bytes_index"> {
 
 // TODO: Add folders for the c0 case.
 
-// Checked arith ops are not speculatable, but unchecked are (including div and
-// mod because of evm semantics).
+// Checked arith ops are not speculatable, and neither are div and mod, which
+// panic on a zero divisor. The other unchecked ops are.
 
 def Sol_CAddOp : Sol_IntArithOp<"cadd", [Commutative]>;
 def Sol_CSubOp : Sol_IntArithOp<"csub">;
@@ -155,10 +155,10 @@ def Sol_SubOp : Sol_UncheckedIntArithOp<"sub"> {
 def Sol_MulOp : Sol_UncheckedIntArithOp<"mul", [Commutative]> {
   // TODO: folder, canonicalizer
 }
-def Sol_DivOp : Sol_UncheckedIntArithOp<"div"> {
+def Sol_DivOp : Sol_IntArithOp<"div"> {
   // TODO: folder, canonicalizer
 }
-def Sol_ModOp : Sol_UncheckedIntArithOp<"mod"> {
+def Sol_ModOp : Sol_IntArithOp<"mod"> {
   // TODO: folder, canonicalizer
 }
 def Sol_ExpOp : Sol_IntExpOp<"exp", [Pure]> {
