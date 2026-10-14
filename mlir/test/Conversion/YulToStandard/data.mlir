@@ -10,10 +10,13 @@
 // CHECK-NEXT:    "llvm.intr.memcpy"(%[[DST]], %[[SRC]], %[[SIZE]]) <{isVolatile = false}> : (!llvm.ptr<1>, !llvm.ptr<4>, i256) -> ()
 
 yul.object @Test {
-  %c0 = yul.constant 0
-  %0 = yul.dataoffset {obj = @Test_deployed}
-  %1 = yul.datasize {obj = @Test_deployed}
-  yul.codecopy %c0, %0, %1
+  yul.func @__entry : () -> () {
+    %c0 = yul.constant 0
+    %0 = yul.dataoffset {obj = @Test_deployed}
+    %1 = yul.datasize {obj = @Test_deployed}
+    yul.codecopy %c0, %0, %1
+    yul.func_return
+  }
 }
 
 // -----
@@ -21,4 +24,7 @@ yul.object @Test {
 // CHECK-LABEL: module @Test_deployed {
 
 yul.object @Test_deployed {
+  yul.func @__entry : () -> () {
+    yul.func_return
+  }
 }

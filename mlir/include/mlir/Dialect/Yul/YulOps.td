@@ -41,6 +41,9 @@ def Yul_FuncOp : Yul_Op<"func", [AutomaticAllocationScope,
   let hasVerifier = 1;
 
   let extraClassDeclaration = [{
+    static constexpr ::llvm::StringLiteral entryName = "__entry";
+    bool isEntry() { return getSymName() == entryName; }
+
     //===------------------------------------------------------------------===//
     // CallableOpInterface
     //===------------------------------------------------------------------===//
@@ -379,9 +382,12 @@ def Yul_ObjectOp
     : Yul_Op<"object", [Symbol, SymbolTable, SingleBlock, NoTerminator,
                         IsolatedFromAbove, HasParent<"ModuleOp">]> {
   let summary = "Represents an `object` in yul";
+  let description = [{
+    The entry code is in the `__entry` function.
+  }];
 
   let arguments = (ins SymbolNameAttr:$sym_name);
-  let regions = (region AnyRegion:$body);
+  let regions = (region SizedRegion<1>:$bodyRegion);
 
   let builders = [
     OpBuilder<(ins CArg<"StringRef", "{}">:$name),[{
@@ -393,10 +399,10 @@ def Yul_ObjectOp
   let skipDefaultBuilders = 1;
 
   let extraClassDeclaration = [{
-    Block *getEntryBlock() { return &getBody().front(); }
+    FuncOp getEntryFn() { return lookupSymbol<FuncOp>(FuncOp::entryName); }
   }];
 
-  let assemblyFormat = "$sym_name $body attr-dict";
+  let assemblyFormat = "$sym_name $bodyRegion attr-dict";
   let hasVerifier = 1;
 }
 

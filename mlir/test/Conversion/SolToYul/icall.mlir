@@ -33,6 +33,7 @@ module {
 // targets reachable from the constructor; the runtime one also has those
 // whose address only the constructor takes.
 // CHECK-LABEL: yul.object @C {
+// CHECK:         yul.func_call @C() : () -> ()
 // CHECK-LABEL:   yul.func @dec : (i256) -> i256
 // CHECK-LABEL:   yul.func @C : () -> ()
 // CHECK:           %[[ID:.*]] = yul.constant 24{{$}}
@@ -49,8 +50,6 @@ module {
 // CHECK:             %[[PANIC:.*]] = yul.constant 81{{$}}
 // CHECK:             yul.mstore %{{.*}}, %[[PANIC]]
 // CHECK:             yul.revert
-// CHECK-NEXT:      }
-// CHECK:         yul.func_call @C() : () -> ()
 module {
   sol.contract @C {
     sol.func @C() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {

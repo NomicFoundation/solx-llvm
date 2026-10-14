@@ -7,6 +7,9 @@
 // The two string constructor args are decoded from the appended code into
 // fresh memory copies by the tuple decoder helper.
 // CHECK-LABEL: yul.object @ERC20 {
+// CHECK:         yul.codecopy
+// CHECK:         %[[ARGS:.*]]:2 = yul.func_call @__sol.abi_decode_tuple.memory.string$_Memory_$.string$_Memory_$(%{{.*}}, %{{.*}}) : (i256, i256) -> (i256, i256)
+// CHECK:         yul.func_call @ctor(%[[ARGS]]#0, %[[ARGS]]#1) : (i256, i256) -> ()
 // CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.memory.string$_Memory_$.string$_Memory_$ : (i256, i256) -> (i256, i256)
 // CHECK:           yul.mcopy
 // CHECK:           yul.mcopy
@@ -16,9 +19,6 @@
 // CHECK:           yul.func_call @__sol.copy_string.memory.storage(%[[NAME]], %[[S1]])
 // CHECK:           %[[S2:.*]] = yul.constant 2{{$}}
 // CHECK:           yul.func_call @__sol.copy_string.memory.storage(%[[SYM]], %[[S2]])
-// CHECK:         yul.codecopy
-// CHECK:         %[[ARGS:.*]]:2 = yul.func_call @__sol.abi_decode_tuple.memory.string$_Memory_$.string$_Memory_$(%{{.*}}, %{{.*}}) : (i256, i256) -> (i256, i256)
-// CHECK:         yul.func_call @ctor(%[[ARGS]]#0, %[[ARGS]]#1) : (i256, i256) -> ()
 module {
   sol.contract @ERC20 {
     sol.state_var @name slot 1 offset 0 : !sol.string<Storage>

@@ -5,6 +5,8 @@
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @C {
+// CHECK:         yul.func_call @_25()
+
 // CHECK-LABEL: yul.func @__sol.clear_storage_string_tail : (i256, i256, i256) -> ()
 // CHECK-LABEL: yul.func @__sol.copy_string.memory.storage : (i256, i256) -> ()
 // CHECK:         yul.func_call @__sol.clear_storage_string_tail(%arg1,
@@ -15,7 +17,6 @@
 // CHECK:         yul.constant 47219736118185034978131396930477889456522225816706544572588755557152609796096
 // CHECK:         %[[ASLOT:.*]] = yul.constant 0{{$}}
 // CHECK:         yul.func_call @__sol.copy_string.memory.storage(%[[A]], %[[ASLOT]])
-// CHECK:       yul.func_call @_25()
 module {
   sol.contract @C {
     sol.state_var @a slot 0 offset 0 : !sol.string<Storage>
@@ -33,7 +34,13 @@ module {
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 
+// The getter's memory copy is ABI-encoded as a dynamic return by the tuple
+// encoder helper.
 // CHECK-LABEL: yul.object @C_deployed {
+// CHECK:         case 230582047 {
+// CHECK:           %[[S:.*]] = yul.func_call @get_a() : () -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.string$_Memory_$(%[[S]],
+
 // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.string$_Memory_$ : (i256, i256) -> i256
 // CHECK:         %[[LEN:.*]] = yul.mload %arg0
 // CHECK:         %[[SRC:.*]] = yul.add %arg0, %{{.*}}
@@ -52,12 +59,6 @@ module {
 // CHECK-LABEL: yul.func @get_a : () -> i256
 // CHECK:         %[[SLOT:.*]] = yul.constant 0
 // CHECK:         yul.func_call @__sol.clone_string.storage.memory(%[[SLOT]])
-
-// The getter's memory copy is ABI-encoded as a dynamic return by the tuple
-// encoder helper.
-// CHECK:         case 230582047 {
-// CHECK:           %[[S:.*]] = yul.func_call @get_a() : () -> i256
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.string$_Memory_$(%[[S]],
 module {
   sol.contract @C {
     sol.state_var @a slot 0 offset 0 : !sol.string<Storage>

@@ -1,6 +1,9 @@
 // RUN: mlir-opt %s --convert-sol-to-yul | FileCheck %s
 
 // CHECK-LABEL: yul.object @C_deployed
+// CHECK:         %[[CDS:.*]] = yul.calldatasize
+// CHECK:         case 1 {
+// CHECK:           yul.func_call @__sol.abi_decode_tuple.calldata.string$_Memory_$.array$_dyn_ui256_$_Memory_$(%{{.*}}, %[[CDS]])
 
 // Decoding into memory allocates first, so an oversized length panics 0x41
 // before the span check against the end of the tuple.
@@ -99,10 +102,6 @@
 // CHECK-NEXT:    yul.cmp ugt, %[[END]], %[[CDS]]
 // CHECK:         yul.calldatacopy
 // CHECK:         yul.func_return %[[MEM]]
-
-// CHECK:         %[[CDS:.*]] = yul.calldatasize
-// CHECK:         case 1 {
-// CHECK:           yul.func_call @__sol.abi_decode_tuple.calldata.string$_Memory_$.array$_dyn_ui256_$_Memory_$(%{{.*}}, %[[CDS]])
 
 #Contract = #sol<ContractKind Contract>
 #Default = #sol<RevertStrings Default>
