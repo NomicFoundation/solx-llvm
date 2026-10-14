@@ -8,6 +8,7 @@
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Mload_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Mload {
@@ -27,6 +28,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Mstore_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Mstore {
@@ -47,6 +49,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Mstore8_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Mstore8 {
@@ -67,6 +70,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Mcopy_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Mcopy {
@@ -88,6 +92,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Msize_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Msize {
@@ -106,6 +111,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @CallDataCopy_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @CallDataCopy {
@@ -127,6 +133,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @CodeCopy_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @CodeCopy {
@@ -148,6 +155,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @ExtCodeCopy_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @ExtCodeCopy {
@@ -170,6 +178,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @ReturnDataCopy_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @ReturnDataCopy {
@@ -191,6 +200,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Keccak256_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Keccak256 {
@@ -211,6 +221,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Call_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Call {
@@ -236,6 +247,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @CallCode_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @CallCode {
@@ -261,6 +273,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @StaticCall_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @StaticCall {
@@ -285,6 +298,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @DelegateCall_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @DelegateCall {
@@ -309,6 +323,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Return_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Return {
@@ -329,6 +344,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Revert_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Revert {
@@ -349,6 +365,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Create_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Create {
@@ -370,6 +387,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Create2_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Create2 {
@@ -392,6 +410,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Log0_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Log0 {
@@ -412,6 +431,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Log1_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @Log1 {
@@ -433,6 +453,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @YulFnCalled_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @YulFnCalled {
@@ -461,6 +482,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @YulFnUncalled_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @YulFnUncalled {
@@ -487,6 +509,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @MemoryLvalue_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.constant 128
 module {
   sol.contract @MemoryLvalue {
@@ -508,6 +531,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @MemoryRvalue_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @MemoryRvalue {
@@ -528,6 +552,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @SLoad_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @SLoad {
@@ -547,6 +572,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @SStore_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @SStore {
@@ -567,6 +593,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @TLoad_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @TLoad {
@@ -586,6 +613,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @TStore_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @TStore {
@@ -606,6 +634,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @CallDataLoad_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @CallDataLoad {
@@ -625,6 +654,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Caller_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @Caller {
@@ -643,6 +673,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @Add_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @Add {
@@ -663,6 +694,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @SelfDestruct_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @SelfDestruct {
@@ -682,6 +714,7 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @StackLvalue_deployed {
+// CHECK-NEXT:    yul.func @__entry
 // CHECK-NEXT:    yul.memoryguard 128
 module {
   sol.contract @StackLvalue {

@@ -4,7 +4,8 @@
 // The code the contract lowering generates is at the contract's location. A
 // dispatch case runs its interface function, and the creation code's argument
 // decoding and call run the constructor, so they are at that function's
-// location. The subprograms stay on the functions.
+// location. The subprograms stay on the functions; the entry function's is
+// artificial, at the module's location.
 
 #Constructor = #sol<FunctionKind Constructor>
 #Contract = #sol<ContractKind Contract>
@@ -27,6 +28,7 @@
 // CHECK:         yul.datasize {obj = @C_deployed} loc("C.sol":1:1)
 // CHECK:         yul.codecopy {{.*}} loc("C.sol":1:1)
 // CHECK:         yul.return {{.*}} loc("C.sol":1:1)
+// CHECK:         } loc(fused<#llvm.di_subprogram<{{.*}}name = "__entry"{{.*}}flags = Artificial>>["C.sol":1:1])
 // CHECK:         yul.func @ctor
 // CHECK:         } {{.*}} loc(fused<#llvm.di_subprogram<{{.*}}name = "constructor"{{.*}}>>["C.sol":2:3])
 // CHECK:       } loc("C.sol":1:1)
@@ -37,8 +39,9 @@ module {
       sol.return loc(#loc_ctor)
     } loc(#loc_ctor_sp)
   } {kind = #Contract} loc(#loc_contract)
-}
+} loc(#loc_module)
 
+#loc_module = loc(fused<#cu>["C.sol":1:1])
 #loc_contract = loc("C.sol":1:1)
 #loc_ctor = loc("C.sol":2:3)
 #loc_ctor_sp = loc(fused<#sp_ctor>[#loc_ctor])

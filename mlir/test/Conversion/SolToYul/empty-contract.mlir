@@ -33,11 +33,14 @@ module {
 module {
   // No functions: the runtime object has no dispatcher and always reverts.
   // CHECK-LABEL: yul.object @C_1_deployed {
-  // CHECK-NEXT:    %[[FMP:.*]] = yul.memoryguard 128
-  // CHECK-NEXT:    %[[C64:.*]] = yul.constant 64{{$}}
-  // CHECK-NEXT:    yul.mstore %[[C64]], %[[FMP]]
-  // CHECK-NEXT:    %[[Z:.*]] = yul.constant 0{{$}}
-  // CHECK-NEXT:    yul.revert %[[Z]], %[[Z]]
+  // CHECK-NEXT:    yul.func @__entry : () -> () {
+  // CHECK-NEXT:      %[[FMP:.*]] = yul.memoryguard 128
+  // CHECK-NEXT:      %[[C64:.*]] = yul.constant 64{{$}}
+  // CHECK-NEXT:      yul.mstore %[[C64]], %[[FMP]]
+  // CHECK-NEXT:      %[[Z:.*]] = yul.constant 0{{$}}
+  // CHECK-NEXT:      yul.revert %[[Z]], %[[Z]]
+  // CHECK-NEXT:      yul.func_return
+  // CHECK-NEXT:    }
   // CHECK-NEXT:  }
   sol.contract @C_1 {
   } {kind = #Contract, runtime}

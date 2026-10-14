@@ -4270,18 +4270,26 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       }
     }
 
-    r.setInsertionPointToStart(obj.getEntryBlock());
+    ModuleOp mod = getModule(op);
+    StringRef entryName = yul::FuncOp::entryName;
+    r.setInsertionPointToStart(obj.getBody());
+    auto entryFn = r.create<yul::FuncOp>(
+        evm::fuseArtificialSubprogram(mod, entryName, mod.getLoc()), entryName,
+        r.getFunctionType({}, {}));
+    r.createBlock(&entryFn.getBody());
     if (op.getRuntime())
       genRuntimeCode(op, fns, r, loc);
     else
       genCreationCode(op, fns.ctor, runtimeObjName, r, loc);
+    r.create<yul::FuncReturnOp>(loc);
 
-    // The functions and the string literal globals follow the code, the last
-    // one first, which keeps the layout of the object and so its bytecode.
+    // The functions and the string literal globals follow the entry function,
+    // the last one first, which keeps the layout of the object and so its
+    // bytecode.
     for (Operation &i :
          llvm::make_early_inc_range(llvm::reverse(*op.getBody()))) {
       if (isa<FunctionOpInterface, LLVM::GlobalOp>(i))
-        r.moveOpBefore(&i, obj.getEntryBlock(), obj.getEntryBlock()->end());
+        r.moveOpBefore(&i, obj.getBody(), obj.getBody()->end());
       else if (!isa<sol::StateVarOp, sol::ImmutableOp>(i))
         llvm_unreachable("NYI");
     }

@@ -30,22 +30,23 @@ using solgen::getModule;
 
 namespace {
 
-// Returns an existing or a new (if not found) FuncOp in the ModuleOp `mod`.
-//
-// Both functions created here (`__entry` and `.unreachable`) are generated, so
-// a new one carries an artificial subprogram at the module's location.
-func::FuncOp getOrInsertFuncOp(PatternRewriter &r, ModuleOp mod, StringRef name,
-                               FunctionType fnTy, LLVM::Linkage linkage,
-                               Block::iterator insertPt) {
-  if (auto found = mod.lookupSymbol<func::FuncOp>(name))
-    return found;
+// Creates a call to a wrapper function of the LLVM::UnreachableOp. This is a
+// hack to create a non-terminator unreachable op.
+void createCallToUnreachableWrapper(PatternRewriter &r, ModuleOp mod,
+                                    Location loc) {
+  StringRef name = ".unreachable";
+  r.create<func::CallOp>(loc, FlatSymbolRefAttr::get(mod.getContext(), name),
+                         TypeRange{}, ValueRange{});
+  if (mod.lookupSymbol<func::FuncOp>(name))
+    return;
 
   OpBuilder::InsertionGuard insertGuard(r);
-  r.setInsertionPoint(mod.getBody(), insertPt);
+  r.setInsertionPointToEnd(mod.getBody());
 
   std::vector<NamedAttribute> attrs;
   attrs.push_back(r.getNamedAttr(
-      "llvm.linkage", LLVM::LinkageAttr::get(r.getContext(), linkage)));
+      "llvm.linkage",
+      LLVM::LinkageAttr::get(r.getContext(), LLVM::Linkage::Private)));
 
   std::vector<Attribute> passthroughAttrs;
   passthroughAttrs.push_back(r.getStringAttr("nofree"));
@@ -53,32 +54,13 @@ func::FuncOp getOrInsertFuncOp(PatternRewriter &r, ModuleOp mod, StringRef name,
   attrs.push_back(r.getNamedAttr(
       "passthrough", ArrayAttr::get(r.getContext(), passthroughAttrs)));
 
-  return r.create<func::FuncOp>(
-      evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name, fnTy,
-      attrs);
-}
-
-// Creates a call to a wrapper function of the LLVM::UnreachableOp. This is a
-// hack to create a non-terminator unreachable op.
-void createCallToUnreachableWrapper(PatternRewriter &r, ModuleOp mod,
-                                    Location loc) {
-  auto fnTy = FunctionType::get(mod.getContext(), {}, {});
-  // At the end, since the entry function must be first.
-  func::FuncOp fn =
-      getOrInsertFuncOp(r, mod, ".unreachable", fnTy, LLVM::Linkage::Private,
-                        mod.getBody()->end());
-  r.create<func::CallOp>(
-      loc, FlatSymbolRefAttr::get(mod.getContext(), ".unreachable"),
-      TypeRange{}, ValueRange{});
-
-  if (fn.getBody().empty()) {
-    Block *blk = r.createBlock(&fn.getBody());
-    OpBuilder::InsertionGuard insertGuard(r);
-    r.setInsertionPointToStart(blk);
-    // The body is shared by every caller, so it is at line 0 of the module
-    // its subprogram is at; only the call above is at `loc`.
-    r.create<LLVM::UnreachableOp>(evm::artificialLoc(mod.getLoc()));
-  }
+  auto fn = r.create<func::FuncOp>(
+      evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name,
+      r.getFunctionType({}, {}), attrs);
+  r.createBlock(&fn.getBody());
+  // The body is shared by every caller, so it is at line 0 of the module
+  // its subprogram is at; only the call above is at `loc`.
+  r.create<LLVM::UnreachableOp>(evm::artificialLoc(mod.getLoc()));
 }
 
 // For some dialects, we have to pass i1 instead of i256 for boolean values,
@@ -218,20 +200,23 @@ struct FuncOpLowering : public OpRewritePattern<yul::FuncOp> {
 
   LogicalResult matchAndRewrite(yul::FuncOp op,
                                 PatternRewriter &r) const override {
-    // Set llvm.linkage attribute to private if not explicitly specified.
     std::vector<NamedAttribute> attrs;
     if (auto linkageAttr = op->getAttr("llvm.linkage"))
       attrs.push_back(r.getNamedAttr("llvm.linkage", linkageAttr));
     else
       attrs.push_back(r.getNamedAttr(
           "llvm.linkage",
-          LLVM::LinkageAttr::get(r.getContext(), LLVM::Linkage::Private)));
+          LLVM::LinkageAttr::get(r.getContext(),
+                                 op.isEntry() ? LLVM::Linkage::External
+                                              : LLVM::Linkage::Private)));
 
     // Add the nofree and null_pointer_is_valid attributes of llvm via the
     // passthrough attribute.
     std::vector<Attribute> passthroughAttrs;
     passthroughAttrs.push_back(r.getStringAttr("nofree"));
     passthroughAttrs.push_back(r.getStringAttr("null_pointer_is_valid"));
+    if (op.isEntry())
+      passthroughAttrs.push_back(r.getStringAttr("evm-entry-function"));
     attrs.push_back(r.getNamedAttr(
         "passthrough", ArrayAttr::get(r.getContext(), passthroughAttrs)));
 
@@ -1609,54 +1594,15 @@ struct ScopeOpLowering : public OpRewritePattern<yul::ScopeOp> {
 struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
   using OpRewritePattern<yul::ObjectOp>::OpRewritePattern;
 
-  // "Moves" the yul.object to the module.
-  void moveObjToMod(yul::ObjectOp obj, ModuleOp mod, PatternRewriter &r) const {
-    OpBuilder::InsertionGuard insertGuard(r);
-
-    // Generate the entry function.
-    func::FuncOp entryFn =
-        getOrInsertFuncOp(r, mod, "__entry", r.getFunctionType({}, {}),
-                          LLVM::Linkage::External, mod.getBody()->begin());
-
-    // Execution starts at the first function, so the backend checks that the
-    // entry function comes first, and emits no JUMPDEST for it.
-    SmallVector<Attribute> passthrough(
-        entryFn->getAttrOfType<ArrayAttr>("passthrough").getValue());
-    passthrough.push_back(r.getStringAttr("evm-entry-function"));
-    entryFn->setAttr("passthrough", r.getArrayAttr(passthrough));
-    Block *modBlk = mod.getBody();
-
-    // The entry code is all ops in the object that are neither a function nor
-    // a global.
-    //
-    // Move the entry code to the entry function and everything else to the
-    // module. We need to visit the blocks that are directly nested inside
-    // `mod`.
-    for (Region &region : obj->getRegions())
-      for (Block &block : region)
-        for (Operation &nestedOp : llvm::make_early_inc_range(block))
-          if (isa<func::FuncOp>(nestedOp) || isa<yul::FuncOp>(nestedOp) ||
-              isa<LLVM::GlobalOp>(nestedOp))
-            nestedOp.moveBefore(modBlk, modBlk->end());
-
-    // Terminate all blocks without terminators using the unreachable op.
-    // They are generated, so they are at line 0.
-    Location unreachableLoc = evm::artificialLoc(obj.getLoc());
-    obj.walk([&](Block *blk) {
-      if (blk->empty() || !blk->back().hasTrait<OpTrait::IsTerminator>()) {
-        r.setInsertionPointToEnd(blk);
-        r.create<LLVM::UnreachableOp>(unreachableLoc);
-      };
-    });
-    r.inlineRegionBefore(obj.getBody(), entryFn.getBody(),
-                         entryFn.getBody().begin());
-  }
-
   LogicalResult matchAndRewrite(yul::ObjectOp obj,
                                 PatternRewriter &r) const override {
     ModuleOp mod = getModule(obj);
     mod.setName(obj.getName());
-    moveObjToMod(obj, mod, r);
+
+    Block *modBlk = mod.getBody();
+    r.moveOpBefore(obj.getEntryFn(), modBlk, modBlk->begin());
+    for (Operation &nestedOp : llvm::make_early_inc_range(*obj.getBody()))
+      r.moveOpBefore(&nestedOp, modBlk, modBlk->end());
 
     r.eraseOp(obj);
     return success();

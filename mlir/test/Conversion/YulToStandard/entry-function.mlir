@@ -7,8 +7,11 @@
 // CHECK-NEXT:    func.func @__entry() attributes {llvm.linkage = #llvm.linkage<external>, passthrough = ["nofree", "null_pointer_is_valid", "evm-entry-function"]}
 // CHECK:         func.func @".unreachable"() attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid"]}
 module {
-  "yul.object"() ({
-    %c0 = yul.constant 0
-    yul.revert %c0, %c0
-  }) {sym_name = "obj"} : () -> ()
+  yul.object @obj {
+    yul.func @__entry : () -> () {
+      %c0 = yul.constant 0
+      yul.revert %c0, %c0
+      yul.func_return
+    }
+  }
 }

@@ -6,9 +6,12 @@
 
 module {
   yul.object @Test {
-    %c0_i256 = yul.constant 0
-    %c0_i256_0 = yul.constant 0
-    yul.return %c0_i256, %c0_i256_0
+    yul.func @__entry : () -> () {
+      %c0_i256 = yul.constant 0
+      %c0_i256_0 = yul.constant 0
+      yul.return %c0_i256, %c0_i256_0
+      yul.func_return
+    }
   }
 }
 
@@ -38,33 +41,36 @@ module {
 
 module {
   yul.object @Test_deployed {
-    %c0_i256_1 = yul.constant 0
-    %0 = yul.mload %c0_i256_1
-    yul.switch %0 : i256
-    case 0 {
-      %c0_i256_4 = yul.constant 0
-      %c0_i256_5 = yul.constant 0
-      yul.mstore %c0_i256_4, %c0_i256_5
-      yul.yield
+    yul.func @__entry : () -> () {
+      %c0_i256_1 = yul.constant 0
+      %0 = yul.mload %c0_i256_1
+      yul.switch %0 : i256
+      case 0 {
+        %c0_i256_4 = yul.constant 0
+        %c0_i256_5 = yul.constant 0
+        yul.mstore %c0_i256_4, %c0_i256_5
+        yul.yield
+      }
+      case 1 {
+        %c0_i256_4 = yul.constant 0
+        %c1_i256 = yul.constant 1
+        yul.mstore %c0_i256_4, %c1_i256
+        yul.yield
+      }
+      default {
+        yul.yield
+      }
+      %c0_i256_2 = yul.constant 0
+      %c0_i256_3 = yul.constant 0
+      yul.return %c0_i256_2, %c0_i256_3
+      yul.func_return
     }
-    case 1 {
-      %c0_i256_4 = yul.constant 0
-      %c1_i256 = yul.constant 1
-      yul.mstore %c0_i256_4, %c1_i256
-      yul.yield
-    }
-    default {
-      yul.yield
-    }
-    %c0_i256_2 = yul.constant 0
-    %c0_i256_3 = yul.constant 0
-    yul.return %c0_i256_2, %c0_i256_3
   }
 }
 
 // -----
 
-// The default region yields undef after the revert.
+// The default region ends at the revert, so only the case reaches the join.
 // CHECK-LABEL: func.func @switch_result
 // CHECK-SAME:      (%[[V:.*]]: i256, %[[X:.*]]: i256) -> i256
 // CHECK:         cf.switch %[[V]] : i256, [
@@ -76,9 +82,8 @@ module {
 // CHECK-NEXT:    cf.br ^[[JOIN:bb[0-9]+]](%[[SUM]] : i256)
 // CHECK:       ^[[DEFAULT]]:
 // CHECK:         name = "evm.revert"
-// CHECK:         %[[UNDEF:.*]] = llvm.mlir.undef : i256
-// CHECK-NEXT:    cf.br ^[[JOIN]](%[[UNDEF]] : i256)
-// CHECK:       ^[[JOIN]](%[[R:.*]]: i256):
+// CHECK-NEXT:    llvm.unreachable
+// CHECK:       ^[[JOIN]](%[[R:.*]]: i256):  // pred: ^[[CASE]]
 // CHECK-NEXT:    return %[[R]] : i256
 
 yul.func @switch_result : (i256, i256) -> i256 {

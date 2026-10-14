@@ -6,9 +6,12 @@
 // CHECK-NEXT:    func.func @__entry()
 // CHECK:         llvm.mlir.global private unnamed_addr constant @data("ab") {addr_space = 4 : i32}
 module {
-  "yul.object"() ({
-    %c0 = yul.constant 0
-    yul.revert %c0, %c0
+  yul.object @obj {
+    yul.func @__entry : () -> () {
+      %c0 = yul.constant 0
+      yul.revert %c0, %c0
+      yul.func_return
+    }
     llvm.mlir.global private unnamed_addr constant @data("ab") {addr_space = 4 : i32} : !llvm.array<2 x i8>
-  }) {sym_name = "obj"} : () -> ()
+  }
 }

@@ -14,17 +14,20 @@
 
 module {
   yul.object @Test {
-    %0 = yul.callvalue
-    yul.if %0 {
-      %c0_i256_1 = yul.constant 0
-      %c42_i256 = yul.constant 42
-      yul.mstore %c0_i256_1, %c42_i256
-      yul.yield
-    } else {
+    yul.func @__entry : () -> () {
+      %0 = yul.callvalue
+      yul.if %0 {
+        %c0_i256_1 = yul.constant 0
+        %c42_i256 = yul.constant 42
+        yul.mstore %c0_i256_1, %c42_i256
+        yul.yield
+      } else {
+      }
+      %c0_i256 = yul.constant 0
+      %c0_i256_0 = yul.constant 0
+      yul.return %c0_i256, %c0_i256_0
+      yul.func_return
     }
-    %c0_i256 = yul.constant 0
-    %c0_i256_0 = yul.constant 0
-    yul.return %c0_i256, %c0_i256_0
   }
 }
 
@@ -44,17 +47,20 @@ module {
 
 module {
   yul.object @Test_deployed {
-    %1 = yul.callvalue
-    yul.if %1 {
-      %c1_i256 = yul.constant 1
-      %c42_i256 = yul.constant 42
-      yul.mstore %c1_i256, %c42_i256
-      yul.yield
-    } else {
+    yul.func @__entry : () -> () {
+      %1 = yul.callvalue
+      yul.if %1 {
+        %c1_i256 = yul.constant 1
+        %c42_i256 = yul.constant 42
+        yul.mstore %c1_i256, %c42_i256
+        yul.yield
+      } else {
+      }
+      %c0_i256_1 = yul.constant 0
+      %c0_i256_2 = yul.constant 0
+      yul.return %c0_i256_1, %c0_i256_2
+      yul.func_return
     }
-    %c0_i256_1 = yul.constant 0
-    %c0_i256_2 = yul.constant 0
-    yul.return %c0_i256_1, %c0_i256_2
   }
 }
 
