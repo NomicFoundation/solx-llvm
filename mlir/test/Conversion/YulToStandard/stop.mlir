@@ -7,7 +7,9 @@
 
 module {
   yul.object @Test {
-    yul.stop
+    yul.func @__entry : () -> () {
+      yul.stop
+    }
   }
 }
 

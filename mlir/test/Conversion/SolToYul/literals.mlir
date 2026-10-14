@@ -71,6 +71,7 @@ module {
 #Pure = #sol<StateMutability Pure>
 module {
   // CHECK-LABEL: yul.object @Test {
+  // CHECK:         yul.func_call @Test()
   // CHECK-LABEL: yul.func @Test : () -> ()
   // CHECK:         yul.func_call @longLit() : () -> i256
 
@@ -78,7 +79,6 @@ module {
   // CHECK:         llvm.mlir.addressof @__data_in_code.0 : !llvm.ptr<4>
   // CHECK:         yul.codecopy
   // CHECK:       llvm.mlir.global private unnamed_addr constant @__data_in_code.0("{{a{32}b{32}c{32}d{32}z}}") {addr_space = 4 : i32}
-  // CHECK:       yul.func_call @Test()
   sol.contract @Test {
     sol.func @longLit() -> !sol.string<Memory> attributes {state_mutability = #Pure} {
       %0 = sol.string_lit "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccddddddddddddddddddddddddddddddddz" -> !sol.string<Memory>

@@ -2,10 +2,13 @@
 
 // CHECK-LABEL: module @Foo {
 // CHECK-NEXT:    func.func @__entry()
-// CHECK-NEXT:      llvm.unreachable
+// CHECK-NEXT:      return
 // CHECK-NEXT:    }
 module {
   yul.object @Foo {
+    yul.func @__entry : () -> () {
+      yul.func_return
+    }
   }
 }
 
@@ -13,9 +16,12 @@ module {
 
 // CHECK-LABEL: module @Foo_deployed {
 // CHECK-NEXT:    func.func @__entry()
-// CHECK-NEXT:      llvm.unreachable
+// CHECK-NEXT:      return
 module {
   yul.object @Foo_deployed {
+    yul.func @__entry : () -> () {
+      yul.func_return
+    }
   }
 }
 
@@ -29,9 +35,11 @@ module {
 // CHECK:           "llvm.intrcall"(%[[P]], %[[LEN]]) <{id = {{[0-9]+}} : i32, name = "evm.return"}>
 module {
   yul.object @Test {
-    %c10_i256 = yul.constant 10
-    %c11_i256 = yul.constant 11
-    yul.return %c10_i256, %c11_i256
+    yul.func @__entry : () -> () {
+      %c10_i256 = yul.constant 10
+      %c11_i256 = yul.constant 11
+      yul.return %c10_i256, %c11_i256
+    }
   }
 }
 
@@ -45,8 +53,10 @@ module {
 // CHECK:           "llvm.intrcall"(%[[P]], %[[LEN]]) <{id = {{[0-9]+}} : i32, name = "evm.return"}>
 module {
   yul.object @Test_deployed {
-    %c20_i256 = yul.constant 20
-    %c21_i256 = yul.constant 21
-    yul.return %c20_i256, %c21_i256
+    yul.func @__entry : () -> () {
+      %c20_i256 = yul.constant 20
+      %c21_i256 = yul.constant 21
+      yul.return %c20_i256, %c21_i256
+    }
   }
 }

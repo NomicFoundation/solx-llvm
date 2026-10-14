@@ -4,6 +4,9 @@
 #Pure = #sol<StateMutability Pure>
 module {
   // CHECK-LABEL: yul.object @C_deployed {
+  // CHECK:         case 3233317909 {
+  // CHECK:           %[[REF:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.string$_CallData_$(%{{.*}}, %{{.*}}) : (i256, i256) -> !llvm.struct<(i256, i256)>
+  // CHECK:           yul.func_call @g(%[[REF]])
   // CHECK-LABEL: yul.func @__sol.abi_decode_calldata_slice : (i256, i256) -> !llvm.struct<(i256, i256)>
   // CHECK-NEXT:  ^bb0(%[[HEAD:.*]]: i256, %[[END:.*]]: i256):
   // CHECK:         %[[LAST:.*]] = yul.add %[[HEAD]], %{{.*}}
@@ -32,9 +35,6 @@ module {
   // CHECK-LABEL: yul.func @g : (!llvm.struct<(i256, i256)>) -> i256
   // CHECK:         %[[LENV:.*]] = llvm.extractvalue %arg0[1]
   // CHECK:         yul.func_return %[[LENV]] : i256
-  // CHECK:         case 3233317909 {
-  // CHECK:           %[[REF:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.string$_CallData_$(%{{.*}}, %{{.*}}) : (i256, i256) -> !llvm.struct<(i256, i256)>
-  // CHECK:           yul.func_call @g(%[[REF]])
   sol.contract @C {
     sol.func @g(%arg0: !sol.string<CallData>) -> ui256 attributes {orig_fn_type = (!sol.string<CallData>) -> ui256, selector = -1061649387 : i32, state_mutability = #Pure} {
       %0 = sol.length %arg0 : !sol.string<CallData>

@@ -10,9 +10,6 @@
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @C {
-// CHECK:         yul.func @ctor
-// CHECK:           %[[CELL:.*]] = yul.constant 160
-// CHECK:           yul.mstore %[[CELL]], %{{.*}}
 // CHECK:         yul.memoryguard 192
 // CHECK:         yul.func_call @ctor()
 // CHECK:         %[[X:.*]] = yul.constant 128
@@ -21,6 +18,9 @@
 // CHECK-NEXT:    %[[Y:.*]] = yul.constant 160
 // CHECK-NEXT:    %[[Y_VALUE:.*]] = yul.mload %[[Y]]
 // CHECK-NEXT:    yul.setimmutable %{{.*}}, "y", %[[Y_VALUE]]
+// CHECK:         yul.func @ctor
+// CHECK:           %[[CELL:.*]] = yul.constant 160
+// CHECK:           yul.mstore %[[CELL]], %{{.*}}
 
 module {
   sol.contract @C {
@@ -41,9 +41,8 @@ module {
 #NonPayable = #sol<StateMutability NonPayable>
 
 // CHECK-LABEL: yul.object @C_deployed {
-// CHECK:         yul.func @get
-// CHECK:           yul.loadimmutable "x"
 // CHECK:         yul.memoryguard 128
+// CHECK:         yul.loadimmutable "x"
 
 module {
   sol.contract @C {

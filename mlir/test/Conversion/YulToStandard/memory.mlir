@@ -15,25 +15,28 @@
 
 module {
   yul.object @Test {
-    %c0_i256 = yul.constant 0
-    %0 = yul.memoryguard 1
-    yul.mstore %c0_i256, %0
-    %c0_i256_0 = yul.constant 0
-    %c1_i256 = yul.constant 1
-    %1 = yul.mload %c1_i256
-    yul.mstore %c0_i256_0, %1
-    %c0_i256_1 = yul.constant 0
-    %c10_i256 = yul.constant 10
-    %c5_i256 = yul.constant 5
-    yul.mcopy %c0_i256_1, %c10_i256, %c5_i256
-    %c0_i256_2 = yul.constant 0
-    %c0_i256_3 = yul.constant 0
-    %c255_i256 = yul.constant 255
-    %2 = yul.byte %c0_i256_3, %c255_i256
-    yul.mstore8 %c0_i256_2, %2
-    %c0_i256_4 = yul.constant 0
-    %3 = yul.msize
-    yul.mstore %c0_i256_4, %3
+    yul.func @__entry : () -> () {
+      %c0_i256 = yul.constant 0
+      %0 = yul.memoryguard 1
+      yul.mstore %c0_i256, %0
+      %c0_i256_0 = yul.constant 0
+      %c1_i256 = yul.constant 1
+      %1 = yul.mload %c1_i256
+      yul.mstore %c0_i256_0, %1
+      %c0_i256_1 = yul.constant 0
+      %c10_i256 = yul.constant 10
+      %c5_i256 = yul.constant 5
+      yul.mcopy %c0_i256_1, %c10_i256, %c5_i256
+      %c0_i256_2 = yul.constant 0
+      %c0_i256_3 = yul.constant 0
+      %c255_i256 = yul.constant 255
+      %2 = yul.byte %c0_i256_3, %c255_i256
+      yul.mstore8 %c0_i256_2, %2
+      %c0_i256_4 = yul.constant 0
+      %3 = yul.msize
+      yul.mstore %c0_i256_4, %3
+      yul.func_return
+    }
   }
 }
 

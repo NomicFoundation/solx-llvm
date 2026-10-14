@@ -5,8 +5,6 @@
 #NonPayable = #sol<StateMutability NonPayable>
 module {
   // CHECK-LABEL: yul.object @C_1 {
-  // CHECK-LABEL:   yul.func @C_1 : () -> ()
-  // CHECK-NEXT:      yul.func_return
   // CHECK:         %[[FMP:.*]] = yul.memoryguard 128
   // CHECK:         %[[C64:.*]] = yul.constant 64{{$}}
   // CHECK:         yul.mstore %[[C64]], %[[FMP]]
@@ -20,6 +18,8 @@ module {
   // CHECK:         %[[SIZE:.*]] = yul.datasize {obj = @C_1_deployed}
   // CHECK:         yul.codecopy %[[MEM]], %[[OFF]], %[[SIZE]]
   // CHECK:         yul.return %[[MEM]], %[[SIZE]]
+  // CHECK-LABEL:   yul.func @C_1 : () -> ()
+  // CHECK-NEXT:      yul.func_return
   sol.contract @C_1 {
     sol.func @C_1() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
       sol.return
@@ -33,11 +33,13 @@ module {
 module {
   // No functions: the runtime object has no dispatcher and always reverts.
   // CHECK-LABEL: yul.object @C_1_deployed {
-  // CHECK-NEXT:    %[[FMP:.*]] = yul.memoryguard 128
-  // CHECK-NEXT:    %[[C64:.*]] = yul.constant 64{{$}}
-  // CHECK-NEXT:    yul.mstore %[[C64]], %[[FMP]]
-  // CHECK-NEXT:    %[[Z:.*]] = yul.constant 0{{$}}
-  // CHECK-NEXT:    yul.revert %[[Z]], %[[Z]]
+  // CHECK-NEXT:    yul.func @__entry : () -> () {
+  // CHECK-NEXT:      %[[FMP:.*]] = yul.memoryguard 128
+  // CHECK-NEXT:      %[[C64:.*]] = yul.constant 64{{$}}
+  // CHECK-NEXT:      yul.mstore %[[C64]], %[[FMP]]
+  // CHECK-NEXT:      %[[Z:.*]] = yul.constant 0{{$}}
+  // CHECK-NEXT:      yul.revert %[[Z]], %[[Z]]
+  // CHECK-NEXT:    }
   // CHECK-NEXT:  }
   sol.contract @C_1 {
   } {kind = #Contract, runtime}

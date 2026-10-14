@@ -2,10 +2,13 @@
 
 // CHECK-LABEL: module @object
 // CHECK:       func.func @__entry()
-// CHECK-NEXT:    llvm.unreachable
+// CHECK-NEXT:    return
 // CHECK-NEXT:  }
 
 module {
   yul.object @object {
+    yul.func @__entry : () -> () {
+      yul.func_return
+    }
   }
 }
