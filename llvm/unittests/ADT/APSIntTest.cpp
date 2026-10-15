@@ -24,7 +24,11 @@ TEST(APSIntTest, MoveTest) {
   APSInt C(B);
   EXPECT_FALSE(C.isUnsigned());
 
-  APInt Wide(256, 0);
+  // EVM local begin
+  // A 256-bit value keeps its words in the object, so only a wider one hands
+  // its storage over on a move.
+  APInt Wide(512, 0);
+  // EVM local end
   const uint64_t *Bits = Wide.getRawData();
   APSInt D(std::move(Wide));
   EXPECT_TRUE(D.isUnsigned());

@@ -145,6 +145,16 @@ public:
         }
       }
     }
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      uint64_t Fill = isSigned && int64_t(val) < 0 ? WORDTYPE_MAX : 0;
+      U.Val256[0] = val;
+      U.Val256[1] = Fill;
+      U.Val256[2] = Fill;
+      U.Val256[3] = Fill;
+      return;
+    }
+    // EVM local end
     if (isSingleWord()) {
       U.VAL = val;
       if (implicitTrunc || isSigned)
@@ -190,6 +200,16 @@ public:
 
   /// Copy Constructor.
   APInt(const APInt &that) : BitWidth(that.BitWidth) {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // Word copies stay inline even where the compiler does not expand memcpy.
+      U.Val256[0] = that.U.Val256[0];
+      U.Val256[1] = that.U.Val256[1];
+      U.Val256[2] = that.U.Val256[2];
+      U.Val256[3] = that.U.Val256[3];
+      return;
+    }
+    // EVM local end
     if (isSingleWord())
       U.VAL = that.U.VAL;
     else
@@ -388,6 +408,11 @@ public:
 
   /// Determine if all bits are set.  This is true for zero-width values.
   bool isAllOnes() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return (U.Val256[0] & U.Val256[1] & U.Val256[2] & U.Val256[3]) ==
+             WORDTYPE_MAX;
+    // EVM local end
     if (BitWidth == 0)
       return true;
     if (isSingleWord())
@@ -397,6 +422,10 @@ public:
 
   /// Determine if this value is zero, i.e. all bits are clear.
   bool isZero() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return (U.Val256[0] | U.Val256[1] | U.Val256[2] | U.Val256[3]) == 0;
+    // EVM local end
     if (isSingleWord())
       return U.VAL == 0;
     return countLeadingZerosSlowCase() == BitWidth;
@@ -406,6 +435,10 @@ public:
   ///
   /// This checks to see if the value of this APInt is one.
   bool isOne() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return U.Val256[0] == 1 && (U.Val256[1] | U.Val256[2] | U.Val256[3]) == 0;
+    // EVM local end
     if (isSingleWord())
       return U.VAL == 1;
     return countLeadingZerosSlowCase() == BitWidth - 1;
@@ -422,6 +455,11 @@ public:
   /// This checks to see if the value of this APInt is the maximum signed
   /// value for the APInt's bit width.
   bool isMaxSignedValue() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return (U.Val256[0] & U.Val256[1] & U.Val256[2]) == WORDTYPE_MAX &&
+             U.Val256[3] == WORDTYPE_MAX >> 1;
+    // EVM local end
     if (isSingleWord()) {
       assert(BitWidth && "zero width values not allowed");
       return U.VAL == ((WordType(1) << (BitWidth - 1)) - 1);
@@ -440,6 +478,11 @@ public:
   /// This checks to see if the value of this APInt is the minimum signed
   /// value for the APInt's bit width.
   bool isMinSignedValue() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return (U.Val256[0] | U.Val256[1] | U.Val256[2]) == 0 &&
+             U.Val256[3] == WordType(1) << (APINT_BITS_PER_WORD - 1);
+    // EVM local end
     if (isSingleWord()) {
       assert(BitWidth && "zero width values not allowed");
       return U.VAL == (WordType(1) << (BitWidth - 1));
@@ -457,6 +500,10 @@ public:
   ///
   /// \returns true if the argument APInt value is a power of two > 0.
   bool isPowerOf2() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return popcount() == 1;
+    // EVM local end
     if (isSingleWord()) {
       assert(BitWidth && "zero width values not allowed");
       return isPowerOf2_64(U.VAL);
@@ -507,6 +554,13 @@ public:
   bool isMask(unsigned numBits) const {
     assert(numBits != 0 && "numBits must be non-zero");
     assert(numBits <= BitWidth && "numBits out of range");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // Upstream's formula below, with counts that take the 256-bit fast paths.
+      unsigned Ones = countr_one();
+      return (numBits == Ones) && ((Ones + countl_zero()) == BitWidth);
+    }
+    // EVM local end
     if (isSingleWord())
       return U.VAL == (WORDTYPE_MAX >> (APINT_BITS_PER_WORD - numBits));
     unsigned Ones = countTrailingOnesSlowCase();
@@ -518,6 +572,13 @@ public:
   /// the least significant bit with the remainder zero.
   /// Ex. isMask(0x0000FFFFU) == true.
   bool isMask() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // Upstream's formula below, with counts that take the 256-bit fast paths.
+      unsigned Ones = countr_one();
+      return (Ones > 0) && ((Ones + countl_zero()) == BitWidth);
+    }
+    // EVM local end
     if (isSingleWord())
       return isMask_64(U.VAL);
     unsigned Ones = countTrailingOnesSlowCase();
@@ -527,6 +588,11 @@ public:
   /// Return true if this APInt value contains a non-empty sequence of ones with
   /// the remainder zero.
   bool isShiftedMask() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      // Upstream's formula below, with counts that take the 256-bit fast paths.
+      return (popcount() + countl_zero() + countr_zero()) == BitWidth;
+    // EVM local end
     if (isSingleWord())
       return isShiftedMask_64(U.VAL);
     unsigned Ones = countPopulationSlowCase();
@@ -539,6 +605,18 @@ public:
   /// lowest set bit and \p MaskLen is updated to specify the length of the
   /// mask, else neither are updated.
   bool isShiftedMask(unsigned &MaskIdx, unsigned &MaskLen) const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // Upstream's formula below, with counts that take the 256-bit fast paths.
+      unsigned Ones = popcount();
+      unsigned TrailZ = countr_zero();
+      if ((Ones + countl_zero() + TrailZ) != BitWidth)
+        return false;
+      MaskLen = Ones;
+      MaskIdx = TrailZ;
+      return true;
+    }
+    // EVM local end
     if (isSingleWord())
       return isShiftedMask_64(U.VAL, MaskIdx, MaskLen);
     unsigned Ones = countPopulationSlowCase();
@@ -586,6 +664,10 @@ public:
   /// This is useful for writing out the APInt in binary form without any
   /// conversions.
   const uint64_t *getRawData() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return U.Val256;
+    // EVM local end
     if (isSingleWord())
       return &U.VAL;
     return &U.pVal[0];
@@ -635,6 +717,15 @@ public:
   ///
   /// \returns *this after assignment of RHS.
   APInt &operator=(const APInt &RHS) {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit() && RHS.is256Bit())) {
+      U.Val256[0] = RHS.U.Val256[0];
+      U.Val256[1] = RHS.U.Val256[1];
+      U.Val256[2] = RHS.U.Val256[2];
+      U.Val256[3] = RHS.U.Val256[3];
+      return *this;
+    }
+    // EVM local end
     // The common case (both source or dest being inline) doesn't require
     // allocation or deallocation.
     if (isSingleWord() && RHS.isSingleWord()) {
@@ -655,8 +746,10 @@ public:
       return *this;
 #endif
     assert(this != &that && "Self-move not supported");
-    if (!isSingleWord())
+    // EVM local begin
+    if (needsCleanup())
       delete[] U.pVal;
+    // EVM local end
 
     // Use memcpy so that type based alias analysis sees both VAL and pVal
     // as modified.
@@ -675,6 +768,15 @@ public:
   ///
   /// \returns *this after assignment of RHS value.
   APInt &operator=(uint64_t RHS) {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] = RHS;
+      U.Val256[1] = 0;
+      U.Val256[2] = 0;
+      U.Val256[3] = 0;
+      return *this;
+    }
+    // EVM local end
     if (isSingleWord()) {
       U.VAL = RHS;
       return clearUnusedBits();
@@ -692,6 +794,15 @@ public:
   /// \returns *this after ANDing with RHS.
   APInt &operator&=(const APInt &RHS) {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] &= RHS.U.Val256[0];
+      U.Val256[1] &= RHS.U.Val256[1];
+      U.Val256[2] &= RHS.U.Val256[2];
+      U.Val256[3] &= RHS.U.Val256[3];
+      return *this;
+    }
+    // EVM local end
     if (isSingleWord())
       U.VAL &= RHS.U.VAL;
     else
@@ -705,6 +816,15 @@ public:
   /// logically zero-extended or truncated to match the bit-width of
   /// the LHS.
   APInt &operator&=(uint64_t RHS) {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] &= RHS;
+      U.Val256[1] = 0;
+      U.Val256[2] = 0;
+      U.Val256[3] = 0;
+      return *this;
+    }
+    // EVM local end
     if (isSingleWord()) {
       U.VAL &= RHS;
       return *this;
@@ -722,6 +842,15 @@ public:
   /// \returns *this after ORing with RHS.
   APInt &operator|=(const APInt &RHS) {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] |= RHS.U.Val256[0];
+      U.Val256[1] |= RHS.U.Val256[1];
+      U.Val256[2] |= RHS.U.Val256[2];
+      U.Val256[3] |= RHS.U.Val256[3];
+      return *this;
+    }
+    // EVM local end
     if (isSingleWord())
       U.VAL |= RHS.U.VAL;
     else
@@ -735,6 +864,12 @@ public:
   /// logically zero-extended or truncated to match the bit-width of
   /// the LHS.
   APInt &operator|=(uint64_t RHS) {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] |= RHS;
+      return *this;
+    }
+    // EVM local end
     if (isSingleWord()) {
       U.VAL |= RHS;
       return clearUnusedBits();
@@ -751,6 +886,15 @@ public:
   /// \returns *this after XORing with RHS.
   APInt &operator^=(const APInt &RHS) {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] ^= RHS.U.Val256[0];
+      U.Val256[1] ^= RHS.U.Val256[1];
+      U.Val256[2] ^= RHS.U.Val256[2];
+      U.Val256[3] ^= RHS.U.Val256[3];
+      return *this;
+    }
+    // EVM local end
     if (isSingleWord())
       U.VAL ^= RHS.U.VAL;
     else
@@ -764,6 +908,12 @@ public:
   /// logically zero-extended or truncated to match the bit-width of
   /// the LHS.
   APInt &operator^=(uint64_t RHS) {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] ^= RHS;
+      return *this;
+    }
+    // EVM local end
     if (isSingleWord()) {
       U.VAL ^= RHS;
       return clearUnusedBits();
@@ -803,6 +953,22 @@ public:
   /// \returns *this after shifting left by ShiftAmt
   APInt &operator<<=(unsigned ShiftAmt) {
     assert(ShiftAmt <= BitWidth && "Invalid shift amount");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      unsigned WordShift = ShiftAmt / APINT_BITS_PER_WORD;
+      unsigned BitShift = ShiftAmt % APINT_BITS_PER_WORD;
+      // Upstream's tcShiftLeft for four words. From the top down, each word
+      // reads only words not yet written.
+      for (int I = 3; I >= 0; --I) {
+        int Low = I - int(WordShift);
+        uint64_t Word = Low >= 0 ? U.Val256[Low] << BitShift : 0;
+        if (BitShift != 0 && Low >= 1)
+          Word |= U.Val256[Low - 1] >> (APINT_BITS_PER_WORD - BitShift);
+        U.Val256[I] = Word;
+      }
+      return *this;
+    }
+    // EVM local end
     if (isSingleWord()) {
       if (ShiftAmt == BitWidth)
         U.VAL = 0;
@@ -852,6 +1018,25 @@ public:
   /// Arithmetic right-shift this APInt by ShiftAmt in place.
   void ashrInPlace(unsigned ShiftAmt) {
     assert(ShiftAmt <= BitWidth && "Invalid shift amount");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      unsigned WordShift = ShiftAmt / APINT_BITS_PER_WORD;
+      unsigned BitShift = ShiftAmt % APINT_BITS_PER_WORD;
+      uint64_t Fill = int64_t(U.Val256[3]) < 0 ? WORDTYPE_MAX : 0;
+      // Upstream's ashrSlowCase for four words. From the bottom up, each word
+      // reads only words not yet written, and words above the top read as the
+      // sign fill.
+      for (unsigned I = 0; I != 4; ++I) {
+        unsigned Low = I + WordShift;
+        uint64_t Word = (Low < 4 ? U.Val256[Low] : Fill) >> BitShift;
+        if (BitShift != 0)
+          Word |= (Low + 1 < 4 ? U.Val256[Low + 1] : Fill)
+                  << (APINT_BITS_PER_WORD - BitShift);
+        U.Val256[I] = Word;
+      }
+      return;
+    }
+    // EVM local end
     if (isSingleWord()) {
       int64_t SExtVAL = SignExtend64(U.VAL, BitWidth);
       if (ShiftAmt == BitWidth)
@@ -876,6 +1061,22 @@ public:
   /// Logical right-shift this APInt by ShiftAmt in place.
   void lshrInPlace(unsigned ShiftAmt) {
     assert(ShiftAmt <= BitWidth && "Invalid shift amount");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      unsigned WordShift = ShiftAmt / APINT_BITS_PER_WORD;
+      unsigned BitShift = ShiftAmt % APINT_BITS_PER_WORD;
+      // Upstream's tcShiftRight for four words. From the bottom up, each word
+      // reads only words not yet written.
+      for (unsigned I = 0; I != 4; ++I) {
+        unsigned Low = I + WordShift;
+        uint64_t Word = Low < 4 ? U.Val256[Low] >> BitShift : 0;
+        if (BitShift != 0 && Low + 1 < 4)
+          Word |= U.Val256[Low + 1] << (APINT_BITS_PER_WORD - BitShift);
+        U.Val256[I] = Word;
+      }
+      return;
+    }
+    // EVM local end
     if (isSingleWord()) {
       if (ShiftAmt == BitWidth)
         U.VAL = 0;
@@ -1074,6 +1275,13 @@ public:
   /// relationship.
   bool operator==(const APInt &RHS) const {
     assert(BitWidth == RHS.BitWidth && "Comparison requires equal bit widths");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return ((U.Val256[0] ^ RHS.U.Val256[0]) |
+              (U.Val256[1] ^ RHS.U.Val256[1]) |
+              (U.Val256[2] ^ RHS.U.Val256[2]) |
+              (U.Val256[3] ^ RHS.U.Val256[3])) == 0;
+    // EVM local end
     if (isSingleWord())
       return U.VAL == RHS.U.VAL;
     return equalSlowCase(RHS);
@@ -1086,6 +1294,11 @@ public:
   ///
   /// \returns true if *this == Val
   bool operator==(uint64_t Val) const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return (U.Val256[1] | U.Val256[2] | U.Val256[3]) == 0 &&
+             U.Val256[0] == Val;
+    // EVM local end
     return (isSingleWord() || getActiveBits() <= 64) && getZExtValue() == Val;
   }
 
@@ -1136,6 +1349,11 @@ public:
   ///
   /// \returns true if *this < RHS when considered unsigned.
   bool ult(uint64_t RHS) const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return (U.Val256[1] | U.Val256[2] | U.Val256[3]) == 0 &&
+             U.Val256[0] < RHS;
+    // EVM local end
     // Only need to check active bits if not a single word.
     return (isSingleWord() || getActiveBits() <= 64) && getZExtValue() < RHS;
   }
@@ -1155,6 +1373,15 @@ public:
   ///
   /// \returns true if *this < RHS when considered signed.
   bool slt(int64_t RHS) const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // The value fits an int64_t when the high words repeat its sign.
+      uint64_t Sign = int64_t(U.Val256[0]) < 0 ? WORDTYPE_MAX : 0;
+      if ((U.Val256[1] ^ Sign) | (U.Val256[2] ^ Sign) | (U.Val256[3] ^ Sign))
+        return int64_t(U.Val256[3]) < 0;
+      return int64_t(U.Val256[0]) < RHS;
+    }
+    // EVM local end
     return (!isSingleWord() && getSignificantBits() > 64)
                ? isNegative()
                : getSExtValue() < RHS;
@@ -1207,6 +1434,11 @@ public:
   ///
   /// \returns true if *this > RHS when considered unsigned.
   bool ugt(uint64_t RHS) const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return (U.Val256[1] | U.Val256[2] | U.Val256[3]) != 0 ||
+             U.Val256[0] > RHS;
+    // EVM local end
     // Only need to check active bits if not a single word.
     return (!isSingleWord() && getActiveBits() > 64) || getZExtValue() > RHS;
   }
@@ -1226,6 +1458,15 @@ public:
   ///
   /// \returns true if *this > RHS when considered signed.
   bool sgt(int64_t RHS) const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // The value fits an int64_t when the high words repeat its sign.
+      uint64_t Sign = int64_t(U.Val256[0]) < 0 ? WORDTYPE_MAX : 0;
+      if ((U.Val256[1] ^ Sign) | (U.Val256[2] ^ Sign) | (U.Val256[3] ^ Sign))
+        return int64_t(U.Val256[3]) >= 0;
+      return int64_t(U.Val256[0]) > RHS;
+    }
+    // EVM local end
     return (!isSingleWord() && getSignificantBits() > 64)
                ? !isNegative()
                : getSExtValue() > RHS;
@@ -1267,6 +1508,13 @@ public:
   /// between this APInt and RHS that are both set.
   bool intersects(const APInt &RHS) const {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return ((U.Val256[0] & RHS.U.Val256[0]) |
+              (U.Val256[1] & RHS.U.Val256[1]) |
+              (U.Val256[2] & RHS.U.Val256[2]) |
+              (U.Val256[3] & RHS.U.Val256[3])) != 0;
+    // EVM local end
     if (isSingleWord())
       return (U.VAL & RHS.U.VAL) != 0;
     return intersectsSlowCase(RHS);
@@ -1275,6 +1523,13 @@ public:
   /// This operation checks that all bits set in this APInt are also set in RHS.
   bool isSubsetOf(const APInt &RHS) const {
     assert(BitWidth == RHS.BitWidth && "Bit widths must be the same");
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return ((U.Val256[0] & ~RHS.U.Val256[0]) |
+              (U.Val256[1] & ~RHS.U.Val256[1]) |
+              (U.Val256[2] & ~RHS.U.Val256[2]) |
+              (U.Val256[3] & ~RHS.U.Val256[3])) == 0;
+    // EVM local end
     if (isSingleWord())
       return (U.VAL & ~RHS.U.VAL) == 0;
     return isSubsetOfSlowCase(RHS);
@@ -1336,6 +1591,15 @@ public:
 
   /// Set every bit to 1.
   void setAllBits() {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] = WORDTYPE_MAX;
+      U.Val256[1] = WORDTYPE_MAX;
+      U.Val256[2] = WORDTYPE_MAX;
+      U.Val256[3] = WORDTYPE_MAX;
+      return;
+    }
+    // EVM local end
     if (isSingleWord())
       U.VAL = WORDTYPE_MAX;
     else
@@ -1349,6 +1613,12 @@ public:
   void setBit(unsigned BitPosition) {
     assert(BitPosition < BitWidth && "BitPosition out of range");
     WordType Mask = maskBit(BitPosition);
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[whichWord(BitPosition)] |= Mask;
+      return;
+    }
+    // EVM local end
     if (isSingleWord())
       U.VAL |= Mask;
     else
@@ -1391,6 +1661,12 @@ public:
     if (hiBit <= APINT_BITS_PER_WORD) {
       uint64_t mask = WORDTYPE_MAX >> (APINT_BITS_PER_WORD - (hiBit - loBit));
       mask <<= loBit;
+      // EVM local begin
+      if (LLVM_LIKELY(is256Bit())) {
+        U.Val256[0] |= mask;
+        return;
+      }
+      // EVM local end
       if (isSingleWord())
         U.VAL |= mask;
       else
@@ -1413,6 +1689,15 @@ public:
 
   /// Set every bit to 0.
   void clearAllBits() {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] = 0;
+      U.Val256[1] = 0;
+      U.Val256[2] = 0;
+      U.Val256[3] = 0;
+      return;
+    }
+    // EVM local end
     if (isSingleWord())
       U.VAL = 0;
     else
@@ -1425,6 +1710,12 @@ public:
   void clearBit(unsigned BitPosition) {
     assert(BitPosition < BitWidth && "BitPosition out of range");
     WordType Mask = ~maskBit(BitPosition);
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[whichWord(BitPosition)] &= Mask;
+      return;
+    }
+    // EVM local end
     if (isSingleWord())
       U.VAL &= Mask;
     else
@@ -1441,6 +1732,12 @@ public:
     if (HiBit <= APINT_BITS_PER_WORD) {
       uint64_t Mask = WORDTYPE_MAX >> (APINT_BITS_PER_WORD - (HiBit - LoBit));
       Mask = ~(Mask << LoBit);
+      // EVM local begin
+      if (LLVM_LIKELY(is256Bit())) {
+        U.Val256[0] &= Mask;
+        return;
+      }
+      // EVM local end
       if (isSingleWord())
         U.VAL &= Mask;
       else
@@ -1469,6 +1766,15 @@ public:
 
   /// Toggle every bit to its opposite value.
   void flipAllBits() {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      U.Val256[0] = ~U.Val256[0];
+      U.Val256[1] = ~U.Val256[1];
+      U.Val256[2] = ~U.Val256[2];
+      U.Val256[3] = ~U.Val256[3];
+      return;
+    }
+    // EVM local end
     if (isSingleWord()) {
       U.VAL ^= WORDTYPE_MAX;
       clearUnusedBits();
@@ -1557,6 +1863,12 @@ public:
   /// uint64_t. The bitwidth must be <= 64 or the value must fit within a
   /// uint64_t. Otherwise an assertion will result.
   uint64_t getZExtValue() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      assert(getActiveBits() <= 64 && "Too many bits for uint64_t");
+      return U.Val256[0];
+    }
+    // EVM local end
     if (isSingleWord())
       return U.VAL;
     assert(getActiveBits() <= 64 && "Too many bits for uint64_t");
@@ -1579,6 +1891,12 @@ public:
   /// int64_t. The bit width must be <= 64 or the value must fit within an
   /// int64_t. Otherwise an assertion will result.
   int64_t getSExtValue() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      assert(getSignificantBits() <= 64 && "Too many bits for int64_t");
+      return int64_t(U.Val256[0]);
+    }
+    // EVM local end
     if (isSingleWord())
       return SignExtend64(U.VAL, BitWidth);
     assert(getSignificantBits() <= 64 && "Too many bits for int64_t");
@@ -1615,6 +1933,18 @@ public:
   /// \returns BitWidth if the value is zero, otherwise returns the number of
   ///   zeros from the most significant bit to the first one bits.
   unsigned countl_zero() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // Upstream's countLeadingZerosSlowCase for four words.
+      if (U.Val256[3])
+        return llvm::countl_zero(U.Val256[3]);
+      if (U.Val256[2])
+        return APINT_BITS_PER_WORD + llvm::countl_zero(U.Val256[2]);
+      if (U.Val256[1])
+        return (2 * APINT_BITS_PER_WORD) + llvm::countl_zero(U.Val256[1]);
+      return (3 * APINT_BITS_PER_WORD) + llvm::countl_zero(U.Val256[0]);
+    }
+    // EVM local end
     if (isSingleWord()) {
       unsigned unusedBits = APINT_BITS_PER_WORD - BitWidth;
       return llvm::countl_zero(U.VAL) - unusedBits;
@@ -1632,6 +1962,18 @@ public:
   /// \returns 0 if the high order bit is not set, otherwise returns the number
   /// of 1 bits from the most significant to the least
   unsigned countl_one() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // Upstream's countLeadingOnesSlowCase for four words.
+      if (U.Val256[3] != WORDTYPE_MAX)
+        return llvm::countl_one(U.Val256[3]);
+      if (U.Val256[2] != WORDTYPE_MAX)
+        return APINT_BITS_PER_WORD + llvm::countl_one(U.Val256[2]);
+      if (U.Val256[1] != WORDTYPE_MAX)
+        return (2 * APINT_BITS_PER_WORD) + llvm::countl_one(U.Val256[1]);
+      return (3 * APINT_BITS_PER_WORD) + llvm::countl_one(U.Val256[0]);
+    }
+    // EVM local end
     if (isSingleWord()) {
       if (LLVM_UNLIKELY(BitWidth == 0))
         return 0;
@@ -1656,6 +1998,18 @@ public:
   /// \returns BitWidth if the value is zero, otherwise returns the number of
   /// zeros from the least significant bit to the first one bit.
   unsigned countr_zero() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // Upstream's countTrailingZerosSlowCase for four words.
+      if (U.Val256[0])
+        return llvm::countr_zero(U.Val256[0]);
+      if (U.Val256[1])
+        return APINT_BITS_PER_WORD + llvm::countr_zero(U.Val256[1]);
+      if (U.Val256[2])
+        return (2 * APINT_BITS_PER_WORD) + llvm::countr_zero(U.Val256[2]);
+      return (3 * APINT_BITS_PER_WORD) + llvm::countr_zero(U.Val256[3]);
+    }
+    // EVM local end
     if (isSingleWord()) {
       unsigned TrailingZeros = llvm::countr_zero(U.VAL);
       return (TrailingZeros > BitWidth ? BitWidth : TrailingZeros);
@@ -1673,6 +2027,18 @@ public:
   /// \returns BitWidth if the value is all ones, otherwise returns the number
   /// of ones from the least significant bit to the first zero bit.
   unsigned countr_one() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit())) {
+      // Upstream's countTrailingOnesSlowCase for four words.
+      if (U.Val256[0] != WORDTYPE_MAX)
+        return llvm::countr_one(U.Val256[0]);
+      if (U.Val256[1] != WORDTYPE_MAX)
+        return APINT_BITS_PER_WORD + llvm::countr_one(U.Val256[1]);
+      if (U.Val256[2] != WORDTYPE_MAX)
+        return (2 * APINT_BITS_PER_WORD) + llvm::countr_one(U.Val256[2]);
+      return (3 * APINT_BITS_PER_WORD) + llvm::countr_one(U.Val256[3]);
+    }
+    // EVM local end
     if (isSingleWord())
       return llvm::countr_one(U.VAL);
     return countTrailingOnesSlowCase();
@@ -1687,6 +2053,12 @@ public:
   ///
   /// \returns 0 if the value is zero, otherwise returns the number of set bits.
   unsigned popcount() const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      // Upstream's countPopulationSlowCase for four words.
+      return llvm::popcount(U.Val256[0]) + llvm::popcount(U.Val256[1]) +
+             llvm::popcount(U.Val256[2]) + llvm::popcount(U.Val256[3]);
+    // EVM local end
     if (isSingleWord())
       return llvm::popcount(U.VAL);
     return countPopulationSlowCase();
@@ -1742,6 +2114,10 @@ public:
 
 #ifdef HAS_IEE754_FLOAT128
   float128 bitsToQuad() const {
+    // EVM local begin
+    if (LLVM_UNLIKELY(is256Bit()))
+      report_fatal_error("256-bit values keep their words in the object");
+    // EVM local end
     __uint128_t ul = ((__uint128_t)U.pVal[1] << 64) + U.pVal[0];
     return llvm::bit_cast<float128>(ul);
   }
@@ -1948,7 +2324,9 @@ public:
 #endif
 
   /// Returns whether this instance allocated memory.
-  bool needsCleanup() const { return !isSingleWord(); }
+  // EVM local begin
+  bool needsCleanup() const { return !isSingleWord() && !is256Bit(); }
+  // EVM local end
 
 private:
   /// This union is used to store the integer value. When the
@@ -1956,9 +2334,30 @@ private:
   union {
     uint64_t VAL;   ///< Used to store the <= 64 bits integer value.
     uint64_t *pVal; ///< Used to store the >64 bits integer value.
+    // EVM local begin
+    /// Used to store the 256 bits integer value instead of pVal.
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays)
+    uint64_t Val256[4];
+    // EVM local end
   } U;
 
   unsigned BitWidth = 1; ///< The number of bits in this APInt.
+
+  // EVM local begin
+  /// Whether this value has the 256 bits of the EVM target, whose words live
+  /// in U.Val256 and take straight-line code instead of the word loops.
+  bool is256Bit() const { return BitWidth == 256; }
+
+  /// The words of this value for writing, as getRawData() gives them for
+  /// reading.
+  uint64_t *getWords() {
+    if (LLVM_LIKELY(is256Bit()))
+      return U.Val256;
+    if (isSingleWord())
+      return &U.VAL;
+    return &U.pVal[0];
+  }
+  // EVM local end
 
   friend struct DenseMapInfo<APInt, void>;
   friend class APSInt;
@@ -1969,7 +2368,13 @@ private:
   /// This constructor is used only internally for speed of construction of
   /// temporaries. It is unsafe since it takes ownership of the pointer, so it
   /// is not public.
-  APInt(uint64_t *val, unsigned bits) : BitWidth(bits) { U.pVal = val; }
+  // EVM local begin
+  APInt(uint64_t *val, unsigned bits) : BitWidth(bits) {
+    if (LLVM_UNLIKELY(is256Bit()))
+      report_fatal_error("256-bit values keep their words in the object");
+    U.pVal = val;
+  }
+  // EVM local end
 
   /// Determine which word a bit is in.
   ///
@@ -2000,6 +2405,11 @@ private:
   /// significant word is assigned a value to ensure that those bits are
   /// zero'd out.
   APInt &clearUnusedBits() {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      // 256 bits fill all four words, so no bit is unused.
+      return *this;
+    // EVM local end
     // Compute how many bits are used in the final word.
     unsigned WordBits = ((BitWidth - 1) % APINT_BITS_PER_WORD) + 1;
 
@@ -2018,6 +2428,10 @@ private:
   /// Get the word corresponding to a bit position
   /// \returns the corresponding word for the specified bit position.
   uint64_t getWord(unsigned bitPosition) const {
+    // EVM local begin
+    if (LLVM_LIKELY(is256Bit()))
+      return U.Val256[whichWord(bitPosition)];
+    // EVM local end
     return isSingleWord() ? U.VAL : U.pVal[whichWord(bitPosition)];
   }
 
