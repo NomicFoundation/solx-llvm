@@ -2021,8 +2021,12 @@ TEST(APIntTest, byteSwap) {
   EXPECT_EQ(0xff050403020100ULL, APInt(56, 0x000102030405ffULL).byteSwap());
   EXPECT_EQ(0xff050403020100aaULL, APInt(64, 0xaa000102030405ffULL).byteSwap());
 
-  for (unsigned N : {16, 24, 32, 48, 56, 64, 72, 80, 96, 112, 128, 248, 256,
-                     1024, 1032, 1040}) {
+  // EVM local begin
+  // Widths of four words below 256 swap in a 256-bit value.
+  for (unsigned N :
+       {16,  24,  32,  48,  56,  64,  72,  80,  96,   112,  128,
+        200, 208, 216, 224, 232, 240, 248, 256, 1024, 1032, 1040}) {
+    // EVM local end
     for (unsigned I = 0; I < N; I += 8) {
       APInt X = APInt::getBitsSet(N, I, I + 8);
       APInt Y = APInt::getBitsSet(N, N - I - 8, N - I);
@@ -2231,6 +2235,19 @@ TEST(APIntTest, extractBits) {
             APInt(144, "281474976710655", 10).extractBits(48, 1));
   EXPECT_EQ(APInt(48, 0x00007fffffffffffull),
             APInt(144, "281474976710655", 10).lshr(1).trunc(48));
+
+  // EVM local begin
+  // A 256-bit result of a wider source keeps its words in U.Val256.
+  EXPECT_EQ(APInt(256, 0xFFFFFFFFFF80007FULL, true), i257.extractBits(256, 1));
+  EXPECT_EQ(APInt(256, 0xFFFFFFFFFF80007FULL, true), i257.lshr(1).trunc(256));
+  APInt i512(
+      512, ArrayRef<uint64_t>({0x0123456789ABCDEFULL, 0x1032547698BADCFEULL,
+                               0x2301674589EFCDABULL, 0x32107654BA98FEDCULL,
+                               0x4567012389ABCDEFULL, 0x5476103298BADCFEULL,
+                               0x6745230189EFCDABULL, 0x7654321098FEDCBAULL}));
+  for (unsigned Pos : {1, 63, 64, 65, 100, 192, 255, 256})
+    EXPECT_EQ(i512.lshr(Pos).trunc(256), i512.extractBits(256, Pos));
+  // EVM local end
 }
 
 TEST(APIntTest, extractBitsAsZExtValue) {
@@ -3704,6 +3721,343 @@ TEST(APIntTest, DiagnoseZExt) {
                "Value is not an N-bit unsigned value");
 }
 #endif
+// EVM local end
+
+// EVM local begin
+// A 256-bit value keeps its words in the object and takes straight-line code.
+// The tests below check each operation against the same one on 512-bit values,
+// which take the general code, reached through extensions that read the words.
+
+/// Values whose words exercise carries, borrows, signs and word boundaries.
+const std::array<std::array<uint64_t, 4>, 16> Words256 = {{
+    {0, 0, 0, 0},
+    {1, 0, 0, 0},
+    {12345, 0, 0, 0},
+    {UINT64_MAX, 0, 0, 0},
+    {0, 1, 0, 0},
+    {0, UINT64_MAX, 0, 0},
+    {0, 0, 0, 1},
+    {0, 0xFFF0000000000000, UINT64_MAX, 0xFFFF},
+    {0xFFFFFFFF00000000, 0xFFFFFFFF, 0, 0},
+    {0xAAAAAAAAAAAAAAAA, 0x5555555555555555, 0xAAAAAAAAAAAAAAAA,
+     0x5555555555555555},
+    {0x0123456789ABCDEF, 0xFEDCBA9876543210, 0x0F1E2D3C4B5A6978,
+     0x8796A5B4C3D2E1F0},
+    {0xDEADBEEFCAFEBABE, 0x0123456789ABCDEF, 0x7FFFFFFFFFFFFFFF, 0},
+    {UINT64_MAX, UINT64_MAX, UINT64_MAX, 0x7FFFFFFFFFFFFFFF},
+    {0, 0, 0, 0x8000000000000000},
+    {UINT64_MAX - 4, UINT64_MAX, UINT64_MAX, UINT64_MAX},
+    {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX},
+}};
+
+/// Operands of the operations that take a single word.
+const std::array<uint64_t, 8> Words64 = {
+    0, 1, 3, 12345, 0xFFFFFFFF, 0x8000000000000000, UINT64_MAX - 4, UINT64_MAX};
+
+/// Shift amounts at and around the word boundaries. All but the last are also
+/// bit positions.
+const std::array<unsigned, 14> Shifts256 = {0,   1,   31,  63,  64,  65,  127,
+                                            128, 129, 191, 192, 193, 255, 256};
+
+/// The low 256 bits of the 512-bit value V.
+APInt low256(const APInt &V) { return V & APInt::getLowBitsSet(512, 256); }
+
+TEST(APIntTest, Width256CopyMove) {
+  for (const auto &Words : Words256) {
+    APInt A(256, Words);
+    EXPECT_FALSE(A.needsCleanup());
+    EXPECT_EQ(ArrayRef(Words), ArrayRef(A.getRawData(), 4));
+
+    APInt Copy(A);
+    EXPECT_NE(A.getRawData(), Copy.getRawData());
+    EXPECT_EQ(A, Copy);
+    APInt Moved(std::move(Copy));
+    EXPECT_EQ(A, Moved);
+
+    // Assignments move the words between the object and the heap, including
+    // for 255 bits, whose four words are on the heap.
+    for (unsigned Width : {64U, 192U, 255U, 257U, 512U}) {
+      const APInt Ones = APInt::getAllOnes(Width);
+      APInt Other = Ones;
+      Other = A;
+      EXPECT_FALSE(Other.needsCleanup());
+      EXPECT_EQ(A, Other);
+      Other = Ones;
+      EXPECT_EQ(Width > 64, Other.needsCleanup());
+      EXPECT_EQ(Ones, Other);
+      Other = APInt(A);
+      EXPECT_EQ(A, Other);
+      Other = APInt(Ones);
+      EXPECT_EQ(Ones, Other);
+    }
+
+    APInt Small = A;
+    Small = 42;
+    EXPECT_EQ(APInt(256, 42), Small);
+  }
+
+  DenseMap<APInt, unsigned> Indices;
+  for (unsigned I = 0; I != std::size(Words256); ++I)
+    Indices[APInt(256, Words256[I])] = I;
+  for (unsigned I = 0; I != std::size(Words256); ++I)
+    EXPECT_EQ(I, Indices.lookup(APInt(256, Words256[I])));
+}
+
+TEST(APIntTest, Width256Arithmetic) {
+  for (const auto &WordsA : Words256) {
+    APInt A(256, WordsA);
+    APInt WideA = A.zext(512), SignedA = A.sext(512);
+    EXPECT_EQ(low256(-WideA), (-A).zext(512));
+    APInt Next = A;
+    EXPECT_EQ(low256(WideA + 1), (++Next).zext(512));
+    EXPECT_EQ(A, --Next);
+
+    for (uint64_t Word : Words64) {
+      EXPECT_EQ(low256(WideA + Word), (A + Word).zext(512));
+      EXPECT_EQ(low256(WideA - Word), (A - Word).zext(512));
+      EXPECT_EQ(low256(WideA * Word), (A * Word).zext(512));
+      if (Word == 0)
+        continue;
+      EXPECT_EQ(WideA.udiv(Word), A.udiv(Word).zext(512));
+      EXPECT_EQ(WideA.urem(Word), A.urem(Word));
+      APInt Quotient(64, 0);
+      uint64_t Remainder = 0;
+      APInt::udivrem(A, Word, Quotient, Remainder);
+      EXPECT_EQ(A.udiv(Word), Quotient);
+      EXPECT_EQ(A.urem(Word), Remainder);
+    }
+
+    for (const auto &WordsB : Words256) {
+      APInt B(256, WordsB);
+      APInt WideB = B.zext(512), SignedB = B.sext(512);
+      EXPECT_EQ(low256(WideA + WideB), (A + B).zext(512));
+      EXPECT_EQ(low256(WideA - WideB), (A - B).zext(512));
+      EXPECT_EQ(low256(WideA * WideB), (A * B).zext(512));
+      APInt Product = A;
+      Product *= B;
+      EXPECT_EQ(A * B, Product);
+      if (B.isZero())
+        continue;
+      EXPECT_EQ(WideA.udiv(WideB), A.udiv(B).zext(512));
+      EXPECT_EQ(WideA.urem(WideB), A.urem(B).zext(512));
+      EXPECT_EQ(low256(SignedA.sdiv(SignedB)), A.sdiv(B).zext(512));
+      EXPECT_EQ(low256(SignedA.srem(SignedB)), A.srem(B).zext(512));
+      APInt Quotient(64, 0), Remainder(512, 0);
+      APInt::udivrem(A, B, Quotient, Remainder);
+      EXPECT_EQ(A.udiv(B), Quotient);
+      EXPECT_EQ(A.urem(B), Remainder);
+      APInt::sdivrem(A, B, Quotient, Remainder);
+      EXPECT_EQ(A.sdiv(B), Quotient);
+      EXPECT_EQ(A.srem(B), Remainder);
+    }
+  }
+}
+
+TEST(APIntTest, Width256Shifts) {
+  for (const auto &Words : Words256) {
+    APInt A(256, Words);
+    APInt WideA = A.zext(512), SignedA = A.sext(512);
+    for (unsigned Shift : Shifts256) {
+      EXPECT_EQ(low256(WideA.shl(Shift)), A.shl(Shift).zext(512));
+      EXPECT_EQ(WideA.lshr(Shift), A.lshr(Shift).zext(512));
+      EXPECT_EQ(low256(SignedA.ashr(Shift)), A.ashr(Shift).zext(512));
+    }
+  }
+}
+
+TEST(APIntTest, Width256Compares) {
+  for (const auto &WordsA : Words256) {
+    APInt A(256, WordsA);
+    APInt WideA = A.zext(512), SignedA = A.sext(512);
+    for (uint64_t Word : Words64) {
+      EXPECT_EQ(WideA == Word, A == Word);
+      EXPECT_EQ(WideA.ult(Word), A.ult(Word));
+      EXPECT_EQ(WideA.ugt(Word), A.ugt(Word));
+      EXPECT_EQ(SignedA.slt(int64_t(Word)), A.slt(int64_t(Word)));
+      EXPECT_EQ(SignedA.sgt(int64_t(Word)), A.sgt(int64_t(Word)));
+    }
+    for (const auto &WordsB : Words256) {
+      APInt B(256, WordsB);
+      APInt WideB = B.zext(512), SignedB = B.sext(512);
+      EXPECT_EQ(WideA == WideB, A == B);
+      EXPECT_EQ(WideA.ult(WideB), A.ult(B));
+      EXPECT_EQ(WideA.ugt(WideB), A.ugt(B));
+      EXPECT_EQ(SignedA.slt(SignedB), A.slt(B));
+      EXPECT_EQ(SignedA.sgt(SignedB), A.sgt(B));
+      EXPECT_EQ(WideA.intersects(WideB), A.intersects(B));
+      EXPECT_EQ(WideA.isSubsetOf(WideB), A.isSubsetOf(B));
+    }
+  }
+}
+
+TEST(APIntTest, Width256Bits) {
+  // Ranges within the low word, within a higher word and across words.
+  const SmallVector<std::pair<unsigned, unsigned>> Ranges = {
+      {0, 1},     {3, 40},   {0, 64},    {60, 70}, {64, 128},
+      {130, 140}, {10, 250}, {200, 256}, {0, 256}};
+  for (const auto &Words : Words256) {
+    APInt A(256, Words);
+    APInt WideA = A.zext(512), SignedA = A.sext(512);
+    EXPECT_EQ(WideA.isZero(), A.isZero());
+    EXPECT_EQ(WideA.isOne(), A.isOne());
+    EXPECT_EQ(WideA.isMask(256), A.isAllOnes());
+    EXPECT_EQ(WideA.isMask(255), A.isMaxSignedValue());
+    EXPECT_EQ(WideA == APInt::getOneBitSet(512, 255), A.isMinSignedValue());
+    EXPECT_EQ(WideA.isPowerOf2(), A.isPowerOf2());
+    EXPECT_EQ(WideA.isMask(), A.isMask());
+    for (unsigned Bits : {1U, 64U, 65U, 255U, 256U})
+      EXPECT_EQ(WideA.isMask(Bits), A.isMask(Bits));
+    EXPECT_EQ(WideA.isShiftedMask(), A.isShiftedMask());
+    unsigned WideIndex = 0, WideLength = 0, Index = 0, Length = 0;
+    EXPECT_EQ(WideA.isShiftedMask(WideIndex, WideLength),
+              A.isShiftedMask(Index, Length));
+    EXPECT_EQ(WideIndex, Index);
+    EXPECT_EQ(WideLength, Length);
+    EXPECT_EQ(WideA.countl_zero() - 256, A.countl_zero());
+    EXPECT_EQ(WideA.shl(256).countl_one(), A.countl_one());
+    EXPECT_EQ(std::min(WideA.countr_zero(), 256U), A.countr_zero());
+    EXPECT_EQ(WideA.countr_one(), A.countr_one());
+    EXPECT_EQ(WideA.popcount(), A.popcount());
+    EXPECT_EQ(SignedA.getSignificantBits(), A.getSignificantBits());
+    if (A.getActiveBits() <= 64)
+      EXPECT_EQ(WideA.getZExtValue(), A.getZExtValue());
+    if (A.getSignificantBits() <= 64)
+      EXPECT_EQ(SignedA.getSExtValue(), A.getSExtValue());
+
+    EXPECT_EQ(low256(~WideA), (~A).zext(512));
+    for (uint64_t Word : Words64) {
+      EXPECT_EQ(WideA & Word, (A & Word).zext(512));
+      EXPECT_EQ(WideA | Word, (A | Word).zext(512));
+      EXPECT_EQ(WideA ^ Word, (A ^ Word).zext(512));
+    }
+    for (const auto &WordsB : Words256) {
+      APInt B(256, WordsB);
+      APInt WideB = B.zext(512);
+      EXPECT_EQ(WideA & WideB, (A & B).zext(512));
+      EXPECT_EQ(WideA | WideB, (A | B).zext(512));
+      EXPECT_EQ(WideA ^ WideB, (A ^ B).zext(512));
+    }
+
+    for (unsigned Bit : ArrayRef(Shifts256).drop_back()) {
+      EXPECT_EQ(WideA[Bit], A[Bit]);
+      APInt Set = A, Clear = A, Flip = A;
+      APInt WideSet = WideA, WideClear = WideA, WideFlip = WideA;
+      Set.setBit(Bit);
+      Clear.clearBit(Bit);
+      Flip.flipBit(Bit);
+      WideSet.setBit(Bit);
+      WideClear.clearBit(Bit);
+      WideFlip.flipBit(Bit);
+      EXPECT_EQ(WideSet, Set.zext(512));
+      EXPECT_EQ(WideClear, Clear.zext(512));
+      EXPECT_EQ(WideFlip, Flip.zext(512));
+    }
+    for (auto [Low, High] : Ranges) {
+      APInt Set = A, Clear = A;
+      APInt WideSet = WideA, WideClear = WideA;
+      Set.setBits(Low, High);
+      Clear.clearBits(Low, High);
+      WideSet.setBits(Low, High);
+      WideClear.clearBits(Low, High);
+      EXPECT_EQ(WideSet, Set.zext(512));
+      EXPECT_EQ(WideClear, Clear.zext(512));
+    }
+
+    APInt All = A;
+    All.setAllBits();
+    EXPECT_TRUE(All.isAllOnes());
+    All.clearAllBits();
+    EXPECT_TRUE(All.isZero());
+  }
+}
+
+TEST(APIntTest, Width256InsertExtract) {
+  // Fields as {width, position}, within a word, across words and whole.
+  const SmallVector<std::pair<unsigned, unsigned>> Fields = {
+      {1, 0},    {1, 255}, {8, 60},    {6, 250},   {64, 0},  {64, 100},
+      {64, 192}, {65, 63}, {100, 150}, {128, 128}, {200, 3}, {256, 0}};
+  for (const auto &WordsA : Words256) {
+    APInt A(256, WordsA);
+    APInt WideA = A.zext(512);
+    for (const auto &WordsB : Words256) {
+      for (auto [Width, Position] : Fields) {
+        APInt Field(Width, WordsB);
+        APInt Inserted = A, WideInserted = WideA;
+        Inserted.insertBits(Field, Position);
+        WideInserted.insertBits(Field, Position);
+        EXPECT_EQ(WideInserted, Inserted.zext(512));
+        EXPECT_EQ(WideA.extractBits(Width, Position),
+                  A.extractBits(Width, Position));
+        if (Width > 64)
+          continue;
+        Inserted = A;
+        WideInserted = WideA;
+        Inserted.insertBits(Field.getZExtValue(), Position, Width);
+        WideInserted.insertBits(Field.getZExtValue(), Position, Width);
+        EXPECT_EQ(WideInserted, Inserted.zext(512));
+        EXPECT_EQ(WideA.extractBitsAsZExtValue(Width, Position),
+                  A.extractBitsAsZExtValue(Width, Position));
+      }
+    }
+  }
+}
+
+TEST(APIntTest, Width256Extensions) {
+  const std::array<uint64_t, 4> High = {0x0F1E2D3C4B5A6978, UINT64_MAX,
+                                        0x8000000000000001, 0xFEDCBA9876543210};
+  for (const auto &Words : Words256) {
+    APInt A(256, Words);
+    EXPECT_EQ(A, APInt(128, ArrayRef(Words).drop_front(2))
+                     .concat(APInt(128, ArrayRef(Words).take_front(2))));
+
+    // Narrower widths include 193 to 255 bits, whose four words are on the
+    // heap.
+    for (unsigned Width : {1U, 8U, 64U, 65U, 128U, 192U, 193U, 200U, 255U}) {
+      APInt Narrow(Width, Words);
+      EXPECT_EQ(Narrow, A.trunc(Width));
+      EXPECT_EQ(Narrow.zext(512), Narrow.zext(256).zext(512));
+      EXPECT_EQ(Narrow.sext(512), Narrow.sext(256).sext(512));
+    }
+
+    for (unsigned Width : {257U, 320U, 512U}) {
+      const std::array<uint64_t, 8> WideWords = {Words[0], Words[1], Words[2],
+                                                 Words[3], High[0],  High[1],
+                                                 High[2],  High[3]};
+      APInt Wide(Width, WideWords);
+      APInt LowBits = Wide & APInt::getLowBitsSet(Width, 256);
+      EXPECT_EQ(A, Wide.trunc(256));
+      EXPECT_EQ(LowBits, A.zext(Width));
+      if (A.isNegative())
+        LowBits.setBitsFrom(256);
+      EXPECT_EQ(LowBits, A.sext(Width));
+    }
+  }
+}
+
+TEST(APIntTest, Width256Conversions) {
+  for (const auto &Words : Words256) {
+    APInt A(256, Words);
+    APInt WideA = A.zext(512), SignedA = A.sext(512);
+    EXPECT_EQ(WideA.byteSwap().lshr(256), A.byteSwap().zext(512));
+    EXPECT_EQ(WideA.reverseBits().lshr(256), A.reverseBits().zext(512));
+    // The root's rounding squares the root plus one, which fits 256 bits below
+    // 2^254.
+    APInt Quarter = A.lshr(2);
+    EXPECT_EQ(Quarter.zext(512).sqrt(), Quarter.sqrt().zext(512));
+
+    SmallString<80> WideString, String;
+    WideA.toString(WideString, 16, /*Signed=*/false);
+    A.toString(String, 16, /*Signed=*/false);
+    EXPECT_EQ(WideString, String);
+    EXPECT_EQ(A, APInt(256, String, 16));
+    WideString.clear();
+    String.clear();
+    SignedA.toString(WideString, 10, /*Signed=*/true);
+    A.toString(String, 10, /*Signed=*/true);
+    EXPECT_EQ(WideString, String);
+    EXPECT_EQ(A, APInt(256, String, 10));
+  }
+}
 // EVM local end
 
 } // end anonymous namespace

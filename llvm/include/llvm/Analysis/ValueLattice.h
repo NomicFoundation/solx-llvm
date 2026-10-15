@@ -494,8 +494,12 @@ public:
   void setNumRangeExtensions(unsigned N) { NumRangeExtensions = N; }
 };
 
-static_assert(sizeof(ValueLatticeElement) <= 40,
+// EVM local begin
+// The constant range holds two APInts, each 24 bytes larger to keep the words
+// of 256-bit values.
+static_assert(sizeof(ValueLatticeElement) <= 40 + 2 * 3 * sizeof(uint64_t),
               "size of ValueLatticeElement changed unexpectedly");
+// EVM local end
 
 LLVM_ABI raw_ostream &operator<<(raw_ostream &OS,
                                  const ValueLatticeElement &Val);
