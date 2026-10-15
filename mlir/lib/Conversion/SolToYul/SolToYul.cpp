@@ -2233,10 +2233,11 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
   // srcDataLoc is passed explicitly because scalar element types (e.g. ui256)
   // carry no data-location annotation and sol::getDataLocation would return
   // stack for them. The top-level caller derives it from the array type, all
-  // recursive calls propagate it directly.
+  // recursive calls propagate it directly. \p validate makes a dirty scalar
+  // element revert instead of being cleaned.
   Value genAllocateAndCopy(ModuleOp mod, Value srcAddr, Type ty,
-                           sol::DataLocation srcDataLoc, PatternRewriter &r,
-                           Location loc) const {
+                           sol::DataLocation srcDataLoc, bool validate,
+                           PatternRewriter &r, Location loc) const {
     mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(mod, r, loc);
 
@@ -2300,8 +2301,8 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
                 sol::hasDynamicallySizedElt(eltTy))
               srcAddrI = evmB.genCalldataAccessRef(eltTy, srcDataAddr, srcAddrI,
                                                    /*isNonABI=*/true, loc);
-            Value subElm =
-                genAllocateAndCopy(mod, srcAddrI, eltTy, eltSrcDataLoc, r, loc);
+            Value subElm = genAllocateAndCopy(mod, srcAddrI, eltTy,
+                                              eltSrcDataLoc, validate, r, loc);
             evmB.genStore(subElm, dstAddrI, dstDataLoc);
             return SmallVector<Value>{};
           });
@@ -2365,7 +2366,7 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       shift = (32 - sol::getNumBytes(ty)) * 8;
     if (shift > 0)
       val = r.create<yul::ArithShlOp>(loc, val, bExt.genI256Const(shift));
-    val = evmB.genCleanup(ty, val, loc, srcDataLoc);
+    val = evmB.genCleanup(ty, val, loc, /*shouldRevert=*/validate);
     return val;
   }
 
@@ -2395,8 +2396,10 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
       Value srcResult = reader->read(i);
 
       if (sol::isNonPtrRefType(memberTy)) {
+        sol::DataLocation memberDataLoc = sol::getDataLocation(memberTy);
         Value memPtr = genAllocateAndCopy(
-            mod, srcResult, memberTy, sol::getDataLocation(memberTy), r, loc);
+            mod, srcResult, memberTy, memberDataLoc,
+            memberDataLoc == sol::DataLocation::CallData, r, loc);
         evmB.genStore(memPtr, dstHeadSlot, sol::DataLocation::Memory);
       } else {
         Value cleanedResult;
@@ -2427,8 +2430,21 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
 
     if (dstDataLoc == sol::DataLocation::Memory &&
         sol::isNonPtrRefType(srcTy)) {
+      bool validate = srcDataLoc == sol::DataLocation::CallData;
+      // old codegen begin
+      // A calldata array of statically sized arrays down to a scalar is copied
+      // with cleanup; anything else is ABI-decoded, which validates.
+      // (Via-IR validates every calldata element).
+      Type leafTy = srcTy;
+      while (auto arrTy = dyn_cast<sol::ArrayType>(leafTy)) {
+        leafTy = arrTy.getEltType();
+        if (sol::isDynamicallySized(leafTy))
+          break;
+      }
+      validate = validate && !sol::isScalar(leafTy);
+      // old codegen end
       r.replaceOp(op, genAllocateAndCopy(getModule(op), adaptor.getInp(), srcTy,
-                                         srcDataLoc, r, loc));
+                                         srcDataLoc, validate, r, loc));
       return success();
     }
 
