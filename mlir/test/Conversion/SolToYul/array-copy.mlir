@@ -149,21 +149,27 @@ sol.contract @C {
 // -----
 
 sol.contract @C {
-  // Each inner calldata array is located by its offset, validated, then
-  // copied into a fresh memory array.
+  // The array is decoded from its length word against the end of calldata:
+  // each inner array is located by its offset, validated, then decoded into a
+  // fresh memory array.
   // CHECK-LABEL: yul.func @cd2m_dyn2d : (!llvm.struct<(i256, i256)>) -> i256
-  // CHECK:         %[[LEN:.*]] = llvm.extractvalue %arg0[1]
+  // CHECK:         %[[DATA:.*]] = llvm.extractvalue %arg0[0]
+  // CHECK-NEXT:    %[[C32:.*]] = yul.constant 32
+  // CHECK-NEXT:    %[[HEAD:.*]] = yul.sub %[[DATA]], %[[C32]]
+  // CHECK-NEXT:    %[[CDS:.*]] = yul.calldatasize
+  // CHECK:         %[[LEN:.*]] = yul.calldataload %[[HEAD]]
   // CHECK:         %[[P:.*]] = yul.mload
   // CHECK:         yul.mstore %[[P]], %[[LEN]]
-  // CHECK:         %[[BASE:.*]] = llvm.extractvalue %arg0[0]
   // CHECK:         yul.for
   // CHECK:           %[[REL:.*]] = yul.calldataload
-  // CHECK:           yul.cmp sge, %[[REL]], %{{.*}}
-  // CHECK:           %[[INNER:.*]] = yul.add %[[BASE]], %[[REL]]
-  // CHECK:           yul.calldataload %[[INNER]]
+  // CHECK:           %[[INNER:.*]] = yul.add %{{.*}}, %[[REL]]
+  // CHECK:           yul.cmp sge, %{{.*}}, %[[CDS]]
+  // CHECK:           %[[ILEN:.*]] = yul.calldataload %[[INNER]]
   // CHECK:           %[[IP:.*]] = yul.mload
-  // CHECK:           yul.mstore %[[IP]], %{{.*}}
-  // CHECK:           yul.calldatacopy
+  // CHECK:           yul.mstore %[[IP]], %[[ILEN]]
+  // CHECK:           yul.for
+  // CHECK:             yul.calldataload
+  // CHECK:             yul.mstore
   // CHECK:           yul.mstore %{{.*}}, %[[IP]]
   // CHECK:         yul.func_return %[[P]] : i256
   sol.func @cd2m_dyn2d(%c: !sol.array<? x !sol.array<? x ui256, CallData>, CallData>) -> !sol.array<? x !sol.array<? x ui256, Memory>, Memory> {
