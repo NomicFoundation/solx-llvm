@@ -69,6 +69,11 @@ def Yul_CmpPredicateAttr :
 class Yul_Op<string mnemonic, list<Trait> traits = []> : Op<Yul_Dialect,
                                                             mnemonic, traits>;
 
+// An op that halts the execution
+def Yul_NoReturn : NativeOpTrait<"NoReturn"> {
+  let cppNamespace = "::mlir::yul";
+}
+
 def Yul_MemoryResource : Resource<"::mlir::yul::MemoryResource">;
 
 // Catch-all resource: a write to it stands for effects the dialect does not

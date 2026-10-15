@@ -3,7 +3,7 @@
 // CHECK-LABEL: func.func @selfdestruct
 // CHECK:         %[[ADDR:.*]] = arith.andi %{{.*}}, %{{.*}} : i256
 // CHECK:         "llvm.intrcall"(%[[ADDR]]) <{id = {{[0-9]+}} : i32, name = "evm.selfdestruct"}> : (i256) -> ()
-// CHECK-NEXT:    call @".unreachable"() : () -> ()
+// CHECK-NEXT:    llvm.unreachable
 
 yul.func @selfdestruct : (i256) -> () {
 ^bb0(%arg0: i256):

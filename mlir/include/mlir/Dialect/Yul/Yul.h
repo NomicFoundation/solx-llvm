@@ -30,6 +30,9 @@
 namespace mlir::yul {
 bool isI256OrI256LLVMStruct(Type type);
 
+template <typename ConcreteType>
+class NoReturn : public OpTrait::TraitBase<ConcreteType, NoReturn> {};
+
 struct MemoryResource : public SideEffects::Resource::Base<MemoryResource> {
   StringRef getName() final { return "<Memory>"; }
 };

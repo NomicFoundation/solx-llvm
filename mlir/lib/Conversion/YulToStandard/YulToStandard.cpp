@@ -18,7 +18,6 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/Sol/DebugInfo.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/APInt.h"
@@ -30,37 +29,48 @@ using solgen::getModule;
 
 namespace {
 
-// Creates a call to a wrapper function of the LLVM::UnreachableOp. This is a
-// hack to create a non-terminator unreachable op.
-void createCallToUnreachableWrapper(PatternRewriter &r, ModuleOp mod,
-                                    Location loc) {
-  StringRef name = ".unreachable";
-  r.create<func::CallOp>(loc, FlatSymbolRefAttr::get(mod.getContext(), name),
-                         TypeRange{}, ValueRange{});
-  if (mod.lookupSymbol<func::FuncOp>(name))
-    return;
+// Returns true if a predecessor of `block` belongs to a region.
+bool hasLivePredecessor(Block *block) {
+  return llvm::any_of(block->getPredecessors(),
+                      [](Block *pred) { return pred->getParent(); });
+}
 
-  OpBuilder::InsertionGuard insertGuard(r);
-  r.setInsertionPointToEnd(mod.getBody());
+// Returns the successors of the branch in `block`.
+SmallVector<Block *> getSuccessors(Block *block) {
+  // The branch may sit before the terminator it replaced.
+  for (Operation &op : llvm::reverse(*block))
+    if (!op.getSuccessors().empty())
+      return llvm::to_vector(op.getSuccessors());
+  return {};
+}
 
-  std::vector<NamedAttribute> attrs;
-  attrs.push_back(r.getNamedAttr(
-      "llvm.linkage",
-      LLVM::LinkageAttr::get(r.getContext(), LLVM::Linkage::Private)));
+// Erases `block` if it has no live predecessor, and every successor that
+// loses its last one with it.
+void eraseIfDead(PatternRewriter &r, Block *block) {
+  SmallVector<Block *> worklist{block};
+  while (!worklist.empty()) {
+    Block *dead = worklist.pop_back_val();
+    if (!dead->getParent() || hasLivePredecessor(dead))
+      continue;
+    llvm::append_range(worklist, getSuccessors(dead));
+    r.eraseBlock(dead);
+  }
+}
 
-  std::vector<Attribute> passthroughAttrs;
-  passthroughAttrs.push_back(r.getStringAttr("nofree"));
-  passthroughAttrs.push_back(r.getStringAttr("null_pointer_is_valid"));
-  attrs.push_back(r.getNamedAttr(
-      "passthrough", ArrayAttr::get(r.getContext(), passthroughAttrs)));
-
-  auto fn = r.create<func::FuncOp>(
-      evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name,
-      r.getFunctionType({}, {}), attrs);
-  r.createBlock(&fn.getBody());
-  // The body is shared by every caller, so it is at line 0 of the module
-  // its subprogram is at; only the call above is at `loc`.
-  r.create<LLVM::UnreachableOp>(evm::artificialLoc(mod.getLoc()));
+// Ends the block of `op`, a NoReturn op, with llvm.unreachable.
+template <typename OpTy>
+void terminateAt(OpTy op, PatternRewriter &r) {
+  static_assert(OpTy::template hasTrait<yul::NoReturn>());
+  Block *block = op->getBlock();
+  // Nothing branches to the new block the split creates.
+  Block *rest = r.splitBlock(block, std::next(op->getIterator()));
+  SmallVector<Block *> successors = getSuccessors(rest);
+  r.eraseBlock(rest);
+  for (Block *succ : successors)
+    eraseIfDead(r, succ);
+  OpBuilder::InsertionGuard guard(r);
+  r.setInsertionPointToEnd(block);
+  r.create<LLVM::UnreachableOp>(op.getLoc());
 }
 
 // For some dialects, we have to pass i1 instead of i256 for boolean values,
@@ -661,13 +671,11 @@ struct SelfDestructOpLowering : public OpRewritePattern<yul::SelfDestructOp> {
 
   LogicalResult matchAndRewrite(yul::SelfDestructOp op,
                                 PatternRewriter &r) const override {
-    Location loc = op.getLoc();
-    auto mod = getModule(op);
+    terminateAt(op, r);
     r.replaceOpWithNewOp<LLVM::IntrCallOp>(
         op, llvm::Intrinsic::evm_selfdestruct,
         /*resTy=*/Type{},
         /*ins=*/ValueRange{op.getAddr()}, "evm.selfdestruct");
-    createCallToUnreachableWrapper(r, mod, loc);
     return success();
   }
 };
@@ -1177,16 +1185,14 @@ struct RevertOpLowering : public OpRewritePattern<yul::RevertOp> {
 
   LogicalResult matchAndRewrite(yul::RevertOp op,
                                 PatternRewriter &r) const override {
-    Location loc = op.getLoc();
-    auto mod = getModule(op);
-    evm::Builder evmB(mod, r, loc);
+    evm::Builder evmB(getModule(op), r, op.getLoc());
 
+    terminateAt(op, r);
     r.replaceOpWithNewOp<LLVM::IntrCallOp>(
         op, llvm::Intrinsic::evm_revert,
         /*resTy=*/Type{},
         /*ins=*/ValueRange{evmB.genHeapPtr(op.getAddr()), op.getSize()},
         "evm.revert");
-    createCallToUnreachableWrapper(r, mod, loc);
     return success();
   }
 };
@@ -1272,16 +1278,14 @@ struct BuiltinRetOpLowering : public OpRewritePattern<yul::ReturnOp> {
 
   LogicalResult matchAndRewrite(yul::ReturnOp op,
                                 PatternRewriter &r) const override {
-    Location loc = op.getLoc();
-    auto mod = getModule(op);
-    evm::Builder evmB(mod, r, loc);
+    evm::Builder evmB(getModule(op), r, op.getLoc());
 
+    terminateAt(op, r);
     r.replaceOpWithNewOp<LLVM::IntrCallOp>(
         op, llvm::Intrinsic::evm_return,
         /*resTy=*/Type{},
         /*ins=*/ValueRange{evmB.genHeapPtr(op.getAddr()), op.getSize()},
         "evm.return");
-    createCallToUnreachableWrapper(r, mod, loc);
     return success();
   }
 };
@@ -1291,10 +1295,10 @@ struct StopOpLowering : public OpRewritePattern<yul::StopOp> {
 
   LogicalResult matchAndRewrite(yul::StopOp op,
                                 PatternRewriter &r) const override {
+    terminateAt(op, r);
     r.replaceOpWithNewOp<LLVM::IntrCallOp>(op, llvm::Intrinsic::evm_stop,
                                            /*resTy=*/Type{},
                                            /*ins=*/ValueRange{}, "evm.stop");
-    createCallToUnreachableWrapper(r, getModule(op), op.getLoc());
     return success();
   }
 };
@@ -1304,10 +1308,10 @@ struct InvalidOpLowering : public OpRewritePattern<yul::InvalidOp> {
 
   LogicalResult matchAndRewrite(yul::InvalidOp op,
                                 PatternRewriter &r) const override {
+    terminateAt(op, r);
     r.replaceOpWithNewOp<LLVM::IntrCallOp>(op, llvm::Intrinsic::evm_invalid,
                                            /*resTy=*/Type{},
                                            /*ins=*/ValueRange{}, "evm.invalid");
-    createCallToUnreachableWrapper(r, getModule(op), op.getLoc());
     return success();
   }
 };
@@ -1370,6 +1374,7 @@ struct IfOpLowering : public OpRewritePattern<yul::IfOp> {
 
     r.replaceOp(
         ifOp, continueBlock->getArguments().take_front(ifOp->getNumResults()));
+    eraseIfDead(r, continueBlock);
     return success();
   }
 };
@@ -1435,6 +1440,7 @@ struct SwitchOpLowering : public OpRewritePattern<yul::SwitchOp> {
 
     r.replaceOp(switchOp, continueBlk->getArguments().take_front(
                               switchOp->getNumResults()));
+    eraseIfDead(r, continueBlk);
     return success();
   }
 };
@@ -1546,6 +1552,11 @@ struct LoopOpInterfaceLowering
       r.inlineRegionBefore(*op.maybeGetStep(), exit);
 
     r.replaceOp(op, exit->getArguments().take_front(op->getNumResults()));
+    // A body that only breaks leaves the step, or a do-while's condition,
+    // without predecessors.
+    for (Block *entry : {cond, body, step, exit})
+      if (entry)
+        eraseIfDead(r, entry);
     return success();
   }
 };
@@ -1587,6 +1598,7 @@ struct ScopeOpLowering : public OpRewritePattern<yul::ScopeOp> {
 
     r.inlineRegionBefore(op.getBodyRegion(), exit);
     r.eraseOp(op);
+    eraseIfDead(r, exit);
     return success();
   }
 };
