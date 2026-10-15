@@ -224,11 +224,6 @@ public:
     return b.create<mlir::yul::ArithDivOp>(loc, add, genI256Const(multiple));
   }
 
-  /// Creates a private constant LLVM global in address space 4 (code) holding
-  /// the given string literal bytes, with a unique \c __data_in_code_* name.
-  mlir::LLVM::GlobalOp getStringLiteralGlobalOp(llvm::StringRef literal,
-                                                mlir::sol::ContractOp contr);
-
   /// Generates an LLVM literal struct from the given values.
   Value genLLVMStruct(ValueRange vals,
                       std::optional<Location> locArg = std::nullopt);

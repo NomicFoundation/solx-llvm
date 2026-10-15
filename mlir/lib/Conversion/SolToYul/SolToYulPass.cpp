@@ -79,7 +79,8 @@ struct ConvertSolToYulPass
   /// Converts sol dialect ops except sol.contract and sol.func + related ops.
   /// This pass also legalizes all the sol dialect types.
   LogicalResult runStage1Conversion(ModuleOp mod, evm::SolTypeConverter &tyConv,
-                                    evm::InternalDispatch &dispatch) {
+                                    evm::InternalDispatch &dispatch,
+                                    evm::StringLiteralPool &literals) {
     OpBuilder b(mod.getContext());
 
     ConversionTarget convTgt(getContext());
@@ -221,7 +222,7 @@ struct ConvertSolToYulPass
     pats.add<GenericTypeConversion<sol::CallOp>,
              GenericTypeConversion<sol::ReturnOp>>(tyConv, &getContext());
 
-    evm::populateStage1Pats(pats, tyConv, dispatch);
+    evm::populateStage1Pats(pats, tyConv, dispatch, literals);
 
     if (failed(applyPartialConversion(mod, convTgt, std::move(pats))))
       return failure();
@@ -283,6 +284,7 @@ struct ConvertSolToYulPass
     ModuleOp mod = getOperation();
     evm::SolTypeConverter tyConv;
     evm::InternalDispatch dispatch(tyConv);
+    evm::StringLiteralPool literals;
     // The module lowers to the object of its one contract, and a nested
     // module's contract would lower without its creation func refs.
     auto contracts = mod.getOps<sol::ContractOp>();
@@ -292,7 +294,7 @@ struct ConvertSolToYulPass
       return;
     }
     dispatch.addCreationFuncRefs(*contracts.begin());
-    if (failed(runStage1Conversion(mod, tyConv, dispatch))) {
+    if (failed(runStage1Conversion(mod, tyConv, dispatch, literals))) {
       signalPassFailure();
       return;
     }

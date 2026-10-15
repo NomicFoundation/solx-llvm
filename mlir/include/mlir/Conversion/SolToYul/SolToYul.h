@@ -14,6 +14,7 @@
 #ifndef MLIR_CONVERSION_SOLTOYUL_SOLTOYUL_H
 #define MLIR_CONVERSION_SOLTOYUL_SOLTOYUL_H
 
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/PatternMatch.h"
@@ -22,6 +23,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace mlir {
 
@@ -82,6 +84,20 @@ private:
   llvm::MapVector<FunctionType, Request> requests;
 };
 
+/// The string literal globals of a module, one per distinct literal. A name is
+/// the literal's index behind a dot, which no frontend symbol can spell, so it
+/// needs no probing of the contract's symbol table.
+class StringLiteralPool {
+public:
+  /// Returns the global holding `literal` in the code section of `contr`,
+  /// creating it on the first request.
+  LLVM::GlobalOp getOrCreate(StringRef literal, sol::ContractOp contr,
+                             OpBuilder &b, Location loc);
+
+private:
+  llvm::StringMap<LLVM::GlobalOp> globals;
+};
+
 /// Adds the conversion patterns of unchecked arithmetic ops in the sol dialect.
 void populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
@@ -97,11 +113,13 @@ void populateCryptoPats(RewritePatternSet &pats, TypeConverter &tyConv);
 void populateCheckedArithPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
 /// Adds the conversion patterns of sol dialect ops dealing with stack, memory
-/// and storage allocations.
+/// and storage allocations. String literals take their globals from
+/// `literals`.
 ///
 /// Stack access will have 32-byte alignment while all other access will have
 /// 1-byte alignment.
-void populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv);
+void populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv,
+                     StringLiteralPool &literals);
 
 /// Adds the conversion pattern of sol.emit.
 void populateEmitPat(RewritePatternSet &pats, TypeConverter &tyConv);
@@ -134,7 +152,8 @@ void populateContractPat(RewritePatternSet &pats, const TypeConverter &tyConv);
 void populateInlineAsmPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
 void populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv,
-                        InternalDispatch &dispatch);
+                        InternalDispatch &dispatch,
+                        StringLiteralPool &literals);
 
 void populateStage2Pats(RewritePatternSet &pats, const TypeConverter &tyConv);
 

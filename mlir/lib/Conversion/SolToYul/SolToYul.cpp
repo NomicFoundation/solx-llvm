@@ -1442,7 +1442,9 @@ struct ArrayLitOpLowering : public OpConversionPattern<sol::ArrayLitOp> {
 };
 
 struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
-  using OpConversionPattern<sol::StringLitOp>::OpConversionPattern;
+  StringLitOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                      evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::StringLitOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
@@ -1464,9 +1466,8 @@ struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
       // word. Then the CODECOPY below fills only the data area.
       allocPtr =
           evmB.genMemAlloc(op.getType(), false, {}, litSize, Type{}, loc);
-      // Create a global constant initialized with the given string literal.
-      LLVM::GlobalOp globConst = bExt.getStringLiteralGlobalOp(
-          lit, op->getParentOfType<sol::ContractOp>());
+      LLVM::GlobalOp globConst = literals.getOrCreate(
+          lit, op->getParentOfType<sol::ContractOp>(), r, loc);
       auto ptrToArray =
           LLVM::LLVMPointerType::get(mod.getContext(), /*addressSpace=*/4);
       auto addrOf =
@@ -1489,6 +1490,8 @@ struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
     r.replaceOp(op, allocPtr);
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
@@ -3849,8 +3852,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
   /// Generates the dispatch to interface functions.
   void genDispatch(sol::ContractOp contrOp,
                    SmallVector<uint32_t, 4> const &selectors,
-                   SmallVector<sol::FuncOp, 4> &ifcFns, PatternRewriter &r,
-                   Location loc) const {
+                   SmallVector<sol::FuncOp, 4> &ifcFns, sol::FuncOp fallbackFn,
+                   PatternRewriter &r, Location loc) const {
     mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(contrOp), r, loc);
 
@@ -3867,6 +3870,19 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     if (ifcFns.empty())
       return;
 
+    // One call value test serves the whole switch when no route reachable
+    // from it accepts value: the cases are the interface functions, and the
+    // default falls through to the fallback. A receive function is only
+    // reached with empty calldata, outside the `calldatasize >= 4` block, so
+    // it does not count. A library emits no test, its functions cannot be
+    // payable.
+    auto isPayable = [](sol::FuncOp fn) {
+      return fn.getStateMutability() == sol::StateMutability::Payable;
+    };
+    bool hoistCallValChk = contrOp.getKind() != sol::ContractKind::Library &&
+                           llvm::none_of(ifcFns, isPayable) &&
+                           (!fallbackFn || !isPayable(fallbackFn));
+
     // Generate `if iszero(lt(calldatasize(), 4))` and set the insertion point
     // to its then block.
     auto callDataSz = r.create<yul::CallDataSizeOp>(loc);
@@ -3875,6 +3891,9 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     auto ifOp = bExt.createIf(callDataSzCmp);
     OpBuilder::InsertionGuard insertGuard(r);
     r.setInsertionPointToStart(&ifOp.getThenRegion().front());
+
+    if (hoistCallValChk)
+      genCallValChk(getModule(contrOp), r, loc);
 
     // Load the selector from the calldata.
     auto callDataLd = r.create<yul::CallDataLoadOp>(loc, bExt.genI256Const(0));
@@ -3927,7 +3946,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
         }
       }
 
-      if (contrOp.getKind() != sol::ContractKind::Library &&
+      if (!hoistCallValChk && contrOp.getKind() != sol::ContractKind::Library &&
           stateMutability != sol::StateMutability::Payable) {
         genCallValChk(getModule(contrOp), r, fnLoc);
       }
@@ -4006,14 +4025,14 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 
     // Generate the call to constructor (if required).
     if (ctor && contrOp.getKind() != sol::ContractKind::Library) {
-      auto progSize = r.create<yul::DataSizeOp>(ctorLoc, contrOp.getName());
-      auto codeSize = r.create<yul::CodeSizeOp>(ctorLoc);
-      auto argSize = r.create<yul::SubOp>(ctorLoc, codeSize, progSize);
-      Value tupleStart = ctorEvmB.genMemAlloc(argSize);
-      r.create<yul::CodeCopyOp>(ctorLoc, tupleStart, progSize, argSize);
       std::vector<Value> decodedArgs;
       FunctionType ctorFnTy = *ctor.getOrigFnType();
       if (!ctorFnTy.getInputs().empty()) {
+        auto progSize = r.create<yul::DataSizeOp>(ctorLoc, contrOp.getName());
+        auto codeSize = r.create<yul::CodeSizeOp>(ctorLoc);
+        auto argSize = r.create<yul::SubOp>(ctorLoc, codeSize, progSize);
+        Value tupleStart = ctorEvmB.genMemAlloc(argSize);
+        r.create<yul::CodeCopyOp>(ctorLoc, tupleStart, progSize, argSize);
         ctorEvmB.genABITupleDecoding(
             ctorFnTy.getInputs(), tupleStart,
             /*tupleEnd=*/r.create<yul::AddOp>(ctorLoc, tupleStart, argSize),
@@ -4060,7 +4079,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     genFreePtrInit(contrOp, r, loc);
 
     // Generate the dispatch to interface functions.
-    genDispatch(contrOp, fns.selectors, fns.ifc, r, loc);
+    genDispatch(contrOp, fns.selectors, fns.ifc, fns.fallback, r, loc);
 
     // Generate receive function.
     if (fns.receive) {
@@ -4208,14 +4227,33 @@ void evm::populateCryptoPats(mlir::RewritePatternSet &pats,
            EcrecoverOpLowering>(tyConv, pats.getContext());
 }
 
-void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv) {
+LLVM::GlobalOp evm::StringLiteralPool::getOrCreate(StringRef literal,
+                                                   sol::ContractOp contr,
+                                                   OpBuilder &b, Location loc) {
+  auto [it, inserted] = globals.try_emplace(literal);
+  if (!inserted)
+    return it->second;
+  std::string name = ("__data_in_code." + Twine(globals.size() - 1)).str();
+  OpBuilder::InsertionGuard guard(b);
+  b.setInsertionPointToStart(contr.getBody());
+  it->second = b.create<LLVM::GlobalOp>(
+      loc, LLVM::LLVMArrayType::get(b.getIntegerType(8), literal.size()),
+      /*isConstant=*/true, LLVM::Linkage::Private, name,
+      b.getStringAttr(literal), /*alignment=*/0, /*addrSpace=*/4);
+  it->second.setUnnamedAddr(LLVM::UnnamedAddr::Global);
+  return it->second;
+}
+
+void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv,
+                          evm::StringLiteralPool &literals) {
   pats.add<AllocaOpLowering, MallocOpLowering, ArrayLitOpLowering,
            GetCallDataOpLowering, DefaultCallDataOpLowering,
            DefaultStorageOpLowering, PushOpLowering, PopOpLowering,
            GepOpLowering, MapOpLowering, LoadOpLowering, StoreOpLowering,
            DataLocCastOpLowering, LengthOpLowering, SliceOpLowering,
            CopyOpLowering, DeleteOpLowering, PushStringOpLowering,
-           StringLitOpLowering, ConcatOpLowering>(tyConv, pats.getContext());
+           ConcatOpLowering>(tyConv, pats.getContext());
+  pats.add<StringLitOpLowering>(tyConv, pats.getContext(), literals);
   pats.add<AddrOfOpLowering, LoadImmutableOpLowering>(pats.getContext());
 }
 
@@ -4484,12 +4522,13 @@ void evm::populateInternalFuncPtrPats(RewritePatternSet &pats,
 }
 
 void evm::populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv,
-                             evm::InternalDispatch &dispatch) {
+                             evm::InternalDispatch &dispatch,
+                             evm::StringLiteralPool &literals) {
   populateArithPats(pats, tyConv);
   populateInternalFuncPtrPats(pats, tyConv, dispatch);
   populateCheckedArithPats(pats, tyConv);
   populateCryptoPats(pats, tyConv);
-  populateMemPats(pats, tyConv);
+  populateMemPats(pats, tyConv, literals);
   populateAddrPat(pats, tyConv);
   populateAbiPats(pats, tyConv);
   populateExtCallPat(pats, tyConv);
