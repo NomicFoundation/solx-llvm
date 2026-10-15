@@ -207,26 +207,31 @@ sol.contract @C {
 // -----
 
 sol.contract @C {
-  // Each inner calldata array is located by its offset, validated, then
-  // bulk-copied into a fresh memory array.
-  // CHECK-LABEL: yul.func @__sol.clone_array.calldata.memory.array$_dyn_array$_dyn_ui256_$_CallData_$_$_CallData_$ : (!llvm.struct<(i256, i256)>) -> i256
-  // CHECK:         %[[LEN:.*]] = llvm.extractvalue %arg0[1]
-  // CHECK:         %[[BASE:.*]] = llvm.extractvalue %arg0[0]
+  // Each inner array is decoded against the end of calldata, then bulk copied.
+  // CHECK-LABEL: yul.func @__sol.abi_decode.calldata.memory.array$_dyn_array$_dyn_ui256_$_Memory_$_$_Memory_$ : (i256, i256) -> i256
+  // CHECK:         %[[LEN:.*]] = yul.calldataload %arg0
   // CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc
   // CHECK:         yul.mstore %[[P]], %[[LEN]]
   // CHECK:         yul.for
   // CHECK:           %[[REL:.*]] = yul.calldataload
-  // CHECK:           yul.cmp sge, %[[REL]], %{{.*}}
-  // CHECK:           %[[INNER:.*]] = yul.add %[[BASE]], %[[REL]]
-  // CHECK:           yul.calldataload %[[INNER]]
+  // CHECK:           yul.cmp ugt, %[[REL]], %{{.*}}
+  // CHECK:           %[[INNER:.*]] = yul.add %{{.*}}, %[[REL]]
+  // CHECK:           %[[C31:.*]] = yul.constant 31
+  // CHECK-NEXT:      %[[LAST:.*]] = yul.add %[[INNER]], %[[C31]]
+  // CHECK-NEXT:      yul.cmp sge, %[[LAST]], %arg1
+  // CHECK:           %[[ILEN:.*]] = yul.calldataload %[[INNER]]
   // CHECK:           %[[IP:.*]] = yul.func_call @__sol.alloc
-  // CHECK:           yul.mstore %[[IP]], %{{.*}}
+  // CHECK:           yul.mstore %[[IP]], %[[ILEN]]
   // CHECK-NOT:       yul.for
   // CHECK:           yul.calldatacopy
   // CHECK:           yul.mstore %{{.*}}, %[[IP]]
   // CHECK:         yul.func_return %[[P]] : i256
   // CHECK-LABEL: yul.func @cd2m_dyn2d : (!llvm.struct<(i256, i256)>) -> i256
-  // CHECK:         %[[R:.*]] = yul.func_call @__sol.clone_array.calldata.memory.array$_dyn_array$_dyn_ui256_$_CallData_$_$_CallData_$(%arg0)
+  // CHECK:         %[[DATA:.*]] = llvm.extractvalue %arg0[0]
+  // CHECK-NEXT:    %[[C32:.*]] = yul.constant 32
+  // CHECK-NEXT:    %[[HEAD:.*]] = yul.sub %[[DATA]], %[[C32]]
+  // CHECK-NEXT:    %[[CDS:.*]] = yul.calldatasize
+  // CHECK-NEXT:    %[[R:.*]] = yul.func_call @__sol.abi_decode.calldata.memory.array$_dyn_array$_dyn_ui256_$_Memory_$_$_Memory_$(%[[HEAD]], %[[CDS]])
   // CHECK:         yul.func_return %[[R]] : i256
   sol.func @cd2m_dyn2d(%c: !sol.array<? x !sol.array<? x ui256, CallData>, CallData>) -> !sol.array<? x !sol.array<? x ui256, Memory>, Memory> {
     %0 = sol.data_loc_cast %c : !sol.array<? x !sol.array<? x ui256, CallData>, CallData>, !sol.array<? x !sol.array<? x ui256, Memory>, Memory>

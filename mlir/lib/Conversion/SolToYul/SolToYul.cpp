@@ -2302,12 +2302,29 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
     evm::Builder evmB(getModule(op), r, loc);
     sol::DataLocation srcDataLoc = sol::getDataLocation(srcTy);
 
-    // A calldata struct is copied to memory by decoding it against the end of
-    // calldata, which validates every nested offset and length.
-    if (srcDataLoc == sol::DataLocation::CallData &&
-        isa<sol::StructType>(srcTy)) {
+    // A calldata struct, or a calldata array of dynamically encoded elements,
+    // is copied to memory by decoding it against the end of calldata, which
+    // validates every nested offset and length.
+    // old codegen begin
+    // Every other calldata array and bytes stays a raw copy with no checks.
+    // (Via-IR decodes every calldata array copy.)
+    auto srcArrTy = dyn_cast<sol::ArrayType>(srcTy);
+    bool decodesFromCallData =
+        isa<sol::StructType>(srcTy) ||
+        (srcArrTy && sol::hasDynamicallySizedElt(srcArrTy.getEltType()));
+    // old codegen end
+    if (srcDataLoc == sol::DataLocation::CallData && decodesFromCallData) {
+      mlir::solgen::BuilderExt bExt(r, loc);
+      Value src = adaptor.getInp();
+      // The decoder reads a dynamic array from its length word, which precedes
+      // the data of every calldata array: a slice cannot have a dynamically
+      // encoded element type.
+      Value addr = src;
+      if (srcArrTy && srcArrTy.isDynSized())
+        addr = r.create<yul::SubOp>(loc, evmB.genDataAddrPtr(src, srcTy),
+                                    bExt.genI256Const(32));
       r.replaceOp(op, evmB.genABITupleDecoding(
-                          op.getType(), adaptor.getInp(), /*fromMem=*/false,
+                          op.getType(), addr, /*fromMem=*/false,
                           /*tupleEnd=*/r.create<yul::CallDataSizeOp>(loc),
                           /*topLevel=*/false, loc));
       return success();
