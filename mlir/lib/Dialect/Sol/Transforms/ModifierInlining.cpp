@@ -139,6 +139,10 @@ private:
 
     auto scope = b.create<sol::ScopeOp>(loc);
     cloneBlocks(srcBlks, scope.getBodyRegion(), map);
+    // Every emission of a layer clones its inline assembly functions, and each
+    // clone is a definition of its own.
+    scope.walk(
+        [](yul::FuncOp fn) { fn->setLoc(evm::freshSubprogram(fn.getLoc())); });
 
     // Placeholders and returns of this layer's clone; inner layers don't
     // exist yet, so the walk can't touch theirs.
