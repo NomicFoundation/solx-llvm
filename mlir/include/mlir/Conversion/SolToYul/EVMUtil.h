@@ -586,6 +586,11 @@ public:
   void genPanic(PanicCode code, Value cond,
                 std::optional<Location> locArg = std::nullopt);
 
+  /// Generates the division-by-zero panic unless the divisor is a nonzero
+  /// constant.
+  void genDivisionByZeroPanic(Value divisor,
+                              std::optional<Location> locArg = std::nullopt);
+
   /// Generates a revert with message if compiler-generated debug revert strings
   /// should be emitted, otherwise generates a revert without message.
   void genDebugRevertWithMsg(Value cond, std::string const &msg,
