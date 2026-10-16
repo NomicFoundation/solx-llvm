@@ -111,6 +111,10 @@ private:
   /// for function arguments and return values.
   bool hasUnreachableDef(const Register &Reg) const;
 
+  /// Mark \p Regs as spilled in the model and reject a spilled argument whose
+  /// callee-save is out of reach.
+  void spillRegs(const SmallSet<Register, 4> &Regs);
+
   /// Return true if \p Slot is a rematerializable slot and it can be removed.
   /// In cases of LiteralSlot, it checks if the literal is used before \p MI,
   /// and if it is not, it can be removed to reduce stack pressure. In case it
@@ -125,10 +129,11 @@ private:
   const MachineBlockFrequencyInfo &MBFI;
   LiveIntervals &LIS;
   bool IsSpillWeightsCalculated = false;
-  /// In case of recursive functions, we can't use spills to fix stack too deep
-  /// issues, as we are using memory to spill and not real stack. If we run into
-  /// stack too deep issues for recursive functions, we will force compress
-  /// stack across the whole function to try to fix the issues.
+  /// For recursive functions we prefer stack compression over spilling.
+  /// Every spill of a recursive function needs callee-save code that costs
+  /// gas on each activation. If a recursive function runs into stack too
+  /// deep issues, we first force stack compression across the whole
+  /// function.
   bool ForceCompressStack = false;
 };
 
