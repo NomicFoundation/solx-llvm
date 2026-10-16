@@ -135,15 +135,22 @@ def Sol_FixedBytesIndexOp : Sol_Op<"fixed_bytes_index"> {
   }];
 }
 
-// TODO: Add folders for the c0 case.
-
 // Checked arith ops are not speculatable, but unchecked are (including div and
 // mod because of evm semantics).
 
-def Sol_CAddOp : Sol_IntArithOp<"cadd", [Commutative]>;
-def Sol_CSubOp : Sol_IntArithOp<"csub">;
-def Sol_CMulOp : Sol_IntArithOp<"cmul", [Commutative]>;
-def Sol_CDivOp : Sol_IntArithOp<"cdiv">;
+def Sol_CAddOp : Sol_IntArithOp<"cadd", [Commutative]> {
+  let hasFolder = 1;
+}
+def Sol_CSubOp : Sol_IntArithOp<"csub"> {
+  let hasFolder = 1;
+}
+def Sol_CMulOp : Sol_IntArithOp<"cmul", [Commutative]> {
+  let hasFolder = 1;
+}
+def Sol_CDivOp : Sol_IntArithOp<"cdiv"> {
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
 def Sol_CExpOp : Sol_IntExpOp<"cexp">;
 
 def Sol_AddOp : Sol_UncheckedIntArithOp<"add", [Commutative]> {

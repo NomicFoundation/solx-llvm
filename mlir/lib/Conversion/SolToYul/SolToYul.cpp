@@ -490,14 +490,11 @@ struct DivOrModOpLowering
   LogicalResult rewriteCleaned(SolOp op, ConversionPatternRewriter &r,
                                Value lhs, Value rhs) const {
     Location loc = op.getLoc();
-    mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(op), r, loc);
 
     auto ty = cast<IntegerType>(op.getType());
 
-    auto zero = bExt.genI256Const(0, loc);
-    auto rhsEqZero = bExt.genCmp(yul::CmpPredicate::eq, rhs, zero);
-    evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, rhsEqZero);
+    evmB.genDivisionByZeroPanic(rhs, loc);
 
     if (ty.isSigned())
       r.replaceOpWithNewOp<ArithSignedOp>(op, lhs, rhs);
@@ -937,12 +934,9 @@ static Value getCryptoHashLowering(OpT op, uint32_t preCompieAddr,
 template <typename ModOpT>
 static Value genYulModOp(ModuleOp module, ConversionPatternRewriter &r,
                          Location loc, Value x, Value y, Value mod) {
-  mlir::solgen::BuilderExt bExt(r, loc);
   evm::Builder evmB(module, r, loc);
 
-  auto zero = bExt.genI256Const(0);
-  auto modEqZero = bExt.genCmp(yul::CmpPredicate::eq, mod, zero);
-  evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, modEqZero);
+  evmB.genDivisionByZeroPanic(mod, loc);
   return r.create<ModOpT>(loc, x, y, mod);
 }
 
@@ -1215,9 +1209,7 @@ struct CDivOpLowering
     evm::Builder evmB(getModule(op), r, loc);
 
     auto ty = cast<IntegerType>(op.getType());
-    auto zero = bExt.genI256Const(0, loc);
-    auto rhsEqZero = bExt.genCmp(yul::CmpPredicate::eq, rhs, zero);
-    evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, rhsEqZero);
+    evmB.genDivisionByZeroPanic(rhs, loc);
 
     if (ty.isSigned()) {
       // (Copied from the yul codegen)
