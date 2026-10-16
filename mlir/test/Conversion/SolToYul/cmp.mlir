@@ -46,12 +46,12 @@ module {
 
 module {
   sol.contract @C {
-    // !a: both i1 operands are cleaned before the compare.
+    // !a: the i1 operand is cleaned before the compare, the constant is not.
     // CHECK-LABEL: yul.func @bool : (i256) -> i256
     // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256):
+    // CHECK-NEXT:    %[[F:.*]] = yul.constant 0{{$}}
     // CHECK:         %[[AB:.*]] = yul.cmp ne, %[[A]], %{{.*}}
-    // CHECK:         %[[F:.*]] = yul.cmp ne, %{{.*}}, %{{.*}}
-    // CHECK:         %[[NOT:.*]] = yul.cmp eq, %[[AB]], %[[F]]
+    // CHECK-NEXT:    %[[NOT:.*]] = yul.cmp eq, %[[AB]], %[[F]]
     // CHECK:         yul.func_return %[[NOT]] : i256
     sol.func @bool(%a: i1) -> i1 {
       %false = sol.constant false

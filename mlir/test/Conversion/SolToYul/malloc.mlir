@@ -86,8 +86,7 @@ module {
     // CHECK:         yul.mstore %c64_i256{{.*}}, %[[END]]
     // CHECK:         yul.func_return %[[FP]] : i256
     // CHECK-LABEL: yul.func @dyn_1d : () -> i256
-    // CHECK:         %[[C5:.*]] = yul.constant 5{{$}}
-    // CHECK:         %[[LEN:.*]] = yul.and %[[C5]], %{{.*}}
+    // CHECK:         %[[LEN:.*]] = yul.constant 5{{$}}
     // CHECK:         %[[DSZ:.*]] = yul.mul %[[LEN]], %{{.*}}
     // CHECK:         %[[SZ:.*]] = yul.add %[[DSZ]], %{{.*}}
     // CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc(%[[SZ]])
