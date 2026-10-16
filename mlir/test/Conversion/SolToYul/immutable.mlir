@@ -28,18 +28,16 @@
 // CHECK-LABEL: yul.func @init : () -> ()
 // CHECK:         %[[C4:.*]] = yul.constant 4
 // CHECK:         %[[C288:.*]] = yul.constant 288
-// CHECK:         %[[C255:.*]] = yul.constant 255
-// CHECK:         %[[V:.*]] = yul.and %[[C4]], %[[C255]]
-// CHECK:         yul.mstore %[[C288]], %[[V]]
+// CHECK-NEXT:    yul.mstore %[[C288]], %[[C4]]
 
-// Stores clean the value per type; the function-typed immutable holds g's
-// internal function id; a read in the ctor loads the staged slot.
+// Stores clean a non-constant value per type and store a constant as is; the
+// function-typed immutable holds g's internal function id; a read in the ctor
+// loads the staged slot.
 // CHECK-LABEL: yul.func @C : () -> ()
 // CHECK:         yul.func_call @init()
 // CHECK:         %[[C128:.*]] = yul.constant 128
 // CHECK:         %[[CM2:.*]] = yul.constant -2
-// CHECK:         %[[A:.*]] = yul.signextend %{{.*}}, %[[CM2]]
-// CHECK:         yul.mstore %[[C128]], %[[A]]
+// CHECK-NEXT:    yul.mstore %[[C128]], %[[CM2]]
 // CHECK:         %[[C160:.*]] = yul.constant 160
 // CHECK:         %[[AB:.*]] = yul.constant 24930
 // CHECK:         %[[C240:.*]] = yul.constant 240
