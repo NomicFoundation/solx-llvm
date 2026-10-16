@@ -71,8 +71,7 @@ module {
 module {
   sol.contract @C {
     // CHECK-LABEL: yul.func @dyn_1d : () -> i256
-    // CHECK:         %[[C5:.*]] = yul.constant 5{{$}}
-    // CHECK:         %[[LEN:.*]] = yul.and %[[C5]], %{{.*}}
+    // CHECK:         %[[LEN:.*]] = yul.constant 5{{$}}
     // CHECK:         %[[DSZ:.*]] = yul.mul %[[LEN]], %{{.*}}
     // CHECK:         %[[P:.*]] = yul.mload
     // CHECK:         yul.mstore %[[P]], %[[LEN]]
