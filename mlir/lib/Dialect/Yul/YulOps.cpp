@@ -12,8 +12,10 @@
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/Yul/Folders.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/ValueRange.h"
 #include "llvm/ADT/APInt.h"
@@ -22,6 +24,394 @@
 
 using namespace mlir;
 using namespace mlir::yul;
+
+//===----------------------------------------------------------------------===//
+// Folders
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+bool isAllOnes(Attribute attr) {
+  APInt val;
+  return matchPattern(attr, m_ConstantInt(&val)) && val.isAllOnes();
+}
+
+bool evalPredicate(CmpPredicate pred, const APInt &lhs, const APInt &rhs) {
+  switch (pred) {
+  case CmpPredicate::eq:
+    return lhs == rhs;
+  case CmpPredicate::ne:
+    return lhs != rhs;
+  case CmpPredicate::ult:
+    return lhs.ult(rhs);
+  case CmpPredicate::ule:
+    return lhs.ule(rhs);
+  case CmpPredicate::ugt:
+    return lhs.ugt(rhs);
+  case CmpPredicate::uge:
+    return lhs.uge(rhs);
+  case CmpPredicate::slt:
+    return lhs.slt(rhs);
+  case CmpPredicate::sle:
+    return lhs.sle(rhs);
+  case CmpPredicate::sgt:
+    return lhs.sgt(rhs);
+  case CmpPredicate::sge:
+    return lhs.sge(rhs);
+  }
+  llvm_unreachable("unknown yul.cmp predicate");
+}
+
+CmpPredicate invertPredicate(CmpPredicate pred) {
+  switch (pred) {
+  case CmpPredicate::eq:
+    return CmpPredicate::ne;
+  case CmpPredicate::ne:
+    return CmpPredicate::eq;
+  case CmpPredicate::ult:
+    return CmpPredicate::uge;
+  case CmpPredicate::ule:
+    return CmpPredicate::ugt;
+  case CmpPredicate::ugt:
+    return CmpPredicate::ule;
+  case CmpPredicate::uge:
+    return CmpPredicate::ult;
+  case CmpPredicate::slt:
+    return CmpPredicate::sge;
+  case CmpPredicate::sle:
+    return CmpPredicate::sgt;
+  case CmpPredicate::sgt:
+    return CmpPredicate::sle;
+  case CmpPredicate::sge:
+    return CmpPredicate::slt;
+  }
+  llvm_unreachable("unknown yul.cmp predicate");
+}
+
+/// The predicate that reads the same with the operands swapped.
+CmpPredicate swapPredicate(CmpPredicate pred) {
+  switch (pred) {
+  case CmpPredicate::eq:
+  case CmpPredicate::ne:
+    return pred;
+  case CmpPredicate::ult:
+    return CmpPredicate::ugt;
+  case CmpPredicate::ule:
+    return CmpPredicate::uge;
+  case CmpPredicate::ugt:
+    return CmpPredicate::ult;
+  case CmpPredicate::uge:
+    return CmpPredicate::ule;
+  case CmpPredicate::slt:
+    return CmpPredicate::sgt;
+  case CmpPredicate::sle:
+    return CmpPredicate::sge;
+  case CmpPredicate::sgt:
+    return CmpPredicate::slt;
+  case CmpPredicate::sge:
+    return CmpPredicate::sle;
+  }
+  llvm_unreachable("unknown yul.cmp predicate");
+}
+
+} // namespace
+
+OpFoldResult ConstantOp::fold(FoldAdaptor) { return getValueAttr(); }
+
+OpFoldResult AddOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a + b; });
+}
+
+OpFoldResult SubOp::fold(FoldAdaptor adaptor) {
+  if (getLhs() == getRhs())
+    return IntegerAttr::get(getType(), 0);
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a - b; });
+}
+
+OpFoldResult MulOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getRhs();
+  if (matchPattern(adaptor.getRhs(), m_One()))
+    return getLhs();
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a * b; });
+}
+
+OpFoldResult AndOp::fold(FoldAdaptor adaptor) {
+  if (getLhs() == getRhs())
+    return getLhs();
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getRhs();
+  if (isAllOnes(adaptor.getRhs()))
+    return getLhs();
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a & b; });
+}
+
+OpFoldResult OrOp::fold(FoldAdaptor adaptor) {
+  if (getLhs() == getRhs())
+    return getLhs();
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  if (isAllOnes(adaptor.getRhs()))
+    return getRhs();
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a | b; });
+}
+
+OpFoldResult XOrOp::fold(FoldAdaptor adaptor) {
+  if (getLhs() == getRhs())
+    return IntegerAttr::get(getType(), 0);
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a ^ b; });
+}
+
+OpFoldResult NotOp::fold(FoldAdaptor adaptor) {
+  if (auto inner = getValue().getDefiningOp<NotOp>())
+    return inner.getValue();
+  return foldUnary(adaptor.getOperands(), [](const APInt &a) { return ~a; });
+}
+
+OpFoldResult CmpOp::fold(FoldAdaptor adaptor) {
+  if (getLhs() == getRhs())
+    return IntegerAttr::get(
+        getType(), evalPredicate(getPredicate(), APInt(256, 0), APInt(256, 0)));
+
+  // A comparison yields 0 or 1, so testing it against 0 reads it as a boolean.
+  if (getPredicate() == CmpPredicate::ne &&
+      matchPattern(adaptor.getRhs(), m_Zero()) &&
+      getLhs().getDefiningOp<CmpOp>())
+    return getLhs();
+
+  // cmp eq (cmp p a b), 0 -> cmp !p a b. The shape comes from:
+  // - assembly: Yul has no ge, le or ne, so iszero(lt(a, b)) spells a >= b.
+  // - require and assert: the revert condition is the negated argument.
+  // - bool cleanup: a bool operand is normalized with ne x, 0.
+  if (getPredicate() == CmpPredicate::eq &&
+      matchPattern(adaptor.getRhs(), m_Zero())) {
+    if (auto inner = getLhs().getDefiningOp<CmpOp>()) {
+      setPredicate(invertPredicate(inner.getPredicate()));
+      getLhsMutable().assign(inner.getLhs());
+      getRhsMutable().assign(inner.getRhs());
+      return getResult();
+    }
+  }
+
+  // Constant on the right, so the patterns match one shape.
+  if (adaptor.getLhs() && !adaptor.getRhs()) {
+    setPredicate(swapPredicate(getPredicate()));
+    Value lhs = getLhs();
+    getLhsMutable().assign(getRhs());
+    getRhsMutable().assign(lhs);
+    return getResult();
+  }
+
+  return foldBinary(adaptor.getOperands(), [&](const APInt &a, const APInt &b) {
+    return APInt(256, evalPredicate(getPredicate(), a, b));
+  });
+}
+
+OpFoldResult ArithShlOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  bool bounded = false;
+  Attribute result =
+      foldBinary(adaptor.getOperands(), [&](const APInt &a, const APInt &b) {
+        bounded = b.ult(256);
+        return a.shl(b);
+      });
+  return bounded ? result : Attribute();
+}
+
+OpFoldResult ArithShrOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  bool bounded = false;
+  Attribute result =
+      foldBinary(adaptor.getOperands(), [&](const APInt &a, const APInt &b) {
+        bounded = b.ult(256);
+        return a.lshr(b);
+      });
+  return bounded ? result : Attribute();
+}
+
+OpFoldResult ArithSarOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  bool bounded = false;
+  Attribute result =
+      foldBinary(adaptor.getOperands(), [&](const APInt &a, const APInt &b) {
+        bounded = b.ult(256);
+        return a.ashr(b);
+      });
+  return bounded ? result : Attribute();
+}
+
+OpFoldResult ArithDivOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_One()))
+    return getLhs();
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return {};
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a.udiv(b); });
+}
+
+OpFoldResult ArithSDivOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_One()))
+    return getLhs();
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return {};
+  bool overflow = false;
+  Attribute result =
+      foldBinary(adaptor.getOperands(), [&](const APInt &a, const APInt &b) {
+        return a.sdiv_ov(b, overflow);
+      });
+  return overflow ? Attribute() : result;
+}
+
+OpFoldResult ArithModOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_One()))
+    return IntegerAttr::get(getType(), 0);
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return {};
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a.urem(b); });
+}
+
+OpFoldResult ArithSModOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_One()))
+    return IntegerAttr::get(getType(), 0);
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return {};
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &a, const APInt &b) { return a.srem(b); });
+}
+
+OpFoldResult ArithSelectOp::fold(FoldAdaptor adaptor) {
+  if (getTrueValue() == getFalseValue())
+    return getTrueValue();
+  APInt cond;
+  if (!matchPattern(adaptor.getCondition(), m_ConstantInt(&cond)))
+    return {};
+  return cond.isZero() ? getFalseValue() : getTrueValue();
+}
+
+OpFoldResult DivOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(adaptor.getOperands(), [](const APInt &a, const APInt &b) {
+    return b.isZero() ? b : a.udiv(b);
+  });
+}
+
+OpFoldResult SDivOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(adaptor.getOperands(), [](const APInt &a, const APInt &b) {
+    return b.isZero() ? b : a.sdiv(b);
+  });
+}
+
+OpFoldResult ModOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(adaptor.getOperands(), [](const APInt &a, const APInt &b) {
+    return b.isZero() ? b : a.urem(b);
+  });
+}
+
+OpFoldResult SModOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(adaptor.getOperands(), [](const APInt &a, const APInt &b) {
+    return b.isZero() ? b : a.srem(b);
+  });
+}
+
+OpFoldResult ShlOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &shift, const APInt &val) {
+                      if (shift.uge(256))
+                        return APInt(256, 0);
+                      return val.shl(shift);
+                    });
+}
+
+OpFoldResult ShrOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &shift, const APInt &val) {
+                      if (shift.uge(256))
+                        return APInt(256, 0);
+                      return val.lshr(shift);
+                    });
+}
+
+OpFoldResult SarOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(
+      adaptor.getOperands(), [](const APInt &shift, const APInt &val) {
+        if (shift.uge(256))
+          return val.isNegative() ? APInt::getAllOnes(256) : APInt(256, 0);
+        return val.ashr(shift);
+      });
+}
+
+OpFoldResult ClzOp::fold(FoldAdaptor adaptor) {
+  return foldUnary(adaptor.getOperands(), [](const APInt &a) {
+    return APInt(256, a.countLeadingZeros());
+  });
+}
+
+OpFoldResult ExpOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(
+      adaptor.getOperands(), [](const APInt &base, const APInt &exp) {
+        APInt result(256, 1);
+        APInt square = base;
+        for (unsigned i = 0, e = exp.getActiveBits(); i < e; ++i) {
+          if (exp[i])
+            result *= square;
+          square *= square;
+        }
+        return result;
+      });
+}
+
+OpFoldResult AddModOp::fold(FoldAdaptor adaptor) {
+  return foldTernary(adaptor.getOperands(), [](const APInt &x, const APInt &y,
+                                               const APInt &mod) {
+    if (mod.isZero())
+      return mod;
+    return (x.zext(257) + y.zext(257)).urem(mod.zext(257)).trunc(256);
+  });
+}
+
+OpFoldResult MulModOp::fold(FoldAdaptor adaptor) {
+  return foldTernary(adaptor.getOperands(), [](const APInt &x, const APInt &y,
+                                               const APInt &mod) {
+    if (mod.isZero())
+      return mod;
+    return (x.zext(512) * y.zext(512)).urem(mod.zext(512)).trunc(256);
+  });
+}
+
+OpFoldResult SignExtendOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &idx, const APInt &val) {
+                      if (idx.uge(31))
+                        return val;
+                      unsigned bits = 8 * (idx.getZExtValue() + 1);
+                      return val.trunc(bits).sext(256);
+                    });
+}
+
+OpFoldResult ByteOp::fold(FoldAdaptor adaptor) {
+  return foldBinary(adaptor.getOperands(),
+                    [](const APInt &idx, const APInt &val) {
+                      if (idx.uge(32))
+                        return APInt(256, 0);
+                      unsigned shift = 256 - 8 * (idx.getZExtValue() + 1);
+                      return val.lshr(shift) & APInt(256, 0xff);
+                    });
+}
 
 bool mlir::yul::isI256OrI256LLVMStruct(Type type) {
   if (type.isSignlessInteger(256))
