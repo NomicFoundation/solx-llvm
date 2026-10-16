@@ -29,8 +29,7 @@ module {
       yul.mcopy %c0_i256_1, %c10_i256, %c5_i256
       %c0_i256_2 = yul.constant 0
       %c0_i256_3 = yul.constant 0
-      %c255_i256 = yul.constant 255
-      %2 = yul.byte %c0_i256_3, %c255_i256
+      %2 = yul.byte %c0_i256_3, %1
       yul.mstore8 %c0_i256_2, %2
       %c0_i256_4 = yul.constant 0
       %3 = yul.msize

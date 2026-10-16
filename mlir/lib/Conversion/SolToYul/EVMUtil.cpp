@@ -1241,8 +1241,7 @@ bool evm::isConstantValue(Value v) {
   if (auto cast = v.getDefiningOp<UnrealizedConversionCastOp>();
       cast && cast->getNumOperands() == 1)
     v = cast->getOperand(0);
-  // yul.constant is not ConstantLike, so it is matched by kind.
-  return v.getDefiningOp<yul::ConstantOp>() || matchPattern(v, m_Constant());
+  return matchPattern(v, m_Constant());
 }
 
 Value evm::Builder::genMemAllocArray(sol::ArrayType arrTy, bool zeroInit,
@@ -4477,6 +4476,17 @@ void evm::Builder::genPanic(PanicCode code, Value cond,
   b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genPanic(code, loc);
   b.setInsertionPointAfter(ifOp);
+}
+
+void evm::Builder::genDivisionByZeroPanic(Value divisor,
+                                          std::optional<Location> locArg) {
+  if (matchPattern(divisor, m_NonZero()))
+    return;
+  Location loc = locArg ? *locArg : defLoc;
+  mlir::solgen::BuilderExt bExt(b, loc);
+  genPanic(PanicCode::DivisionByZero,
+           bExt.genCmp(yul::CmpPredicate::eq, divisor, bExt.genI256Const(0)),
+           loc);
 }
 
 void evm::Builder::genForwardingRevert(std::optional<Location> locArg) {
