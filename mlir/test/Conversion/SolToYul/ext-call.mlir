@@ -3,6 +3,9 @@
 #NonPayable = #sol<StateMutability NonPayable>
 module {
   sol.contract @C {
+    // The argument is encoded by the tuple helper after the selector.
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.ui256 : (i256, i256) -> i256
+    // CHECK:         yul.mstore %arg1, %arg0
     // CHECK-LABEL: yul.func @f : (i256, i256, i256, i256) -> i256
     // CHECK:       ^bb0(%[[A:.*]]: i256, %[[X:.*]]: i256, %[[GAS:.*]]: i256, %[[V:.*]]: i256):
     // CHECK:         %[[SEL:.*]] = yul.constant 3017696395
@@ -10,7 +13,8 @@ module {
     // CHECK:         %[[BUF:.*]] = yul.mload
     // CHECK:         %[[SEL_W:.*]] = yul.arith_shl %[[SEL]], %{{.*}}
     // CHECK:         yul.mstore %[[BUF]], %[[SEL_W]]
-    // CHECK:         yul.mstore %{{.*}}, %[[X]]
+    // CHECK:         %[[ARGS:.*]] = yul.add %[[BUF]], %{{.*}}
+    // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%[[X]], %[[ARGS]])
     // CHECK:         %[[OK:.*]] = yul.call %[[GAS]], %[[ADDR]], %[[V]], %[[BUF]], %{{.*}}, %[[BUF]], %{{.*}}
     // CHECK:         %[[FAIL:.*]] = yul.cmp eq, %[[OK]], %{{.*}}
     // CHECK:         yul.if %[[FAIL]] {
@@ -29,7 +33,17 @@ module {
 module {
   sol.contract @C {
     // A view caller uses staticcall with a 96-byte return buffer, then decodes
-    // three words from it.
+    // three words from it through the tuple helper.
+    // CHECK-LABEL: yul.func @__sol.abi_decode_tuple.memory.ui256.ui256.ui256 : (i256, i256) -> (i256, i256, i256)
+    // CHECK:       ^bb0(%[[HEAD:.*]]: i256, %[[END:.*]]: i256):
+    // CHECK:         %[[SIZE:.*]] = yul.sub %[[END]], %[[HEAD]]
+    // CHECK:         yul.cmp slt, %[[SIZE]], %{{.*}}
+    // CHECK:         %[[A:.*]] = yul.mload %[[HEAD]]
+    // CHECK:         %[[P1:.*]] = yul.add %[[HEAD]], %{{.*}}
+    // CHECK:         %[[B:.*]] = yul.mload %[[P1]]
+    // CHECK:         %[[P2:.*]] = yul.add %[[P1]], %{{.*}}
+    // CHECK:         %[[C:.*]] = yul.mload %[[P2]]
+    // CHECK:         yul.func_return %[[A]], %[[B]], %[[C]] : i256, i256, i256
     // CHECK-LABEL: yul.func @multiResult : (i256) -> (i256, i256, i256)
     // CHECK:         %[[GAS:.*]] = yul.gas
     // CHECK:         %[[BUF:.*]] = yul.mload
@@ -40,13 +54,8 @@ module {
     // CHECK:           yul.returndatacopy
     // CHECK:         %[[R:.*]]:3 = yul.if %{{.*}} -> i256, i256, i256 {
     // CHECK:           yul.returndatasize
-    // CHECK:           yul.cmp slt, %{{.*}}, %{{.*}}
-    // CHECK:           %[[A:.*]] = yul.mload %[[BUF]]
-    // CHECK:           %[[P1:.*]] = yul.add %[[BUF]], %{{.*}}
-    // CHECK:           %[[B:.*]] = yul.mload %[[P1]]
-    // CHECK:           %[[P2:.*]] = yul.add %[[P1]], %{{.*}}
-    // CHECK:           %[[C:.*]] = yul.mload %[[P2]]
-    // CHECK:           yul.yield %[[A]], %[[B]], %[[C]] : i256, i256, i256
+    // CHECK:           %[[D:.*]]:3 = yul.func_call @__sol.abi_decode_tuple.memory.ui256.ui256.ui256(%[[BUF]], %{{.*}})
+    // CHECK:           yul.yield %[[D]]#0, %[[D]]#1, %[[D]]#2 : i256, i256, i256
     // CHECK:         yul.func_return %[[R]]#0, %[[R]]#1, %[[R]]#2 : i256, i256, i256
     sol.func @multiResult(%arg0: !sol.address) -> (ui256, ui256, ui256) {
       %c3017696395_ui256 = sol.constant 3017696395 : ui256
@@ -66,9 +75,9 @@ module {
 #View = #sol<StateMutability View>
 module {
   sol.contract @C {
-    // uint8[] calldata is re-encoded element-wise, validating each element.
-    // CHECK-LABEL: yul.func @calldataArray : (i256, !llvm.struct<(i256, i256)>) -> i256
-    // CHECK:         yul.constant 2225455406
+    // uint8[] calldata is re-encoded element-wise by the tuple helper,
+    // validating each element.
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_dyn_ui8_$_CallData_$ : (!llvm.struct<(i256, i256)>, i256) -> i256
     // CHECK:         yul.for
     // CHECK:         } body {
     // CHECK:           %[[E:.*]] = yul.calldataload
@@ -78,6 +87,9 @@ module {
     // CHECK:           yul.if %[[BAD]] {
     // CHECK:             yul.revert
     // CHECK:           yul.mstore %{{.*}}, %[[CLEAN]]
+    // CHECK-LABEL: yul.func @calldataArray : (i256, !llvm.struct<(i256, i256)>) -> i256
+    // CHECK:         yul.constant 2225455406
+    // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_dyn_ui8_$_CallData_$(%arg1, %{{.*}})
     // CHECK:         yul.static_call
     sol.func @calldataArray(%arg0: !sol.address, %arg1: !sol.array<? x ui8, CallData>) -> !sol.string<Memory> attributes {state_mutability = #View} {
       %sel = sol.constant 2225455406 : ui256
@@ -94,10 +106,14 @@ module {
 #View = #sol<StateMutability View>
 module {
   sol.contract @C {
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.string$_Storage_$ : (i256, i256) -> i256
+    // CHECK:       ^bb0(%[[SLOT:.*]]: i256, %[[HEAD:.*]]: i256):
+    // CHECK:         %[[DATA:.*]] = yul.sload %[[SLOT]]
+    // CHECK:         %[[LEN:.*]] = yul.func_call @__sol.storage_string_length(%[[DATA]])
+    // CHECK:         yul.func_call @__sol.copy_string_bytes.storage.memory(%[[SLOT]], %[[DATA]], %[[LEN]], %{{.*}})
     // CHECK-LABEL: yul.func @storageString : (i256, i256) -> i256
     // CHECK:         yul.constant 4119168343
-    // CHECK:         %[[DATA:.*]] = yul.sload %[[SLOT:.*]]
-    // CHECK:         yul.func_call @__sol.copy_string_data.storage.memory(%[[SLOT]], %[[DATA]], %{{.*}}, %{{.*}})
+    // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.string$_Storage_$(%arg1, %{{.*}})
     // CHECK:         yul.static_call
     sol.func @storageString(%arg0: !sol.address, %arg1: !sol.string<Storage>) -> !sol.string<Memory> attributes {state_mutability = #View} {
       %sel = sol.constant 4119168343 : ui256
@@ -114,6 +130,16 @@ module {
 #View = #sol<StateMutability View>
 module {
   sol.contract @C {
+    // The decoder allocates the struct and its array and copies the words in
+    // bulk instead of looping over them.
+    // CHECK-LABEL: yul.func @__sol.abi_decode_tuple.memory.struct$_$_array$_dyn_ui256_$_Memory_$_$_$_Memory_$ : (i256, i256) -> i256
+    // CHECK:         %[[STRUCT:.*]] = yul.mload %c64
+    // CHECK:         %[[ARR:.*]] = yul.func_call @__sol.alloc(
+    // CHECK:         yul.mstore %[[ARR]], %[[ALEN:.*]]
+    // CHECK-NOT:     yul.for
+    // CHECK:         yul.mcopy
+    // CHECK:         yul.mstore %[[STRUCT]], %[[ARR]]
+    // CHECK:         yul.func_return %[[STRUCT]] : i256
     // CHECK-LABEL: yul.func @structRet : (i256) -> i256
     // CHECK:         yul.constant 1481905832
     // CHECK:         %[[BUF:.*]] = yul.mload
@@ -121,7 +147,8 @@ module {
     // CHECK:         %[[R:.*]] = yul.if %{{.*}} -> i256 {
     // CHECK:           %[[RDS:.*]] = yul.returndatasize
     // CHECK:           yul.returndatacopy %[[BUF]], %{{.*}}, %[[RDS]]
-    // CHECK:           yul.for
+    // CHECK:           %[[S:.*]] = yul.func_call @__sol.abi_decode_tuple.memory.struct$_$_array$_dyn_ui256_$_Memory_$_$_$_Memory_$(%[[BUF]], %{{.*}})
+    // CHECK:           yul.yield %[[S]] : i256
     // CHECK:         } else {
     // CHECK:         %[[DATA:.*]] = yul.mload
     // CHECK:         %[[LEN:.*]] = yul.mload %[[DATA]]
@@ -145,16 +172,23 @@ module {
 #View = #sol<StateMutability View>
 module {
   sol.contract @C {
+    // CHECK-LABEL: yul.func @__sol.abi_decode_tuple.memory.string$_Memory_$ : (i256, i256) -> i256
+    // CHECK:         %[[STR:.*]] = yul.func_call @__sol.alloc(
+    // CHECK:         yul.mcopy
+    // CHECK:         yul.func_return %[[STR]] : i256
+    // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.string$_CallData_$ : (!llvm.struct<(i256, i256)>, i256) -> i256
+    // CHECK:         yul.calldatacopy
     // CHECK-LABEL: yul.func @calldataString : (i256, !llvm.struct<(i256, i256)>) -> i256
     // CHECK:         %[[SEL:.*]] = yul.constant 151743695
     // CHECK:         %[[BUF:.*]] = yul.mload
     // CHECK:         yul.arith_shl %[[SEL]], %{{.*}}
-    // CHECK:         yul.calldatacopy
+    // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.string$_CallData_$(%arg1, %{{.*}})
     // CHECK:         yul.static_call %{{.*}}, %{{.*}}, %[[BUF]], %{{.*}}, %[[BUF]], %c0_i256{{(_[0-9]+)?$}}
     // CHECK:         %[[R:.*]] = yul.if %{{.*}} -> i256 {
     // CHECK:           %[[RDS:.*]] = yul.returndatasize
     // CHECK:           yul.returndatacopy %[[BUF]], %{{.*}}, %[[RDS]]
-    // CHECK:           yul.mcopy
+    // CHECK:           %[[S:.*]] = yul.func_call @__sol.abi_decode_tuple.memory.string$_Memory_$(%[[BUF]], %{{.*}})
+    // CHECK:           yul.yield %[[S]] : i256
     // CHECK:         yul.func_return %[[R]] : i256
     sol.func @calldataString(%arg0: !sol.address, %arg1: !sol.string<CallData>) -> !sol.string<Memory> attributes {state_mutability = #View} {
       %sel = sol.constant 151743695 : ui256

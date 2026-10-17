@@ -67,7 +67,7 @@ module {
     // CHECK:           %[[FB:.*]] = llvm.load
     // CHECK:           yul.if %[[FB]] {
     // CHECK:             %[[N:.*]] = yul.returndatasize
-    // CHECK:             %[[BUF:.*]] = yul.mload
+    // CHECK:             %[[BUF:.*]] = yul.func_call @__sol.alloc(
     // CHECK:             yul.mstore %[[BUF]], %[[N]]
     // CHECK:             %[[DATA:.*]] = yul.add %[[BUF]], %{{.*}}
     // CHECK:             yul.returndatacopy %[[DATA]], %{{.*}}, %[[N]]

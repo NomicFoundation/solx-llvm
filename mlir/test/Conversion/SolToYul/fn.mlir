@@ -4,39 +4,36 @@
 #NonPayable = #sol<StateMutability NonPayable>
 #Pure = #sol<StateMutability Pure>
 
+// Each case decodes its argument tuple and encodes its result tuple through
+// the helper of its types; the argument validation lives in the decoders.
 // CHECK-LABEL: yul.object @C_deployed {
 // CHECK:         %[[W:.*]] = yul.calldataload
 // CHECK:         %[[C224:.*]] = yul.constant 224{{$}}
 // CHECK:         %[[SEL:.*]] = yul.arith_shr %[[W]], %[[C224]]
 // CHECK:         yul.switch %[[SEL]] : i256
 // CHECK-NEXT:    case 3346476778 {
-// CHECK:           %[[A:.*]] = yul.calldataload
-// CHECK:           %[[B:.*]] = yul.cmp ne, %[[A]], %{{.*}}
-// CHECK:           %[[BAD:.*]] = yul.cmp ne, %[[A]], %[[B]]
-// CHECK:           yul.if %[[BAD]] {
-// CHECK:           yul.func_call @i1(%[[B]]) : (i256) -> i256
+// CHECK:           %[[B:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.i1(
+// CHECK:           %[[R:.*]] = yul.func_call @i1(%[[B]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.i1(%[[R]],
 // CHECK:         case 1090974155 {
-// CHECK:           %[[A:.*]] = yul.calldataload
-// CHECK:           %[[M:.*]] = yul.constant 18446744073709551615
-// CHECK:           %[[V:.*]] = yul.and %[[A]], %[[M]]
-// CHECK:           yul.func_call @ui64(%[[V]]) : (i256) -> i256
+// CHECK:           %[[V:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ui64(
+// CHECK:           %[[R:.*]] = yul.func_call @ui64(%[[V]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui64(%[[R]],
 // CHECK:         case 2427338207 {
-// CHECK:           %[[A:.*]] = yul.calldataload
-// CHECK:           yul.func_call @ui256(%[[A]]) : (i256) -> i256
+// CHECK:           %[[A:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ui256(
+// CHECK:           %[[R:.*]] = yul.func_call @ui256(%[[A]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%[[R]],
 // CHECK:         case 2749301445 {
-// CHECK:           %[[A:.*]] = yul.calldataload
-// CHECK:           %[[MAX:.*]] = yul.constant 2
-// CHECK:           yul.cmp ugt, %[[A]], %[[MAX]]
-// CHECK:           yul.func_call @e(%[[A]]) : (i256) -> i256
+// CHECK:           %[[A:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.enum$_2_$(
+// CHECK:           %[[R:.*]] = yul.func_call @e(%[[A]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.enum$_2_$(%[[R]],
 // CHECK:         case 3200940114 {
-// CHECK:           %[[A:.*]] = yul.calldataload
-// CHECK:           %[[M:.*]] = yul.constant -452312848583266388373324160190187140051835877600158453279131187530910662656
-// CHECK:           %[[V:.*]] = yul.and %[[A]], %[[M]]
-// CHECK:           yul.func_call @b1(%[[V]]) : (i256) -> i256
+// CHECK:           %[[V:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.fixedbytes$_1_$(
+// CHECK:           %[[R:.*]] = yul.func_call @b1(%[[V]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.fixedbytes$_1_$(%[[R]],
 // CHECK:         case 829795042 {
 // CHECK:           %[[T:.*]]:2 = yul.func_call @tuple() : () -> (i256, i256)
-// CHECK:           yul.mstore %{{.*}}, %[[T]]#0
-// CHECK:           yul.mstore %{{.*}}, %[[T]]#1
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256.ui256(%[[T]]#0, %[[T]]#1,
 // CHECK:         case 638722032 {
 // CHECK:           yul.callvalue
 // CHECK:           yul.func_call @empty() : () -> ()
@@ -44,6 +41,49 @@
 // CHECK:           %[[Z:.*]] = yul.constant 0{{$}}
 // CHECK:           yul.return %[[MEM]], %[[Z]]
 // CHECK:         default {
+
+// CHECK-LABEL:   yul.func @__sol.abi_encode_tuple.padded.tail.ui256.ui256 : (i256, i256, i256) -> i256
+// CHECK:           yul.mstore %arg2, %arg0
+// CHECK:           %[[P:.*]] = yul.add %arg2, %{{.*}}
+// CHECK:           yul.mstore %[[P]], %arg1
+
+// A bytes1 is validated against its mask.
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.fixedbytes$_1_$ : (i256, i256) -> i256
+// CHECK:           %[[A:.*]] = yul.calldataload
+// CHECK:           %[[M:.*]] = yul.constant -452312848583266388373324160190187140051835877600158453279131187530910662656
+// CHECK:           %[[V:.*]] = yul.and %[[A]], %[[M]]
+// CHECK:           %[[BAD:.*]] = yul.cmp ne, %[[A]], %[[V]]
+// CHECK:           yul.if %[[BAD]] {
+// CHECK:           yul.func_return %[[V]]
+
+// An enum is validated against its maximum.
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.enum$_2_$ : (i256, i256) -> i256
+// CHECK:           %[[A:.*]] = yul.calldataload
+// CHECK:           %[[MAX:.*]] = yul.constant 2
+// CHECK:           %[[BAD:.*]] = yul.cmp ugt, %[[A]], %[[MAX]]
+// CHECK:           yul.if %[[BAD]] {
+// CHECK:           yul.func_return %[[A]]
+
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.ui256 : (i256, i256) -> i256
+// CHECK:           %[[A:.*]] = yul.calldataload
+// CHECK:           yul.func_return %[[A]]
+
+// A uint64 is validated against its mask.
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.ui64 : (i256, i256) -> i256
+// CHECK:           %[[A:.*]] = yul.calldataload
+// CHECK:           %[[M:.*]] = yul.constant 18446744073709551615
+// CHECK:           %[[V:.*]] = yul.and %[[A]], %[[M]]
+// CHECK:           %[[BAD:.*]] = yul.cmp ne, %[[A]], %[[V]]
+// CHECK:           yul.if %[[BAD]] {
+// CHECK:           yul.func_return %[[V]]
+
+// A bool is validated to be 0 or 1.
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.i1 : (i256, i256) -> i256
+// CHECK:           %[[A:.*]] = yul.calldataload
+// CHECK:           %[[B:.*]] = yul.cmp ne, %[[A]], %{{.*}}
+// CHECK:           %[[BAD:.*]] = yul.cmp ne, %[[A]], %[[B]]
+// CHECK:           yul.if %[[BAD]] {
+// CHECK:           yul.func_return %[[B]]
 
 // CHECK-LABEL:   yul.func @empty : () -> ()
 // CHECK-NEXT:      yul.func_return

@@ -229,7 +229,8 @@ struct ConvertSolToYulPass
   }
 
   /// Converts sol.contract to Yul.
-  LogicalResult runStage2Conversion(ModuleOp mod) {
+  LogicalResult runStage2Conversion(ModuleOp mod,
+                                    const evm::SolTypeConverter &tyConv) {
     ConversionTarget convTgt(getContext());
     convTgt.addLegalOp<ModuleOp, UnrealizedConversionCastOp>();
     convTgt
@@ -237,7 +238,7 @@ struct ConvertSolToYulPass
     convTgt.addIllegalOp<sol::ContractOp>();
 
     RewritePatternSet pats(&getContext());
-    evm::populateStage2Pats(pats);
+    evm::populateStage2Pats(pats, tyConv);
 
     if (failed(applyPartialConversion(mod, convTgt, std::move(pats))))
       return failure();
@@ -295,7 +296,7 @@ struct ConvertSolToYulPass
       signalPassFailure();
       return;
     }
-    if (failed(runStage2Conversion(mod))) {
+    if (failed(runStage2Conversion(mod, tyConv))) {
       signalPassFailure();
       return;
     }

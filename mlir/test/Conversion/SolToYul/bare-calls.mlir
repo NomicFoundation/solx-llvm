@@ -9,7 +9,7 @@ module {
     // CHECK:         %[[OK:.*]] = yul.call %arg2, %[[TO]], %arg3, %[[DATA]], %[[LEN]], %[[C0:c0_i256[_0-9]*]], %[[C0]]
     // CHECK:         %[[ST:.*]] = yul.cmp ne, %[[OK]], %[[C0]]
     // CHECK:         %[[RDS:.*]] = yul.returndatasize
-    // CHECK:         %[[RD:.*]] = yul.mload %c64_i256
+    // CHECK:         %[[RD:.*]] = yul.func_call @__sol.alloc(%{{.*}}) : (i256) -> i256
     // CHECK:         yul.mstore %[[RD]], %[[RDS]]
     // CHECK:         %[[RDP:.*]] = yul.add %[[RD]], %{{.*}}
     // CHECK:         yul.returndatacopy %[[RDP]], %[[C0]], %[[RDS]]

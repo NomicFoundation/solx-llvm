@@ -1,5 +1,6 @@
 add_mlir_conversion_library(MLIRSolToYul
   EVMUtil.cpp
+  HelperSymbols.cpp
   InternalDispatch.cpp
   SolToYul.cpp
   SolToYulPass.cpp

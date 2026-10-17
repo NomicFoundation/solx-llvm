@@ -2,12 +2,15 @@
 
 #Contract = #sol<ContractKind Contract>
 
+// Every copy is outlined into a `__sol.copy_array` helper that takes the
+// source and destination slots, so the repacking loops are checked in the
+// helper and the user function only passes its slots.
+//
 // bytes3 -> bytes8 shifts left by 40 bits; 10 per source slot, 4 per
 // destination slot.
-// CHECK-LABEL: yul.func @s2s_b3_b8_d_59 : () -> ()
-// CHECK:         %[[SRC:.*]] = yul.constant 3{{$}}
-// CHECK:         %[[LEN:.*]] = yul.sload %[[SRC]]
-// CHECK:         yul.sstore %{{.*}}, %[[LEN]]
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_fixedbytes$_3_$_$_Storage_$.array$_dyn_fixedbytes$_8_$_$_Storage_$ : (i256, i256) -> ()
+// CHECK:         %[[LEN:.*]] = yul.sload %arg0
+// CHECK:         yul.sstore %arg1, %[[LEN]]
 // CHECK:         yul.for
 // CHECK:           %[[C24:.*]] = yul.constant 24{{$}}
 // CHECK:           %[[OFF:.*]] = yul.mul %{{.*}}, %[[C24]]
@@ -21,6 +24,10 @@
 // CHECK:           yul.cmp eq, %{{.*}}, %{{.*}}
 // CHECK:             yul.sstore
 // CHECK:         yul.sstore
+// CHECK-LABEL: yul.func @s2s_b3_b8_d_59 : () -> ()
+// CHECK:         %[[SRC:.*]] = yul.constant 3{{$}}
+// CHECK:         %[[DST:.*]] = yul.constant 4{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_dyn_fixedbytes$_3_$_$_Storage_$.array$_dyn_fixedbytes$_8_$_$_Storage_$(%[[SRC]], %[[DST]])
 module {
   sol.contract @ArrayCopyPackedWiden_92 {
     sol.state_var @sb3d_12 slot 3 offset 0 : !sol.array<? x !sol.fixedbytes<3>, Storage>
@@ -39,11 +46,9 @@ module {
 #Contract = #sol<ContractKind Contract>
 
 // bytes9 lands in the upper 72 of bytes17's 136 bits.
-// CHECK-LABEL: yul.func @s2s_b9_b17_d_75 : () -> ()
-// CHECK:         %[[SRC:.*]] = yul.constant 11{{$}}
-// CHECK:         %[[DST:.*]] = yul.constant 12{{$}}
-// CHECK:         %[[LEN:.*]] = yul.sload %[[SRC]]
-// CHECK:         yul.sstore %[[DST]], %[[LEN]]
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_fixedbytes$_9_$_$_Storage_$.array$_dyn_fixedbytes$_17_$_$_Storage_$ : (i256, i256) -> ()
+// CHECK:         %[[LEN:.*]] = yul.sload %arg0
+// CHECK:         yul.sstore %arg1, %[[LEN]]
 // CHECK:         yul.for
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
@@ -56,6 +61,10 @@ module {
 // CHECK:             %[[C72:.*]] = yul.constant 72
 // CHECK:             yul.add %{{.*}}, %[[C72]]
 // CHECK:         yul.if %{{.*}} -> i256 {
+// CHECK-LABEL: yul.func @s2s_b9_b17_d_75 : () -> ()
+// CHECK:         %[[SRC:.*]] = yul.constant 11{{$}}
+// CHECK:         %[[DST:.*]] = yul.constant 12{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_dyn_fixedbytes$_9_$_$_Storage_$.array$_dyn_fixedbytes$_17_$_$_Storage_$(%[[SRC]], %[[DST]])
 module {
   sol.contract @ArrayCopyPackedWiden_92 {
     sol.state_var @sb9d_26 slot 11 offset 0 : !sol.array<? x !sol.fixedbytes<9>, Storage>
@@ -75,10 +84,9 @@ module {
 
 // Narrow-to-wide repacking: 32 uint8 per source slot, 4 uint64 per
 // destination slot.
-// CHECK-LABEL: yul.func @s2s_u8_u64_s_83 : () -> ()
-// CHECK:         %[[SRC:.*]] = yul.constant 13{{$}}
-// CHECK:         %[[DST:.*]] = yul.constant 14{{$}}
-// CHECK:         yul.for
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_5_ui8_$_Storage_$.array$_5_ui64_$_Storage_$ : (i256, i256) -> ()
+// CHECK:         yul.sload %arg0
+// CHECK:         yul.for %{{.*}}, %arg0, %{{.*}}, %{{.*}}, %arg1, %{{.*}}, %{{.*}} :
 // CHECK:           %[[C8:.*]] = yul.constant 8{{$}}
 // CHECK:           %[[OFF:.*]] = yul.mul %{{.*}}, %[[C8]]
 // CHECK:           %[[E:.*]] = yul.arith_shr %{{.*}}, %[[OFF]]
@@ -92,6 +100,10 @@ module {
 // CHECK:           yul.cmp eq, %{{.*}}, %[[C4]]
 // CHECK:             yul.sstore
 // CHECK:         yul.sstore
+// CHECK-LABEL: yul.func @s2s_u8_u64_s_83 : () -> ()
+// CHECK:         %[[SRC:.*]] = yul.constant 13{{$}}
+// CHECK:         %[[DST:.*]] = yul.constant 14{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_5_ui8_$_Storage_$.array$_5_ui64_$_Storage_$(%[[SRC]], %[[DST]])
 module {
   sol.contract @ArrayCopyPackedWiden_92 {
     sol.state_var @su8s_33 slot 13 offset 0 : !sol.array<5 x ui8, Storage>
@@ -110,11 +122,9 @@ module {
 #Contract = #sol<ContractKind Contract>
 
 // uint160 needs a slot each: every uint8 is unpacked into its own slot.
-// CHECK-LABEL: yul.func @s2s_u8_u160_d_91 : () -> ()
-// CHECK:         %[[SRC:.*]] = yul.constant 16{{$}}
-// CHECK:         %[[DST:.*]] = yul.constant 17{{$}}
-// CHECK:         %[[LEN:.*]] = yul.sload %[[SRC]]
-// CHECK:         yul.sstore %[[DST]], %[[LEN]]
+// CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_ui8_$_Storage_$.array$_dyn_ui160_$_Storage_$ : (i256, i256) -> ()
+// CHECK:         %[[LEN:.*]] = yul.sload %arg0
+// CHECK:         yul.sstore %arg1, %[[LEN]]
 // CHECK:         yul.for
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
@@ -126,6 +136,10 @@ module {
 // CHECK:             %[[C8:.*]] = yul.constant 8{{$}}
 // CHECK:             yul.add %{{.*}}, %[[C8]]
 // CHECK:         yul.if %{{.*}} -> i256 {
+// CHECK-LABEL: yul.func @s2s_u8_u160_d_91 : () -> ()
+// CHECK:         %[[SRC:.*]] = yul.constant 16{{$}}
+// CHECK:         %[[DST:.*]] = yul.constant 17{{$}}
+// CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_dyn_ui8_$_Storage_$.array$_dyn_ui160_$_Storage_$(%[[SRC]], %[[DST]])
 module {
   sol.contract @ArrayCopyPackedWiden_92 {
     sol.state_var @su8d_40 slot 16 offset 0 : !sol.array<? x ui8, Storage>

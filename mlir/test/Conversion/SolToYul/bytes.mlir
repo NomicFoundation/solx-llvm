@@ -8,7 +8,7 @@ module {
     // CHECK:         %[[OOB:.*]] = yul.cmp uge, %[[I]], %[[LEN]]
     // CHECK:         yul.if %[[OOB]] {
     // CHECK:           %[[PANIC:.*]] = yul.constant 50{{$}}
-    // CHECK:           yul.mstore %{{.*}}, %[[PANIC]]
+    // CHECK:           yul.func_call @__sol.panic(%[[PANIC]])
     // CHECK:         %[[BYTE:.*]] = yul.byte %[[I]], %[[A]]
     // CHECK:         %[[C248:.*]] = yul.constant 248
     // CHECK:         %[[R:.*]] = yul.shl %[[C248]], %[[BYTE]]

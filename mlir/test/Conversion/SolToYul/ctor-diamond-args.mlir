@@ -13,14 +13,18 @@
 // CHECK:         %[[SIZE:.*]] = yul.datasize {obj = @D}
 // CHECK:         %[[CODE:.*]] = yul.codesize
 // CHECK:         %[[ARGSZ:.*]] = yul.sub %[[CODE]], %[[SIZE]]
-// CHECK:         yul.codecopy %[[BUF:.*]], %[[SIZE]], %[[ARGSZ]]
+// CHECK:         %[[BUF:.*]] = yul.func_call @__sol.alloc(%[[ARGSZ]])
+// CHECK:         yul.codecopy %[[BUF]], %[[SIZE]], %[[ARGSZ]]
 // CHECK:         %[[END:.*]] = yul.add %[[BUF]], %[[ARGSZ]]
-// CHECK:         %[[TSIZE:.*]] = yul.sub %[[END]], %[[BUF]]
-// CHECK:         yul.cmp slt, %[[TSIZE]], %{{.*}}
-// CHECK:         %[[A:.*]] = yul.mload %[[BUF]]
-// CHECK:         %[[P:.*]] = yul.add %[[BUF]], %{{.*}}
-// CHECK:         %[[B:.*]] = yul.mload %[[P]]
-// CHECK:         yul.func_call @D(%[[A]], %[[B]]) : (i256, i256) -> ()
+// CHECK:         %[[ARGS:.*]]:2 = yul.func_call @__sol.abi_decode_tuple.memory.ui256.ui256(%[[BUF]], %[[END]]) : (i256, i256) -> (i256, i256)
+// CHECK:         yul.func_call @D(%[[ARGS]]#0, %[[ARGS]]#1) : (i256, i256) -> ()
+// CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.memory.ui256.ui256 : (i256, i256) -> (i256, i256)
+// CHECK:           %[[TSIZE:.*]] = yul.sub %arg1, %arg0
+// CHECK:           yul.cmp slt, %[[TSIZE]], %{{.*}}
+// CHECK:           %[[A:.*]] = yul.mload %arg0
+// CHECK:           %[[P:.*]] = yul.add %arg0, %{{.*}}
+// CHECK:           %[[B:.*]] = yul.mload %[[P]]
+// CHECK:           yul.func_return %[[A]], %[[B]] : i256, i256
 // CHECK-LABEL:   yul.func @h : (i256, i256) -> ()
 // CHECK-LABEL:   yul.func @g : (i256, i256) -> ()
 // CHECK:           yul.func_call @h(%arg0, %arg1)

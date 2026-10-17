@@ -5,7 +5,7 @@ module {
   sol.contract @C {
     // CHECK-LABEL: yul.func @creation_code
     // CHECK:         %[[SZ:.*]] = yul.datasize {obj = @A}
-    // CHECK:         %[[P:.*]] = yul.mload
+    // CHECK:         %[[P:.*]] = yul.func_call @__sol.alloc(
     // CHECK:         yul.mstore %[[P]], %[[SZ]]
     // CHECK:         %[[DST:.*]] = yul.add %[[P]], %{{.*}}
     // CHECK:         %[[OFF:.*]] = yul.dataoffset {obj = @A}

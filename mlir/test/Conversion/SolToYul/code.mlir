@@ -7,7 +7,7 @@ module {
     // CHECK-LABEL: yul.func @code : (i256) -> i256
     // CHECK:         %[[A:.*]] = yul.and %arg0,
     // CHECK:         %[[SZ:.*]] = yul.extcodesize %[[A]]
-    // CHECK:         %[[BUF:.*]] = yul.mload
+    // CHECK:         %[[BUF:.*]] = yul.func_call @__sol.alloc(%{{.*}}) : (i256) -> i256
     // CHECK:         yul.mstore %[[BUF]], %[[SZ]]
     // CHECK:         %[[DATA:.*]] = yul.add %[[BUF]], %{{.*}}
     // CHECK:         yul.extcodecopy %[[A]], %[[DATA]], %{{.*}}, %[[SZ]]

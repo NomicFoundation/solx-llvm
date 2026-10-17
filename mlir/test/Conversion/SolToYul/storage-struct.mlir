@@ -2,6 +2,17 @@
 
 // A member's slot is the struct's slot plus the member's slot offset; its
 // byte offset within that slot rides along in the (slot, offset) pair.
+
+// mixed.arr.push(1) goes through the push helper, which bumps the length
+// and returns the new element's (slot, offset).
+// CHECK-LABEL: yul.func @__sol.push_storage_array.array$_dyn_ui256_$_Storage_$ : (i256) -> !llvm.struct<(i256, i256)>
+// CHECK-NEXT:  ^bb0(%[[ASLOT:.*]]: i256):
+// CHECK:         %[[ALEN:.*]] = yul.sload %[[ASLOT]]
+// CHECK:         %[[ANEW:.*]] = yul.add %[[ALEN]], %{{.*}}
+// CHECK:         yul.sstore %[[ASLOT]], %[[ANEW]]
+// CHECK:         yul.mstore %{{.*}}, %[[ASLOT]]
+// CHECK:         yul.keccak256
+
 // CHECK-LABEL: yul.func @rw : () -> ()
 
 // packed.a = packed.b: same slot, byte offsets 1 and 0.
@@ -43,12 +54,8 @@
 // CHECK:         yul.constant 1{{$}}
 // CHECK-NEXT:    %[[AB:.*]] = yul.constant 5{{$}}
 // CHECK-NEXT:    %[[AM:.*]] = yul.constant 1{{$}}
-// CHECK-NEXT:    %[[ASLOT:.*]] = yul.add %[[AB]], %[[AM]]
-// CHECK:         %[[ALEN:.*]] = yul.sload %[[ASLOT]]
-// CHECK:         %[[ANEW:.*]] = yul.add %[[ALEN]], %{{.*}}
-// CHECK:         yul.sstore %[[ASLOT]], %[[ANEW]]
-// CHECK:         yul.mstore %{{.*}}, %[[ASLOT]]
-// CHECK:         yul.keccak256
+// CHECK-NEXT:    %[[ARR:.*]] = yul.add %[[AB]], %[[AM]]
+// CHECK-NEXT:    yul.func_call @__sol.push_storage_array.array$_dyn_ui256_$_Storage_$(%[[ARR]])
 // CHECK:         yul.sstore
 
 // contractRef.c = this at byte offset 12.
@@ -66,7 +73,7 @@
 // CHECK-NEXT:    %[[NOTEI:.*]] = yul.add %[[NOTEB]], %[[NOTEM]]
 // CHECK-NEXT:    %[[NOTEO:.*]] = yul.constant 2{{$}}
 // CHECK-NEXT:    %[[NOTE:.*]] = yul.add %[[NOTEI]], %[[NOTEO]]
-// CHECK-NEXT:    yul.func_call @__sol.copy.memory.storage.string(%{{.*}}, %[[NOTE]])
+// CHECK-NEXT:    yul.func_call @__sol.copy_string.memory.storage(%{{.*}}, %[[NOTE]])
 // CHECK:         yul.constant 300
 // CHECK:         %[[RB:.*]] = yul.constant 9{{$}}
 // CHECK-NEXT:    %[[RM:.*]] = yul.constant 4{{$}}
