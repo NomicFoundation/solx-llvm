@@ -60,6 +60,9 @@ add_mlir_translation_library(MLIRToLLVMIRTranslationRegistration
   MLIRROCDLToLLVMIRTranslation
   MLIRSPIRVToLLVMIRTranslation
   MLIRVCIXToLLVMIRTranslation
+  # EVM local begin
+  MLIRYulToLLVMIRTranslation
+  # EVM local end
   )
 
 add_mlir_translation_library(MLIRTargetLLVMIRImport

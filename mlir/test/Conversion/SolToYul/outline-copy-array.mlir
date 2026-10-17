@@ -1,6 +1,4 @@
 // RUN: mlir-opt %s --convert-sol-to-yul | FileCheck %s
-// RUN: mlir-opt %s --convert-sol-to-yul --convert-yul-to-std | \
-// RUN:   FileCheck --check-prefix=STD %s
 
 // An array copy into storage is emitted once per (source, destination) type
 // pair as a `__sol.copy_array.*` helper and every site becomes a call. A
@@ -42,11 +40,13 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK:           yul.calldataload
 // CHECK:           yul.sstore
 // CHECK:         yul.func_return
+// CHECK-NEXT:  } {llvm.linkage = #llvm.linkage<private>}
 
 // CHECK-LABEL: yul.func @__sol.copy_array.memory.storage.array$_dyn_ui256_$_Memory_$.array$_dyn_ui256_$_Storage_$ : (i256, i256) -> ()
 // CHECK:         yul.for
 // CHECK:           yul.sstore
 // CHECK:         yul.func_return
+// CHECK-NEXT:  } {llvm.linkage = #llvm.linkage<private>}
 
 
 // CHECK-LABEL: yul.func @cd2s : (!llvm.struct<(i256, i256)>) -> ()
@@ -63,8 +63,4 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK:         yul.func_call @__sol.copy_array.memory.storage.array$_dyn_ui256_$_Memory_$.array$_dyn_ui256_$_Storage_$(%arg0, %{{.*}})
 // CHECK-NOT:     yul.sstore
 // CHECK:         yul.func_return
-
-
-// STD: func.func @__sol.copy_array.calldata.storage.array$_dyn_ui256_$_CallData_$.array$_dyn_ui256_$_Storage_$(%arg0: !llvm.struct<(i256, i256)>, %arg1: i256) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"]]}
-// STD: func.func @__sol.copy_array.memory.storage.array$_dyn_ui256_$_Memory_$.array$_dyn_ui256_$_Storage_$({{.*}}) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"]]}
-// STD: func.func @m2s({{.*}}) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"]]}
+// CHECK-NEXT:  } {llvm.linkage = #llvm.linkage<private>}
