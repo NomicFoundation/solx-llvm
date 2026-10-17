@@ -254,3 +254,47 @@ module {
     }
   } {kind = #sol<ContractKind Contract>, runtime}
 }
+
+// -----
+
+!R = !sol.struct<"R", CallData, (ui256, !sol.array<? x !sol.struct<"R", CallData>, CallData>)>
+!Rmem = !sol.struct<"R", Memory, (ui256, !sol.array<? x !sol.struct<"R", Memory>, Memory>)>
+module {
+  sol.contract @C {
+    // CHECK-LABEL: yul.func @__sol.abi_decode.calldata.memory.array$_dyn_struct$_R_{{.*}} : (i256, i256) -> i256
+    // CHECK:         %[[LEN:.*]] = yul.calldataload %arg0
+    // CHECK:         %[[ARR:.*]] = yul.func_call @__sol.alloc
+    // CHECK:         yul.mstore %[[ARR]], %[[LEN]]
+    // CHECK:         %[[SPAN:.*]] = yul.mul %[[LEN]]
+    // CHECK-NEXT:    %[[END:.*]] = yul.add %{{.*}}, %[[SPAN]]
+    // CHECK-NEXT:    yul.cmp ugt, %[[END]], %arg1
+    // CHECK:         yul.for
+    // CHECK:           %[[ELT:.*]] = yul.func_call @__sol.abi_decode.calldata.memory.struct$_R_{{.*}}(%{{.*}}, %arg1) : (i256, i256) -> i256
+    // CHECK-NEXT:      yul.mstore %{{.*}}, %[[ELT]]
+    // CHECK:         yul.func_return %[[ARR]]
+
+    // CHECK-LABEL: yul.func @__sol.abi_decode.calldata.memory.struct$_R_{{.*}} : (i256, i256) -> i256
+    // CHECK:         %[[C64:.*]] = yul.constant 64
+    // CHECK-NEXT:    %[[HEADEND:.*]] = yul.add %arg0, %[[C64]]
+    // CHECK-NEXT:    yul.cmp ugt, %[[HEADEND]], %arg1
+    // CHECK:         yul.revert
+    // CHECK:         %[[M:.*]] = yul.mload
+    // CHECK:         %[[A:.*]] = yul.calldataload %arg0
+    // CHECK-NEXT:    yul.mstore %[[M]], %[[A]]
+    // CHECK:         %[[OFF:.*]] = yul.calldataload
+    // CHECK:         %[[TAIL:.*]] = yul.add %arg0, %[[OFF]]
+    // CHECK:         %[[ARR:.*]] = yul.func_call @__sol.abi_decode.calldata.memory.array$_dyn_struct$_R_{{.*}}(%[[TAIL]], %arg1)
+    // CHECK:         yul.mstore %{{.*}}, %[[ARR]]
+    // CHECK:         yul.func_return %[[M]]
+
+    // CHECK-LABEL: yul.func @cdToMem : (i256) -> i256
+    // CHECK-NEXT:  ^bb0(%[[R:.*]]: i256):
+    // CHECK:         %[[CDS:.*]] = yul.calldatasize
+    // CHECK-NEXT:    %[[M:.*]] = yul.func_call @__sol.abi_decode.calldata.memory.struct$_R_{{.*}}(%[[R]], %[[CDS]]) : (i256, i256) -> i256
+    // CHECK:         yul.func_return %[[M]]
+    sol.func @cdToMem(%r: !R) -> !Rmem {
+      %0 = sol.data_loc_cast %r : !R, !Rmem
+      sol.return %0 : !Rmem
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
