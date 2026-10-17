@@ -2294,12 +2294,6 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
                                                srcDataLoc, loc);
             Value dstAddrI = evmB.genAddrAtIdx(dstDataAddr, i256IndVar, arrTy,
                                                dstDataLoc, loc);
-            // For calldata sources with dynamic inner elements, resolve the ABI
-            // relative-offset word in the head area.
-            if (srcDataLoc == sol::DataLocation::CallData &&
-                sol::hasDynamicallySizedElt(eltTy))
-              srcAddrI = evmB.genCalldataAccessRef(eltTy, srcDataAddr, srcAddrI,
-                                                   /*isNonABI=*/true, loc);
             Value subElm =
                 genAllocateAndCopy(mod, srcAddrI, eltTy, eltSrcDataLoc, r, loc);
             evmB.genStore(subElm, dstAddrI, dstDataLoc);
@@ -2424,6 +2418,35 @@ struct DataLocCastOpLowering : public OpConversionPattern<sol::DataLocCastOp> {
     sol::DataLocation srcDataLoc = sol::getDataLocation(srcTy);
     sol::DataLocation dstDataLoc = sol::getDataLocation(dstTy);
     assert(!isa<sol::MappingType>(srcTy));
+
+    // A calldata struct, or a calldata array of dynamically encoded elements,
+    // is copied to memory by decoding it against the end of calldata, which
+    // validates every nested offset and length.
+    // old codegen begin
+    // Every other calldata array and bytes stays a raw copy with no checks.
+    // (Via-IR decodes every calldata array copy.)
+    auto srcArrTy = dyn_cast<sol::ArrayType>(srcTy);
+    bool decodesFromCallData =
+        isa<sol::StructType>(srcTy) ||
+        (srcArrTy && sol::hasDynamicallySizedElt(srcArrTy.getEltType()));
+    // old codegen end
+    if (dstDataLoc == sol::DataLocation::Memory &&
+        srcDataLoc == sol::DataLocation::CallData && decodesFromCallData) {
+      mlir::solgen::BuilderExt bExt(r, loc);
+      Value src = adaptor.getInp();
+      // The decoder reads a dynamic array from its length word, which precedes
+      // the data of every calldata array: a slice cannot have a dynamically
+      // encoded element type.
+      Value addr = src;
+      if (srcArrTy && srcArrTy.isDynSized())
+        addr = r.create<yul::SubOp>(loc, evmB.genDataAddrPtr(src, srcTy),
+                                    bExt.genI256Const(32));
+      r.replaceOp(op, evmB.genABITupleDecoding(
+                          dstTy, addr, /*fromMem=*/false, /*tupleStart=*/addr,
+                          /*tupleEnd=*/r.create<yul::CallDataSizeOp>(loc),
+                          /*topLevel=*/false, loc));
+      return success();
+    }
 
     if (dstDataLoc == sol::DataLocation::Memory &&
         sol::isNonPtrRefType(srcTy)) {

@@ -149,16 +149,19 @@ module {
 !Scd = !sol.struct<(ui8, !sol.fixedbytes<19>, si72, !sol.string<CallData>), CallData>
 #Contract = #sol<ContractKind Contract>
 
-// The 128-byte head is one word per member; the string member gets its own
-// allocation, filled from calldata.
+// The 128-byte head must fit in calldata and is one word per member; the
+// string member gets its own allocation, filled from calldata.
 // CHECK-LABEL: yul.func @f5 : (i256) -> i256
-// CHECK:         %[[HEAD:.*]] = yul.constant 128
+// CHECK:         %[[CDS:.*]] = yul.calldatasize
+// CHECK-NEXT:    %[[HEAD:.*]] = yul.constant 128
+// CHECK-NEXT:    %[[END:.*]] = yul.add %arg0, %[[HEAD]]
+// CHECK-NEXT:    yul.cmp ugt, %[[END]], %[[CDS]]
 // CHECK:         %[[P:.*]] = yul.mload
-// CHECK:         yul.add %[[HEAD]],
-// CHECK:         %[[SP:.*]] = yul.add %[[P]], %c96_i256
-// CHECK:         %[[STR:.*]] = yul.mload %c64_i256
+// CHECK:         yul.calldataload %arg0
+// CHECK:         yul.mstore %[[P]],
+// CHECK:         %[[STR:.*]] = yul.mload
 // CHECK:         yul.calldatacopy %{{[0-9]+}}, %{{[0-9]+}}, %{{[0-9]+}}{{$}}
-// CHECK:         yul.mstore %[[SP]], %[[STR]]
+// CHECK:         yul.mstore %{{.*}}, %[[STR]]
 // CHECK:         yul.func_return %[[P]]
 module {
   sol.contract @C {

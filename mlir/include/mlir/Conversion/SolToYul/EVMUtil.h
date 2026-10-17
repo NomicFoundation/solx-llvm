@@ -112,6 +112,9 @@ namespace helpersym {
 /// Deep copy between data locations: `__sol.copy.<src>.<dst>.<type name>`.
 std::string copy(mlir::sol::DataLocation src, mlir::sol::DataLocation dst,
                  llvm::StringRef tyName);
+/// Decodes an identified struct from an ABI tuple in `src` into memory:
+/// `__sol.abi_decode.<src>.<struct name>`.
+std::string abiDecode(mlir::sol::DataLocation src, llvm::StringRef tyName);
 /// Zeroes an identified struct in storage:
 /// `__sol.clear_storage.<struct name>`.
 std::string clearStorage(mlir::sol::StructType ty);
@@ -310,6 +313,14 @@ private:
                                     mlir::Value srcAddr, mlir::Value dstAddr,
                                     mlir::sol::DataLocation srcDataLoc,
                                     mlir::Location loc);
+
+  /// Inline expansion behind genABITupleDecoding for a struct destined to
+  /// memory: allocates the head and decodes each member from \p addr against
+  /// \p tupleEnd, recursing through genABITupleDecoding for aggregate members
+  /// so that nested identified structs are dispatched to their out-of-line
+  /// helper.
+  Value genABIStructDecodingInline(mlir::sol::StructType structTy, Value addr,
+                                   bool fromMem, Value tupleEnd, Location loc);
 
   /// Generates a revert with message.
   void genRevertWithMsg(std::string const &msg,

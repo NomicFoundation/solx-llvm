@@ -1242,7 +1242,8 @@ Value evm::Builder::genMemAlloc(Type ty, bool zeroInit, ValueRange initVals,
                                 loc);
     if (sizeVar) {
       Value roundedSize = bExt.genRoundUpToMultiple<32>(sizeVar);
-      Value memPtr = genMemAllocForDynArray(sizeVar, roundedSize, loc);
+      Value memPtr = genMemAllocForDynArray(sizeVar, roundedSize, loc,
+                                            /*genLengthPanicGuard=*/true);
       if (zeroInit) {
         Value dataPtr =
             b.create<yul::AddOp>(loc, memPtr, bExt.genI256Const(32));
@@ -2169,6 +2170,11 @@ std::string evm::helpersym::copy(sol::DataLocation src, sol::DataLocation dst,
   return makeHelperSymbol("copy",
                           {sol::stringifyDataLocation(src).lower(),
                            sol::stringifyDataLocation(dst).lower(), tyName});
+}
+
+std::string evm::helpersym::abiDecode(sol::DataLocation src, StringRef tyName) {
+  return makeHelperSymbol("abi_decode",
+                          {sol::stringifyDataLocation(src).lower(), tyName});
 }
 
 std::string evm::helpersym::clearStorage(sol::StructType ty) {
@@ -3758,10 +3764,12 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
     if (arrTy.isDynSized()) {
       Value i256Size = genLoad(addr);
       srcAddr = b.create<yul::AddOp>(loc, addr, thirtyTwo);
-      guards.requireDynamicArraySpan(srcAddr, i256Size, eltTy);
 
+      // The allocation precedes the span check: its panic rejects a length
+      // whose span would wrap around and slip past the bounds test.
       dstAddr = genMemAllocForDynArray(
           i256Size, b.create<yul::MulOp>(loc, i256Size, thirtyTwo), loc, true);
+      guards.requireDynamicArraySpan(srcAddr, i256Size, eltTy);
       ret = dstAddr;
       // Skip the size fields in both the addresses.
       dstAddr = b.create<yul::AddOp>(loc, dstAddr, thirtyTwo);
@@ -3818,20 +3826,25 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
     Value tailAddr = addr;
     Value sizeInBytes = genLoad(tailAddr);
     // The range check must precede the end check: a near-2^256 length wraps
-    // the end address computation around and slips past the bounds test.
-    guards.requireUint64(sizeInBytes, ABIDecodeGuards::kInvalidByteArrayLength);
+    // the end address computation around and slips past the bounds test. A
+    // calldata reference reverts on it, a memory copy panics in its allocation.
+    bool inCallData = stringTy.getDataLocation() == sol::DataLocation::CallData;
+    Value dstAddr;
+    if (inCallData)
+      guards.requireUint64(sizeInBytes,
+                           ABIDecodeGuards::kInvalidByteArrayLength);
+    else
+      dstAddr = genMemAllocForDynArray(
+          sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc, true);
     Value thirtyTwo = bExt.genI256Const(32);
     Value srcDataAddr = b.create<yul::AddOp>(loc, tailAddr, thirtyTwo);
     Value endAddr = b.create<yul::AddOp>(loc, srcDataAddr, sizeInBytes);
     guards.requireEndInBounds(endAddr,
                               ABIDecodeGuards::kInvalidByteArrayLength);
 
-    if (stringTy.getDataLocation() == sol::DataLocation::CallData)
+    if (inCallData)
       return bExt.genLLVMStruct({srcDataAddr, sizeInBytes});
 
-    // Copy the decoded string to a new memory allocation.
-    Value dstAddr = genMemAllocForDynArray(
-        sizeInBytes, bExt.genRoundUpToMultiple<32>(sizeInBytes), loc, true);
     Value dstDataAddr = b.create<yul::AddOp>(loc, dstAddr, thirtyTwo);
 
     if (fromMem)
@@ -3867,35 +3880,63 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
     if (dataLoc == sol::DataLocation::CallData)
       return addr;
 
-    Value dstAddr = genMemAlloc(
-        bExt.genI256Const(structTy.getMemberTypes().size() * 32), loc);
-    Value dstHeadAddr = dstAddr;
-    Value srcHeadAddr = addr;
-    for (Type memTy : structTy.getMemberTypes()) {
-      Value memberVal;
-      if (sol::hasDynamicallySizedElt(memTy)) {
-        Value tailOffset = genLoad(srcHeadAddr);
-        guards.requireUint64(tailOffset, ABIDecodeGuards::kInvalidStructOffset);
-
-        Value tailAddr = b.create<yul::AddOp>(loc, addr, tailOffset);
-        memberVal = genABITupleDecoding(memTy, tailAddr, fromMem, addr,
-                                        tupleEnd, /*topLevel=*/false, loc);
-      } else {
-        memberVal = genABITupleDecoding(memTy, srcHeadAddr, fromMem, addr,
-                                        tupleEnd, /*topLevel=*/false, loc);
-      }
-
-      b.create<yul::MStoreOp>(loc, dstHeadAddr, memberVal);
-      srcHeadAddr = b.create<yul::AddOp>(
-          loc, srcHeadAddr, bExt.genI256Const(getCallDataHeadSize(memTy)));
-      dstHeadAddr =
-          b.create<yul::AddOp>(loc, dstHeadAddr, bExt.genI256Const(32));
+    if (structTy.isIdentified()) {
+      auto i256Ty = b.getIntegerType(256);
+      sol::FuncOp fn = getOrCreateHelperFn(
+          helpersym::abiDecode(fromMem ? sol::DataLocation::Memory
+                                       : sol::DataLocation::CallData,
+                               structTy.getName()),
+          {i256Ty, i256Ty}, {i256Ty}, [&](ValueRange args, Location bodyLoc) {
+            Value memPtr = genABIStructDecodingInline(
+                structTy, args[0], fromMem, args[1], bodyLoc);
+            b.create<sol::ReturnOp>(bodyLoc, ValueRange{memPtr});
+          });
+      return b.create<sol::CallOp>(loc, fn, ValueRange{addr, tupleEnd})
+          .getResult(0);
     }
-
-    return dstAddr;
+    return genABIStructDecodingInline(structTy, addr, fromMem, tupleEnd, loc);
   }
 
   llvm_unreachable("NYI");
+}
+
+Value evm::Builder::genABIStructDecodingInline(sol::StructType structTy,
+                                               Value addr, bool fromMem,
+                                               Value tupleEnd, Location loc) {
+  mlir::solgen::BuilderExt bExt(b, loc);
+  ABIDecodeGuards guards(*this, b, loc, tupleEnd);
+
+  auto genLoad = [&](Value addr) -> Value {
+    if (fromMem)
+      return b.create<yul::MLoadOp>(loc, addr);
+    return b.create<yul::CallDataLoadOp>(loc, addr);
+  };
+
+  Value dstAddr = genMemAlloc(
+      bExt.genI256Const(structTy.getMemberTypes().size() * 32), loc);
+  Value dstHeadAddr = dstAddr;
+  Value srcHeadAddr = addr;
+  for (Type memTy : structTy.getMemberTypes()) {
+    Value memberVal;
+    if (sol::hasDynamicallySizedElt(memTy)) {
+      Value tailOffset = genLoad(srcHeadAddr);
+      guards.requireUint64(tailOffset, ABIDecodeGuards::kInvalidStructOffset);
+
+      Value tailAddr = b.create<yul::AddOp>(loc, addr, tailOffset);
+      memberVal = genABITupleDecoding(memTy, tailAddr, fromMem, addr, tupleEnd,
+                                      /*topLevel=*/false, loc);
+    } else {
+      memberVal = genABITupleDecoding(memTy, srcHeadAddr, fromMem, addr,
+                                      tupleEnd, /*topLevel=*/false, loc);
+    }
+
+    b.create<yul::MStoreOp>(loc, dstHeadAddr, memberVal);
+    srcHeadAddr = b.create<yul::AddOp>(
+        loc, srcHeadAddr, bExt.genI256Const(getCallDataHeadSize(memTy)));
+    dstHeadAddr = b.create<yul::AddOp>(loc, dstHeadAddr, bExt.genI256Const(32));
+  }
+
+  return dstAddr;
 }
 
 void evm::Builder::genABITupleDecoding(TypeRange tys, Value tupleStart,
