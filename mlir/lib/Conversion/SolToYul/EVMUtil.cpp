@@ -3962,14 +3962,15 @@ Value evm::Builder::genABITupleEncoding(std::string const &str, Value headStart,
   return b.create<yul::AddOp>(loc, tailAddr, stringSize);
 }
 
-// Returns true when decoding \p ty into memory emits a loop: an array whose
-// elements cannot be bulk copied, or a struct containing such an array.
-static bool decodeNeedsLoop(Type ty) {
+// Identified structs may recurse, so their decoders must be outlined before
+// descending into their members. Loop-carrying decoders also use helpers.
+static bool decodeNeedsHelper(Type ty) {
   if (auto arrTy = dyn_cast<sol::ArrayType>(ty))
     return memArrayNeedsLoop(arrTy);
   if (auto structTy = dyn_cast<sol::StructType>(ty))
     return structTy.getDataLocation() == sol::DataLocation::Memory &&
-           llvm::any_of(structTy.getMemberTypes(), decodeNeedsLoop);
+           (structTy.isIdentified() ||
+            llvm::any_of(structTy.getMemberTypes(), decodeNeedsHelper));
   return false;
 }
 
@@ -3980,9 +3981,9 @@ Value evm::Builder::genABITupleDecoding(Type ty, Value addr, bool fromMem,
   sol::DataLocation src =
       fromMem ? sol::DataLocation::Memory : sol::DataLocation::CallData;
 
-  // Loop-carrying decoders are emitted once per type and called. The body
-  // needs the value address and the tuple end for its bounds checks.
-  if (decodeNeedsLoop(ty)) {
+  // Identified structs and loop-carrying decoders are emitted once per type.
+  // The body needs the value address and tuple end for its bounds checks.
+  if (decodeNeedsHelper(ty)) {
     return genHelperCall(
         helpersym::abiDecodeToMemory(src, ty), {addr, tupleEnd},
         b.getIntegerType(256),

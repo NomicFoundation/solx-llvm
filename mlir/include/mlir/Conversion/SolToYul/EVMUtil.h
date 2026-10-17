@@ -673,7 +673,7 @@ public:
                             std::optional<Location> locArg = std::nullopt);
 
   /// Decodes one ABI value of type \p ty at \p addr, bounded by
-  /// \p tupleEnd. A value whose decoding needs a loop is decoded by
+  /// \p tupleEnd. An identified struct or a value needing a loop is decoded by
   /// `helpersym::abiDecodeToMemory`.
   Value genABITupleDecoding(Type ty, Value addr, bool fromMem, Value tupleEnd,
                             bool topLevel,

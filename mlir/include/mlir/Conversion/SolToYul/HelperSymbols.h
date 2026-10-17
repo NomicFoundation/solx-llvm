@@ -104,7 +104,8 @@ std::string allocMemoryArray(bool zeroInit, mlir::sol::ArrayType ty);
 
 /// `__sol.abi_decode.<calldata|memory>.memory.<ty>`
 ///
-/// Emitted for ABI decoding into memory of a type that needs a loop.
+/// Emitted for ABI decoding into memory of an identified struct or a type
+/// that needs a loop.
 /// Decodes the value at the given address into fresh memory with bounds
 /// checks and returns the pointer.
 std::string abiDecodeToMemory(mlir::sol::DataLocation src, mlir::Type ty);
