@@ -57,22 +57,6 @@ def Yul_LoopOpInterface : OpInterface<"LoopOpInterface", [
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/"return $_op.getCond();"
-    >,
-    InterfaceMethod<[{
-        Recursively walks the body of the loop in pre-order while skipping
-        nested loops and executing a callback on every other operation.
-      }],
-      /*retTy=*/"mlir::WalkResult",
-      /*methodName=*/"walkBodySkippingNestedLoops",
-      /*args=*/(ins "::llvm::function_ref<mlir::WalkResult (Operation *)>":$callback),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        return $_op.getBody().template walk<WalkOrder::PreOrder>([&](Operation *op) {
-          if (isa<LoopOpInterface>(op))
-            return mlir::WalkResult::skip();
-          return callback(op);
-        });
-      }]
     >
   ];
 

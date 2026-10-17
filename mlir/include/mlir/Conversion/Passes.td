@@ -1516,20 +1516,6 @@ def ConvertSolToYulPass : Pass<"convert-sol-to-yul", "ModuleOp"> {
     "LLVM::LLVMDialect",
   ];
 }
-
-//===----------------------------------------------------------------------===//
-// YulToStandard
-//===----------------------------------------------------------------------===//
-
-def ConvertYulToStandardPass : Pass<"convert-yul-to-std", "ModuleOp"> {
-  let summary = "Convert Yul dialect to standard dialects";
-  let dependentDialects = [
-    "func::FuncDialect",
-    "cf::ControlFlowDialect",
-    "arith::ArithDialect",
-    "LLVM::LLVMDialect",
-  ];
-}
 // EVM local end
 
 #endif // MLIR_CONVERSION_PASSES
