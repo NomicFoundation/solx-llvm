@@ -16,22 +16,13 @@
 #include "mlir/Conversion/SolToYul/EVMConstants.h"
 #include "mlir/Conversion/SolToYul/Util.h"
 #include "mlir/Dialect/Sol/Sol.h"
+#include "mlir/Dialect/Yul/EVMAddrSpace.h"
 #include "mlir/IR/Builders.h"
 #include <memory>
 #include <optional>
 
 namespace mlir {
 namespace evm {
-
-enum AddrSpace : unsigned {
-  AddrSpace_Stack = 0,
-  AddrSpace_Heap = 1,
-  AddrSpace_CallData = 2,
-  AddrSpace_ReturnData = 3,
-  AddrSpace_Code = 4,
-  AddrSpace_Storage = 5,
-  AddrSpace_TransientStorage = 6,
-};
 
 enum ByteLen {
   ByteLen_Byte = 1,
@@ -43,8 +34,6 @@ enum ByteLen {
 
 using AllocSize = int64_t;
 
-/// Returns the alignment of `addrSpace`
-unsigned getAlignment(AddrSpace addrSpace);
 /// Returns the alignment of the LLVMPointerType value `ptr`
 unsigned getAlignment(Value ptr);
 
@@ -142,28 +131,6 @@ public:
       : mod(mod), b(b), defLoc(loc) {
     assert(mod && "expected attached module for EVM builder");
   }
-
-  /// Generates a pointer to the address in the heap.
-  Value genHeapPtr(Value addr, std::optional<Location> locArg = std::nullopt);
-
-  /// Generates a pointer to the address in the calldata.
-  Value genCallDataPtr(Value addr,
-                       std::optional<Location> locArg = std::nullopt);
-
-  /// Generates a pointer to the address in the returndata.
-  Value genReturnDataPtr(Value addr,
-                         std::optional<Location> locArg = std::nullopt);
-
-  /// Generates a pointer to the address in the storage.
-  Value genStoragePtr(Value addr,
-                      std::optional<Location> locArg = std::nullopt);
-
-  /// Generates a pointer to the address in the transient storage.
-  Value genTStoragePtr(Value addr,
-                       std::optional<Location> locArg = std::nullopt);
-
-  /// Generates a pointer to the address in the code.
-  Value genCodePtr(Value addr, std::optional<Location> locArg = std::nullopt);
 
   //
   // The following APIs are used in the stage1 lowering.
