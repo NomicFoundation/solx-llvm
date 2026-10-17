@@ -10,3 +10,6 @@ add_subdirectory(OpenMP)
 add_subdirectory(ROCDL)
 add_subdirectory(SPIRV)
 add_subdirectory(VCIX)
+# EVM local begin
+add_subdirectory(Yul)
+# EVM local end
