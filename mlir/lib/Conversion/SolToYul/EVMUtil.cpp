@@ -3357,6 +3357,11 @@ void evm::Builder::genABITupleSizeAssert(TypeRange tys, Value tupleSize,
   for (Type ty : tys)
     totCallDataHeadSz += getCallDataHeadSize(ty);
 
+  APInt size;
+  if (matchPattern(tupleSize, m_ConstantInt(&size)) &&
+      size.sge(totCallDataHeadSz))
+    return;
+
   auto shortTupleCond = bExt.genCmp(yul::CmpPredicate::slt, tupleSize,
                                     bExt.genI256Const(totCallDataHeadSz));
   genDebugRevertWithMsg(shortTupleCond, "ABI decoding: tuple data too short",
@@ -3934,8 +3939,16 @@ void evm::Builder::genABITupleDecoding(TypeRange tys, Value tupleStart,
 
   // TODO? {en|de}codingType() for sol dialect types.
 
-  genABITupleSizeAssert(tys, b.create<yul::SubOp>(loc, tupleEnd, tupleStart),
-                        loc);
+  Value tupleSize;
+  if (auto end = tupleEnd.getDefiningOp<yul::AddOp>()) {
+    if (end.getLhs() == tupleStart)
+      tupleSize = end.getRhs();
+    else if (end.getRhs() == tupleStart)
+      tupleSize = end.getLhs();
+  }
+  if (!tupleSize)
+    tupleSize = b.create<yul::SubOp>(loc, tupleEnd, tupleStart);
+  genABITupleSizeAssert(tys, tupleSize, loc);
 
   auto genLoad = [&](Value addr) -> Value {
     if (fromMem)

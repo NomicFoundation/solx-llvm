@@ -28,8 +28,9 @@ module {
 
 module {
   sol.contract @C {
-    // A view caller uses staticcall with a 96-byte return buffer, then decodes
-    // three words from it.
+    // A view caller uses staticcall with a 96-byte return buffer, reverts on
+    // less return data than that, then decodes three words from it with no
+    // further size check.
     // CHECK-LABEL: yul.func @multiResult : (i256) -> (i256, i256, i256)
     // CHECK:         %[[GAS:.*]] = yul.gas
     // CHECK:         %[[BUF:.*]] = yul.mload
@@ -39,8 +40,9 @@ module {
     // CHECK:         yul.if %[[FAIL]] {
     // CHECK:           yul.returndatacopy
     // CHECK:         %[[R:.*]]:3 = yul.if %{{.*}} -> i256, i256, i256 {
-    // CHECK:           yul.returndatasize
-    // CHECK:           yul.cmp slt, %{{.*}}, %{{.*}}
+    // CHECK:           %[[RDS:.*]] = yul.returndatasize
+    // CHECK:           yul.cmp ult, %[[RDS]], %[[C96]]
+    // CHECK-NOT:       yul.cmp slt
     // CHECK:           %[[A:.*]] = yul.mload %[[BUF]]
     // CHECK:           %[[P1:.*]] = yul.add %[[BUF]], %{{.*}}
     // CHECK:           %[[B:.*]] = yul.mload %[[P1]]

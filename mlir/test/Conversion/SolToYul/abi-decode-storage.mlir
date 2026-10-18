@@ -2,7 +2,8 @@
 
 // CHECK-LABEL: yul.func @f : (i256) -> (i256, i256)
 // CHECK:         %[[SRC:.*]] = yul.add %arg0, %{{.*}}
-// CHECK:         %[[SIZE:.*]] = yul.sub %{{.*}}, %[[SRC]]
+// CHECK:         %[[SIZE:.*]] = yul.mload %arg0
+// CHECK:         yul.add %[[SRC]], %[[SIZE]]
 // CHECK:         %[[C64:.*]] = yul.constant 64
 // CHECK:         %[[SHORT:.*]] = yul.cmp slt, %[[SIZE]], %[[C64]]
 // CHECK:         yul.if %[[SHORT]] {

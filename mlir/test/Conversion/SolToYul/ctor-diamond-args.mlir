@@ -14,9 +14,8 @@
 // CHECK:         %[[CODE:.*]] = yul.codesize
 // CHECK:         %[[ARGSZ:.*]] = yul.sub %[[CODE]], %[[SIZE]]
 // CHECK:         yul.codecopy %[[BUF:.*]], %[[SIZE]], %[[ARGSZ]]
-// CHECK:         %[[END:.*]] = yul.add %[[BUF]], %[[ARGSZ]]
-// CHECK:         %[[TSIZE:.*]] = yul.sub %[[END]], %[[BUF]]
-// CHECK:         yul.cmp slt, %[[TSIZE]], %{{.*}}
+// CHECK:         yul.add %[[BUF]], %[[ARGSZ]]
+// CHECK:         yul.cmp slt, %[[ARGSZ]], %{{.*}}
 // CHECK:         %[[A:.*]] = yul.mload %[[BUF]]
 // CHECK:         %[[P:.*]] = yul.add %[[BUF]], %{{.*}}
 // CHECK:         %[[B:.*]] = yul.mload %[[P]]

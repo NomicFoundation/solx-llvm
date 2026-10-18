@@ -2987,9 +2987,9 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     // The allocation `selectorAddr` will be reused for the return data.
 
     // Generate the decoding of the results.
-    Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
     std::vector<Value> decodedResults;
     if (isRetSizeDynamic) {
+      Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
       r.create<yul::ReturnDataCopyOp>(loc, selectorAddr,
                                       /*src=*/bExt.genI256Const(0),
                                       retDataSize);
@@ -2998,25 +2998,20 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
       evmB.genABITupleDecoding(abiResultTys, selectorAddr, tupleEnd,
                                decodedResults, /*fromMem=*/true);
     } else {
-      // See https://github.com/ethereum/solidity/pull/12684
-      Value staticRetSizeGreater =
-          bExt.genCmp(yul::CmpPredicate::ugt, staticRetSize, retDataSize);
-
-      auto ifOp =
-          bExt.createIf(TypeRange{r.getIntegerType(256)}, staticRetSizeGreater);
-      // Then block:
-      r.setInsertionPointToStart(&ifOp.getThenRegion().front());
-      evmB.genFreePtrUpd(selectorAddr, retDataSize);
-      Value tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, retDataSize);
-      r.create<yul::YieldOp>(loc, ValueRange{tupleEnd});
-      // Else block:
-      r.setInsertionPointToStart(&ifOp.getElseRegion().front());
+      // See https://github.com/ethereum/solidity/pull/12684: the tuple is the
+      // return data up to the static size, so return data shorter than that
+      // fails the tuple's size check, and the tuple is otherwise exactly the
+      // static size.
+      if (staticRetSizeVal) {
+        Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
+        Value tooShort =
+            bExt.genCmp(yul::CmpPredicate::ult, retDataSize, staticRetSize);
+        evmB.genDebugRevertWithMsg(tooShort,
+                                   "ABI decoding: tuple data too short");
+      }
       evmB.genFreePtrUpd(selectorAddr, staticRetSize);
-      tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, staticRetSize);
-      r.create<yul::YieldOp>(loc, ValueRange{tupleEnd});
-
-      r.setInsertionPointAfter(ifOp);
-      evmB.genABITupleDecoding(abiResultTys, selectorAddr, ifOp.getResult(0),
+      Value tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, staticRetSize);
+      evmB.genABITupleDecoding(abiResultTys, selectorAddr, tupleEnd,
                                decodedResults,
                                /*fromMem=*/true);
     }
