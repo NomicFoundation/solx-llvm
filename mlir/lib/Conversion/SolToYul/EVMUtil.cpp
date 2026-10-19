@@ -833,14 +833,6 @@ struct ABIDecodeGuards {
 };
 } // namespace
 
-unsigned evm::getAlignment(evm::AddrSpace addrSpace) {
-  // Stack objects are compiler-generated i256 cells, 32-byte aligned per the
-  // data layout (i256:256:256, S256). All other address spaces are byte
-  // addressed with no alignment guarantees.
-  return addrSpace == evm::AddrSpace_Stack ? evm::ByteLen_Field
-                                           : evm::ByteLen_Byte;
-}
-
 unsigned evm::getAlignment(Value ptr) {
   auto ty = cast<LLVM::LLVMPointerType>(ptr.getType());
   return getAlignment(static_cast<evm::AddrSpace>(ty.getAddressSpace()));
@@ -1046,55 +1038,6 @@ Value evm::Builder::genCleanup(Type ty, Value val,
   assert(!isa<sol::ExtFuncRefType>(ty) && "unexpected ext-func-ref cleanup");
 
   return val;
-}
-
-Value evm::Builder::genHeapPtr(Value addr, std::optional<Location> locArg) {
-  Location loc = locArg ? *locArg : defLoc;
-
-  auto heapAddrSpacePtrTy =
-      LLVM::LLVMPointerType::get(b.getContext(), evm::AddrSpace_Heap);
-  return b.create<LLVM::IntToPtrOp>(loc, heapAddrSpacePtrTy, addr);
-}
-
-Value evm::Builder::genCallDataPtr(Value addr, std::optional<Location> locArg) {
-  Location loc = locArg ? *locArg : defLoc;
-
-  auto callDataAddrSpacePtrTy =
-      LLVM::LLVMPointerType::get(b.getContext(), evm::AddrSpace_CallData);
-  return b.create<LLVM::IntToPtrOp>(loc, callDataAddrSpacePtrTy, addr);
-}
-
-Value evm::Builder::genReturnDataPtr(Value addr,
-                                     std::optional<Location> locArg) {
-  Location loc = locArg ? *locArg : defLoc;
-
-  auto callDataAddrSpacePtrTy =
-      LLVM::LLVMPointerType::get(b.getContext(), evm::AddrSpace_ReturnData);
-  return b.create<LLVM::IntToPtrOp>(loc, callDataAddrSpacePtrTy, addr);
-}
-
-Value evm::Builder::genStoragePtr(Value addr, std::optional<Location> locArg) {
-  Location loc = locArg ? *locArg : defLoc;
-
-  auto storageAddrSpacePtrTy =
-      LLVM::LLVMPointerType::get(b.getContext(), evm::AddrSpace_Storage);
-  return b.create<LLVM::IntToPtrOp>(loc, storageAddrSpacePtrTy, addr);
-}
-
-Value evm::Builder::genTStoragePtr(Value addr, std::optional<Location> locArg) {
-  Location loc = locArg ? *locArg : defLoc;
-
-  auto tstorageAddrSpacePtrTy = LLVM::LLVMPointerType::get(
-      b.getContext(), evm::AddrSpace_TransientStorage);
-  return b.create<LLVM::IntToPtrOp>(loc, tstorageAddrSpacePtrTy, addr);
-}
-
-Value evm::Builder::genCodePtr(Value addr, std::optional<Location> locArg) {
-  Location loc = locArg ? *locArg : defLoc;
-
-  auto storageAddrSpacePtrTy =
-      LLVM::LLVMPointerType::get(b.getContext(), evm::AddrSpace_Code);
-  return b.create<LLVM::IntToPtrOp>(loc, storageAddrSpacePtrTy, addr);
 }
 
 Value evm::Builder::genFreePtr(std::optional<Location> locArg) {
