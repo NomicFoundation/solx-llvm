@@ -310,6 +310,9 @@ LLVMBool LLVMLinkEVM(LLVMMemoryBufferRef inBuffer,
   else
     lldArgs.push_back("--oformat=binary");
 
+  // The input is one small object: the thread pool costs more than it saves.
+  lldArgs.push_back("--threads=1");
+
   SmallString<0> codeString;
   raw_svector_ostream ostream(codeString);
   SmallString<0> errorString;
@@ -751,6 +754,9 @@ LLVMBool LLVMAssembleEVM(uint64_t codeSegment,
     lldArgs.push_back(arg.c_str());
 
   lldArgs.push_back("--evm-assembly");
+  // The inputs are a few small objects: the thread pool costs more than it
+  // saves.
+  lldArgs.push_back("--threads=1");
 
   SmallString<0> codeString;
   raw_svector_ostream ostream(codeString);
