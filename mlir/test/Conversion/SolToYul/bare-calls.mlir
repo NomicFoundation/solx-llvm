@@ -15,7 +15,7 @@ module {
     // CHECK:         yul.returndatacopy %[[RDP]], %[[C0]], %[[RDS]]
     // CHECK:         yul.func_return %[[ST]], %[[RD]] : i256, i256
     sol.func @call(%arg0: !sol.address, %arg1: !sol.string<Memory>, %arg2: ui256, %arg3: ui256) -> (i1, !sol.string<Memory>) {
-      %status, %ret_data = sol.bare_call %arg0 gas %arg2 value %arg3 input %arg1 : !sol.address, ui256, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>
+      %status, %ret_data = sol.bare_call %arg0 gas %arg2 value %arg3 input %arg1 : !sol.address, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>
       sol.return %status, %ret_data : i1, !sol.string<Memory>
     }
   } {kind = #sol<ContractKind Contract>, runtime}
@@ -31,7 +31,7 @@ module {
     // CHECK:         yul.cmp ne, %[[OK]], %[[C0]]
     // CHECK:         yul.returndatacopy
     sol.func @delegatecall(%arg0: !sol.address, %arg1: !sol.string<Memory>, %arg2: ui256) -> (i1, !sol.string<Memory>) {
-      %status, %ret_data = sol.bare_delegate_call %arg0 gas %arg2 input %arg1 : !sol.address, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>
+      %status, %ret_data = sol.bare_delegate_call %arg0 gas %arg2 input %arg1 : !sol.address, !sol.string<Memory> -> i1, !sol.string<Memory>
       sol.return %status, %ret_data : i1, !sol.string<Memory>
     }
   } {kind = #sol<ContractKind Contract>, runtime}
@@ -47,7 +47,7 @@ module {
     // CHECK:         yul.cmp ne, %[[OK]], %[[C0]]
     // CHECK:         yul.returndatacopy
     sol.func @staticcall(%arg0: !sol.address, %arg1: !sol.string<Memory>, %arg2: ui256) -> (i1, !sol.string<Memory>) {
-      %status, %ret_data = sol.bare_static_call %arg0 gas %arg2 input %arg1 : !sol.address, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>
+      %status, %ret_data = sol.bare_static_call %arg0 gas %arg2 input %arg1 : !sol.address, !sol.string<Memory> -> i1, !sol.string<Memory>
       sol.return %status, %ret_data : i1, !sol.string<Memory>
     }
   } {kind = #sol<ContractKind Contract>, runtime}
