@@ -2842,24 +2842,27 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     // Generate the call.
     Value inpSize = r.create<yul::SubOp>(loc, tupleEnd, selectorAddr);
     Value staticRetSize = bExt.genI256Const(staticRetSizeVal);
+    // A call that names no gas forwards all the gas left, read here so that it
+    // is not kept live across the encoding.
+    Value gas = adaptor.getGas() ? adaptor.getGas() : r.create<yul::GasOp>(loc);
     mlir::Value status;
 
     // Order is important here, staticcall might overlap with delegatecall.
     if (op.getDelegateCall())
       status = r.create<yul::DelegateCallOp>(
-          loc, adaptor.getGas(), addr,
+          loc, gas, addr,
           /*inpOffset=*/selectorAddr, inpSize,
           /*outOffset=*/selectorAddr, /*outSize=*/staticRetSize);
     else if (op.getStaticCall())
-      status = r.create<yul::StaticCallOp>(loc, adaptor.getGas(), addr,
+      status = r.create<yul::StaticCallOp>(loc, gas, addr,
                                            /*inpOffset=*/selectorAddr, inpSize,
                                            /*outOffset=*/selectorAddr,
                                            /*outSize=*/staticRetSize);
     else
-      status = r.create<yul::CallOp>(
-          loc, adaptor.getGas(), addr, adaptor.getVal(),
-          /*inpOffset=*/selectorAddr, inpSize,
-          /*outOffset=*/selectorAddr, /*outSize=*/staticRetSize);
+      status = r.create<yul::CallOp>(loc, gas, addr, adaptor.getVal(),
+                                     /*inpOffset=*/selectorAddr, inpSize,
+                                     /*outOffset=*/selectorAddr,
+                                     /*outSize=*/staticRetSize);
 
     // Generate forwarding revert if not try-call.
     if (!op.getTryCall()) {
@@ -2960,8 +2963,11 @@ static LogicalResult lowerBareCallLikeOp(OpT op, AdaptorT adaptor,
   Value addr = evmB.genCleanup(op.getAddr().getType(), adaptor.getAddr(), loc);
   // old codegen end
   Value zero = bExt.genI256Const(0);
+  // A call that names no gas forwards all the gas left, read here so that it is
+  // not kept live across the input size and address computation.
+  Value gas = adaptor.getGas() ? adaptor.getGas() : r.create<yul::GasOp>(loc);
   Value rawStatus =
-      opBuilderFunc(loc, adaptor, addr, inpStart, inpSize, zero, r);
+      opBuilderFunc(loc, adaptor, gas, addr, inpStart, inpSize, zero, r);
 
   Value status = bExt.genCmp(yul::CmpPredicate::ne, rawStatus, zero);
   Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
@@ -2984,12 +2990,12 @@ struct BareCallOpLowering : public OpConversionPattern<sol::BareCallOp> {
                                 ConversionPatternRewriter &r) const override {
     return lowerBareCallLikeOp(
         op, adaptor, r,
-        [](Location loc, auto adaptor, Value addr, Value inpStart,
+        [](Location loc, auto adaptor, Value gas, Value addr, Value inpStart,
            Value inpSize, Value zero, ConversionPatternRewriter &r) {
-          return r.create<yul::CallOp>(
-              loc, adaptor.getGas(), addr, adaptor.getVal(),
-              /*inpOffset=*/inpStart, inpSize, /*outOffset=*/zero,
-              /*outSize=*/zero);
+          return r.create<yul::CallOp>(loc, gas, addr, adaptor.getVal(),
+                                       /*inpOffset=*/inpStart, inpSize,
+                                       /*outOffset=*/zero,
+                                       /*outSize=*/zero);
         });
   }
 };
@@ -3002,9 +3008,9 @@ struct BareDelegateCallOpLowering
                                 ConversionPatternRewriter &r) const override {
     return lowerBareCallLikeOp(
         op, adaptor, r,
-        [](Location loc, auto adaptor, Value addr, Value inpStart,
+        [](Location loc, auto adaptor, Value gas, Value addr, Value inpStart,
            Value inpSize, Value zero, ConversionPatternRewriter &r) {
-          return r.create<yul::DelegateCallOp>(loc, adaptor.getGas(), addr,
+          return r.create<yul::DelegateCallOp>(loc, gas, addr,
                                                /*inpOffset=*/inpStart, inpSize,
                                                /*outOffset=*/zero,
                                                /*outSize=*/zero);
@@ -3020,9 +3026,9 @@ struct BareStaticCallOpLowering
                                 ConversionPatternRewriter &r) const override {
     return lowerBareCallLikeOp(
         op, adaptor, r,
-        [](Location loc, auto adaptor, Value addr, Value inpStart,
+        [](Location loc, auto adaptor, Value gas, Value addr, Value inpStart,
            Value inpSize, Value zero, ConversionPatternRewriter &r) {
-          return r.create<yul::StaticCallOp>(loc, adaptor.getGas(), addr,
+          return r.create<yul::StaticCallOp>(loc, gas, addr,
                                              /*inpOffset=*/inpStart, inpSize,
                                              /*outOffset=*/zero,
                                              /*outSize=*/zero);

@@ -846,8 +846,9 @@ def Sol_ExtFuncSelectorOp : Sol_Op<"ext_func_selector", [Pure]> {
 
 // Base class for indirect call ops (internal and external function pointers).
 class Sol_ICallOpBase<string mnemonic, TypeConstraint calleeTy,
-                      dag extraArgs = (ins), string extraAsmFmt = "">
-    : Sol_Op<mnemonic, [CallOpInterface]> {
+                      dag extraArgs = (ins), string extraAsmFmt = "",
+                      list<Trait> extraTraits = []>
+    : Sol_Op<mnemonic, extraTraits # [CallOpInterface]> {
   let arguments = !con((ins calleeTy:$callee, Variadic<AnyType>:$callee_operands),
                        extraArgs,
                        (ins OptionalAttr<DictArrayAttr>:$arg_attrs,
@@ -887,10 +888,12 @@ def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefType> {
   }];
 }
 
-// Indirect call for external function pointers.
+// Indirect call for external function pointers. Without $gas, the call
+// forwards all the gas left at the call.
 def ExtICallOp : Sol_ICallOpBase<"ext_icall", Sol_ExtFuncRefType,
-    (ins UI256:$gas, UI256:$value, UnitAttr:$static_call, UnitAttr:$try_call),
-    "`gas` $gas `value` $value ">;
+    (ins Optional<UI256>:$gas, UI256:$value, UnitAttr:$static_call,
+         UnitAttr:$try_call),
+    "(`gas` $gas^)? `value` $value ", [AttrSizedOperandSegments]>;
 
 def CallOp : Sol_Op<"call", [CallOpInterface]> {
   let arguments = (ins FlatSymbolRefAttr:$callee,
@@ -1085,10 +1088,12 @@ def Sol_SelfdestructOp : Sol_Op<"selfdestruct"> {
   let assemblyFormat = "$recipient attr-dict `:` qualified(type($recipient))";
 }
 
-def Sol_ExtCallOp : Sol_Op<"ext_call", [CallOpInterface]> {
+// Without $gas, the call forwards all the gas left at the call.
+def Sol_ExtCallOp : Sol_Op<"ext_call",
+    [CallOpInterface, AttrSizedOperandSegments]> {
   let arguments = (ins StrAttr:$callee, Variadic<AnyType>:$ins,
                        AnyTypeOf<[Sol_AddressType, UI256]>:$addr,
-                       UI256:$gas, UI256:$val,
+                       Optional<UI256>:$gas, UI256:$val,
                        UI256:$selector,
                        UnitAttr:$try_call, UnitAttr:$static_call,
                        UnitAttr:$delegate_call,
@@ -1120,7 +1125,7 @@ def Sol_ExtCallOp : Sol_Op<"ext_call", [CallOpInterface]> {
   }];
 
   let assemblyFormat = [{
-    $callee `(` $ins `)` `at` $addr `gas` $gas `value` $val `selector` $selector
+    $callee `(` $ins `)` `at` $addr (`gas` $gas^)? `value` $val `selector` $selector
       attr-dict `:` qualified(type($addr)) `,` functional-type($ins, results)
   }];
 }
@@ -1131,39 +1136,41 @@ def Sol_MemoryStringType : Type<
           "::mlir::sol::DataLocation::Memory">,
     "!sol.string<Memory>">;
 
+// Without $gas, the call forwards all the gas left at the call, as do the bare
+// delegate and static calls.
 def Sol_BareCallOp : Sol_Op<"bare_call"> {
-  let arguments = (ins Sol_AddressType:$addr, UI256:$gas, UI256:$val,
+  let arguments = (ins Sol_AddressType:$addr, Optional<UI256>:$gas, UI256:$val,
                        Sol_MemoryStringType:$inp);
   let results = (outs I1:$status, Sol_MemoryStringType:$ret_data);
 
   let assemblyFormat = [{
-    $addr `gas` $gas `value` $val `input` $inp attr-dict `:`
-      qualified(type($addr)) `,` type($gas) `,` type($val) `,`
+    $addr (`gas` $gas^)? `value` $val `input` $inp attr-dict `:`
+      qualified(type($addr)) `,` type($val) `,`
       qualified(type($inp)) `->` type($status) `,`
       qualified(type($ret_data))
   }];
 }
 
 def Sol_BareDelegateCallOp : Sol_Op<"bare_delegate_call"> {
-  let arguments = (ins Sol_AddressType:$addr, UI256:$gas,
+  let arguments = (ins Sol_AddressType:$addr, Optional<UI256>:$gas,
                        Sol_MemoryStringType:$inp);
   let results = (outs I1:$status, Sol_MemoryStringType:$ret_data);
 
   let assemblyFormat = [{
-    $addr `gas` $gas `input` $inp attr-dict `:`
-      qualified(type($addr)) `,` type($gas) `,` qualified(type($inp))
+    $addr (`gas` $gas^)? `input` $inp attr-dict `:`
+      qualified(type($addr)) `,` qualified(type($inp))
       `->` type($status) `,` qualified(type($ret_data))
   }];
 }
 
 def Sol_BareStaticCallOp : Sol_Op<"bare_static_call"> {
-  let arguments = (ins Sol_AddressType:$addr, UI256:$gas,
+  let arguments = (ins Sol_AddressType:$addr, Optional<UI256>:$gas,
                        Sol_MemoryStringType:$inp);
   let results = (outs I1:$status, Sol_MemoryStringType:$ret_data);
 
   let assemblyFormat = [{
-    $addr `gas` $gas `input` $inp attr-dict `:`
-      qualified(type($addr)) `,` type($gas) `,` qualified(type($inp))
+    $addr (`gas` $gas^)? `input` $inp attr-dict `:`
+      qualified(type($addr)) `,` qualified(type($inp))
       `->` type($status) `,` qualified(type($ret_data))
   }];
 }
