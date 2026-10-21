@@ -63,4 +63,153 @@ sol.contract @C {
     %0 = "sol.keccak256"(%arg0) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
     sol.return %0 : !sol.fixedbytes<32>
   }
+
+  // CHECK-LABEL: sol.func @encodedAndHashed(
+  // CHECK-NEXT:    %[[HASH:.*]] = sol.constant 35286403120855365962805127237049809881669876751651884979611909062921250761797 : ui256
+  // CHECK-NEXT:    %[[LIT:.*]] = sol.constant_string "abc"
+  // CHECK-NEXT:    %[[ENC:.*]] = sol.encode %[[LIT]], %[[LIT]] : (!sol.constant_string, !sol.constant_string) -> !sol.string<Memory>
+  // CHECK-NEXT:    %[[BYTES:.*]] = sol.bytes_cast %[[HASH]] : ui256 to !sol.fixedbytes<32>
+  // CHECK-NEXT:    sol.return %[[ENC]], %[[BYTES]] : !sol.string<Memory>, !sol.fixedbytes<32>
+  sol.func @encodedAndHashed() -> (!sol.string<Memory>, !sol.fixedbytes<32>) {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    %1 = sol.encode %0, %0 : (!sol.string<Memory>, !sol.string<Memory>) -> !sol.string<Memory>
+    %2 = "sol.keccak256"(%0) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+    sol.return %1, %2 : !sol.string<Memory>, !sol.fixedbytes<32>
+  }
+
+  sol.state_var @s slot 0 offset 0 : !sol.string<Storage>
+
+  // A copy takes a constant string into a storage string, and not into a
+  // memory one.
+  // CHECK-LABEL: sol.func @copied(
+  // CHECK:         %[[STORED:.*]] = sol.constant_string "abc"
+  // CHECK:         sol.copy %[[STORED]], %{{.*}} : !sol.constant_string, !sol.string<Storage>
+  // CHECK:         %[[COPIED:.*]] = sol.string_lit "abc" -> !sol.string<Memory>
+  // CHECK:         sol.copy %[[COPIED]], %arg0 : !sol.string<Memory>, !sol.string<Memory>
+  sol.func @copied(%arg0: !sol.string<Memory>) {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    %1 = sol.addr_of @s : !sol.string<Storage>
+    sol.copy %0, %1 : !sol.string<Memory>, !sol.string<Storage>
+    %2 = sol.string_lit "abc" -> !sol.string<Memory>
+    sol.copy %2, %arg0 : !sol.string<Memory>, !sol.string<Memory>
+    sol.return
+  }
+
+  // CHECK-LABEL: sol.func @otherBlocks(
+  // CHECK-NEXT:    %[[LIT:.*]] = sol.constant_string "abc"
+  // CHECK-NEXT:    cf.cond_br %arg0, ^[[THEN:.*]], ^[[ELSE:.*]]
+  // CHECK-NEXT:  ^[[THEN]]:
+  // CHECK-NEXT:    sol.encode %[[LIT]] : (!sol.constant_string) -> !sol.string<Memory>
+  // CHECK:       ^[[ELSE]]:
+  // CHECK-NEXT:    sol.encode %[[LIT]], %[[LIT]] : (!sol.constant_string, !sol.constant_string) -> !sol.string<Memory>
+  sol.func @otherBlocks(%arg0: i1) -> !sol.string<Memory> {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    cf.cond_br %arg0, ^bb1, ^bb2
+  ^bb1:
+    %1 = sol.encode %0 : (!sol.string<Memory>) -> !sol.string<Memory>
+    sol.return %1 : !sol.string<Memory>
+  ^bb2:
+    %2 = sol.encode %0, %0 : (!sol.string<Memory>, !sol.string<Memory>) -> !sol.string<Memory>
+    sol.return %2 : !sol.string<Memory>
+  }
+
+  // CHECK-LABEL: sol.func @nestedRegion(
+  // CHECK-NEXT:    %[[LIT:.*]] = sol.constant_string "abc"
+  // CHECK-NEXT:    sol.if %arg0 {
+  // CHECK-NEXT:      sol.emit "E(string)" non_indexed = [%[[LIT]]] : !sol.constant_string
+  sol.func @nestedRegion(%arg0: i1) {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    sol.if %arg0 {
+      sol.emit "E(string)" non_indexed = [%0] : !sol.string<Memory>
+      sol.yield
+    } else {
+    }
+    sol.return
+  }
+
+  // A use in a nested region that takes no constant string keeps the memory.
+  // CHECK-LABEL: sol.func @nestedCopy(
+  // CHECK-NEXT:    %[[LIT:.*]] = sol.string_lit "abc" -> !sol.string<Memory>
+  // CHECK:         sol.copy %[[LIT]], %arg1
+  // CHECK:         sol.encode %[[LIT]]
+  sol.func @nestedCopy(%arg0: i1, %arg1: !sol.string<Memory>) -> !sol.string<Memory> {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    sol.if %arg0 {
+      sol.copy %0, %arg1 : !sol.string<Memory>, !sol.string<Memory>
+      sol.yield
+    } else {
+    }
+    %1 = sol.encode %0 : (!sol.string<Memory>) -> !sol.string<Memory>
+    sol.return %1 : !sol.string<Memory>
+  }
+
+  // Two equal constant strings merge into one.
+  // CHECK-LABEL: sol.func @indexedTopic(
+  // CHECK-NEXT:    %[[LIT:.*]] = sol.constant_string "abc"
+  // CHECK-NEXT:    sol.emit "E(string,string)" indexed = [%[[LIT]]] non_indexed = [%[[LIT]]] : !sol.constant_string, !sol.constant_string
+  sol.func @indexedTopic() {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    %1 = sol.string_lit "abc" -> !sol.string<Memory>
+    sol.emit "E(string,string)" indexed = [%0] non_indexed = [%1] : !sol.string<Memory>, !sol.string<Memory>
+    sol.return
+  }
+
+  // CHECK-LABEL: sol.func @concatenated(
+  // CHECK-NEXT:    %[[HASH:.*]] = sol.constant 35286403120855365962805127237049809881669876751651884979611909062921250761797 : ui256
+  // CHECK-NEXT:    %[[LIT:.*]] = sol.string_lit "abc" -> !sol.string<Memory>
+  // CHECK-NEXT:    %[[BYTES:.*]] = sol.bytes_cast %[[HASH]] : ui256 to !sol.fixedbytes<32>
+  // CHECK-NEXT:    sol.return %[[LIT]], %[[BYTES]] : !sol.string<Memory>, !sol.fixedbytes<32>
+  sol.func @concatenated() -> (!sol.string<Memory>, !sol.fixedbytes<32>) {
+    %0 = sol.string_lit "a" -> !sol.string<Memory>
+    %1 = sol.string_lit "bc" -> !sol.string<Memory>
+    %2 = sol.concat %0, %1 : !sol.string<Memory>, !sol.string<Memory> -> !sol.string<Memory>
+    %3 = sol.string_lit "a" -> !sol.string<Memory>
+    %4 = sol.string_lit "bc" -> !sol.string<Memory>
+    %5 = sol.concat %3, %4 : !sol.string<Memory>, !sol.string<Memory> -> !sol.string<Memory>
+    %6 = "sol.keccak256"(%5) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+    sol.return %2, %6 : !sol.string<Memory>, !sol.fixedbytes<32>
+  }
+
+  // CHECK-LABEL: sol.func @concatenatedWithValue(
+  // CHECK-NEXT:    %[[LIT:.*]] = sol.constant_string "abc"
+  // CHECK-NEXT:    sol.concat %[[LIT]], %arg0 : !sol.constant_string, !sol.string<Memory> -> <Memory>
+  sol.func @concatenatedWithValue(%arg0: !sol.string<Memory>) -> !sol.string<Memory> {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    %1 = sol.concat %0, %arg0 : !sol.string<Memory>, !sol.string<Memory> -> !sol.string<Memory>
+    sol.return %1 : !sol.string<Memory>
+  }
+
+  // A packed encoding of constant strings is a literal of their bytes.
+  // CHECK-LABEL: sol.func @encodedPacked(
+  // CHECK-NEXT:    %[[LIT:.*]] = sol.string_lit "abc" -> !sol.string<Memory>
+  // CHECK-NEXT:    sol.return %[[LIT]] : !sol.string<Memory>
+  sol.func @encodedPacked() -> !sol.string<Memory> {
+    %0 = sol.string_lit "a" -> !sol.string<Memory>
+    %1 = sol.string_lit "bc" -> !sol.string<Memory>
+    %2 = sol.encode %0, %1 : (!sol.string<Memory>, !sol.string<Memory>) -> !sol.string<Memory> {packed}
+    sol.return %2 : !sol.string<Memory>
+  }
+
+  // CHECK-LABEL: sol.func @hashedPacked(
+  // CHECK-NEXT:    %[[HASH:.*]] = sol.constant 35286403120855365962805127237049809881669876751651884979611909062921250761797 : ui256
+  // CHECK-NEXT:    %[[BYTES:.*]] = sol.bytes_cast %[[HASH]] : ui256 to !sol.fixedbytes<32>
+  // CHECK-NEXT:    sol.return %[[BYTES]] : !sol.fixedbytes<32>
+  sol.func @hashedPacked() -> !sol.fixedbytes<32> {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    %1 = sol.encode %0 : (!sol.string<Memory>) -> !sol.string<Memory> {packed}
+    %2 = "sol.keccak256"(%1) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+    sol.return %2 : !sol.fixedbytes<32>
+  }
+
+  // A packed encoding with a runtime value, and a standard encoding, stay.
+  // CHECK-LABEL: sol.func @encodedWithValue(
+  // CHECK:         sol.encode %{{.*}}, %arg0 : (!sol.constant_string, ui8) -> !sol.string<Memory> {packed}
+  // CHECK:         sol.encode %{{.*}} : (!sol.constant_string) -> !sol.string<Memory>
+  sol.func @encodedWithValue(%arg0: ui8) -> (!sol.string<Memory>, !sol.string<Memory>) {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    %1 = sol.encode %0, %arg0 : (!sol.string<Memory>, ui8) -> !sol.string<Memory> {packed}
+    %2 = sol.string_lit "abc" -> !sol.string<Memory>
+    %3 = sol.encode %2 : (!sol.string<Memory>) -> !sol.string<Memory>
+    sol.return %1, %3 : !sol.string<Memory>, !sol.string<Memory>
+  }
 } {kind = #sol<ContractKind Contract>, runtime}

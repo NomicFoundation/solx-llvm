@@ -1,6 +1,6 @@
 // RUN: mlir-opt %s --convert-sol-to-yul | FileCheck %s
 
-// A string literal over 128 bytes is data in the code, which the object that
+// A string literal over 64 bytes is data in the code, which the object that
 // copies it holds in a global of its own, so the copy binds to its data
 // section. Two uses of one literal share its global, and a different literal
 // gets the next one.

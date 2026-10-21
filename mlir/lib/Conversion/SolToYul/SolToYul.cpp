@@ -889,19 +889,31 @@ struct CExpOpLowering
 template <typename OpT>
 static Value getCryptoHashLowering(OpT op, uint32_t preCompieAddr,
                                    typename OpT::Adaptor adaptor,
-                                   ConversionPatternRewriter &r) {
+                                   ConversionPatternRewriter &r,
+                                   evm::StringLiteralPool &literals) {
   Location loc = op.getLoc();
   mlir::solgen::BuilderExt bExt(r, loc);
-  evm::Builder evmB(getModule(op), r, loc);
+  evm::Builder evmB(getModule(op), r, loc, literals);
 
-  Type ty = op.getData().getType();
-  sol::DataLocation dataLoc = sol::getDataLocation(ty);
-  assert(dataLoc == sol::DataLocation::Memory);
+  sol::DataLocation dataLoc = sol::DataLocation::Memory;
 
   Value zero = bExt.genI256Const(0);
   Value retSize = bExt.genI256Const(32);
-  Value dataLen = evmB.genLoad(adaptor.getData(), dataLoc);
-  Value dataSlot = evmB.genDataAddrPtr(adaptor.getData(), dataLoc);
+  Value dataLen, dataSlot;
+  if (isa<sol::ConstantStringType>(op.getData().getType())) {
+    StringRef bytes =
+        cast<sol::ConstantStringOp>(op.getData().getDefiningOp()).getValue();
+    // The precompile reads the bytes only during the call, so they skip the
+    // allocation a memory literal gets: they are written at the free memory
+    // pointer, and the pointer does not move.
+    dataSlot = evmB.genFreePtr();
+    evmB.genStringLiteralData(bytes, dataSlot);
+    dataLen = bExt.genI256Const(bytes.size());
+  } else {
+    assert(sol::getDataLocation(op.getData().getType()) == dataLoc);
+    dataLen = evmB.genLoad(adaptor.getData(), dataLoc);
+    dataSlot = evmB.genDataAddrPtr(adaptor.getData(), dataLoc);
+  }
 
   Value gas = r.create<mlir::yul::GasOp>(loc);
   // Hashing functions store their result in scratch space (0x00–0x3f).
@@ -1247,25 +1259,35 @@ struct Keccak256OpLowering : public OpConversionPattern<sol::Keccak256Op> {
 };
 
 struct Sha256OpLowering : public OpConversionPattern<sol::Sha256Op> {
-  using OpConversionPattern<sol::Sha256Op>::OpConversionPattern;
+  Sha256OpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                   evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::Sha256Op op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
-    r.replaceOp(op, getCryptoHashLowering(op, /*preCompieAddr=*/2, adaptor, r));
+    r.replaceOp(op, getCryptoHashLowering(op, /*preCompieAddr=*/2, adaptor, r,
+                                          literals));
 
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct Ripemd160OpLowering : public OpConversionPattern<sol::Ripemd160Op> {
-  using OpConversionPattern<sol::Ripemd160Op>::OpConversionPattern;
+  Ripemd160OpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                      evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::Ripemd160Op op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
-    r.replaceOp(op, getCryptoHashLowering(op, /*preCompieAddr=*/3, adaptor, r));
+    r.replaceOp(op, getCryptoHashLowering(op, /*preCompieAddr=*/3, adaptor, r,
+                                          literals));
 
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct EcrecoverOpLowering : public OpConversionPattern<sol::EcrecoverOp> {
@@ -1451,41 +1473,17 @@ struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
 
     Location loc = op.getLoc();
     auto mod = getModule(op);
-    evm::Builder evmB(mod, r, loc);
+    evm::Builder evmB(mod, r, loc, literals);
     mlir::solgen::BuilderExt bExt(r, op.getLoc());
 
     StringRef lit = adaptor.getValue();
-    Value litSize = bExt.genI256Const(lit.size());
 
-    // Beyond a certain length, string literals are cheaper to embed as in-code
-    // data and load via CODECOPY than to construct directly.
-    // TODO: determine the exact size threshold.
-    Value allocPtr = nullptr;
-    if (lit.size() > 128) {
-      // genMemAlloc(Type) calls genMemAllocForDynArray which writes the length
-      // word. Then the CODECOPY below fills only the data area.
-      allocPtr =
-          evmB.genMemAlloc(op.getType(), false, {}, litSize, Type{}, loc);
-      LLVM::GlobalOp globConst = literals.getOrCreate(
-          lit, op->getParentOfType<sol::ContractOp>(), r, loc);
-      auto ptrToArray =
-          LLVM::LLVMPointerType::get(mod.getContext(), /*addressSpace=*/4);
-      auto addrOf =
-          r.create<LLVM::AddressOfOp>(loc, ptrToArray, globConst.getSymName());
-      Value intAddr =
-          r.create<LLVM::PtrToIntOp>(loc, r.getIntegerType(256), addrOf);
-      Value strPtr =
-          evmB.genDataAddrPtr(allocPtr, sol::DataLocation::Memory, loc);
-      r.create<yul::CodeCopyOp>(loc, strPtr, intAddr, litSize);
-    } else {
-      // Allocate raw memory (32-byte length slot + rounded-up data) and rely on
-      // genStringStore to write both the length word and the data. This avoids
-      // the redundant length write that genMemAlloc(Type) would produce via
-      // genMemAllocForDynArray.
-      size_t roundedLen = llvm::alignTo(lit.size(), 32u);
-      allocPtr = evmB.genMemAlloc(bExt.genI256Const(32 + roundedLen), loc);
-      evmB.genStringStore(lit.str(), allocPtr, loc);
-    }
+    size_t roundedLen = llvm::alignTo(lit.size(), 32u);
+    Value allocPtr = evmB.genMemAlloc(bExt.genI256Const(32 + roundedLen), loc);
+    r.create<yul::MStoreOp>(loc, allocPtr, bExt.genI256Const(lit.size()));
+    evmB.genStringLiteralData(
+        lit, evmB.genDataAddrPtr(allocPtr, sol::DataLocation::Memory, loc),
+        loc);
 
     r.replaceOp(op, allocPtr);
     return success();
@@ -1494,13 +1492,27 @@ struct StringLitOpLowering : public OpConversionPattern<sol::StringLitOp> {
   evm::StringLiteralPool &literals;
 };
 
+struct ConstantStringOpLowering
+    : public OpConversionPattern<sol::ConstantStringOp> {
+  using OpConversionPattern<sol::ConstantStringOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::ConstantStringOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    // Its consumers, lowered before it, wrote its bytes from its attribute.
+    r.eraseOp(op);
+    return success();
+  }
+};
+
 struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
-  using OpConversionPattern<sol::ConcatOp>::OpConversionPattern;
+  ConcatOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                   evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::ConcatOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
-    evm::Builder evmB(getModule(op), r, loc);
+    evm::Builder evmB(getModule(op), r, loc, literals);
     mlir::solgen::BuilderExt bExt(r, loc);
 
     Value freePtr = evmB.genFreePtr();
@@ -1509,6 +1521,15 @@ struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
     Value currDst = dstStart;
     for (auto [origSrc, src] : llvm::zip(op.getArgs(), adaptor.getArgs())) {
       Type ty = origSrc.getType();
+      if (isa<sol::ConstantStringType>(ty)) {
+        StringRef bytes =
+            cast<sol::ConstantStringOp>(origSrc.getDefiningOp()).getValue();
+        evmB.genStringLiteralData(bytes, currDst, loc);
+        currDst =
+            r.create<yul::AddOp>(loc, currDst, bExt.genI256Const(bytes.size()));
+        continue;
+      }
+
       if (auto bytesTy = dyn_cast<sol::FixedBytesType>(ty)) {
         // Cleanup the src before copying to memory to ensure that any
         // padding bytes are zeroed out.
@@ -1530,6 +1551,8 @@ struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
 
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct GetCallDataOpLowering : public OpConversionPattern<sol::GetCallDataOp> {
@@ -2422,6 +2445,14 @@ struct CopyOpLowering : public OpConversionPattern<sol::CopyOp> {
     mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(op), r, loc);
 
+    if (isa<sol::ConstantStringType>(op.getSrc().getType())) {
+      StringRef bytes =
+          cast<sol::ConstantStringOp>(op.getSrc().getDefiningOp()).getValue();
+      evmB.genCopyConstantStringToStorage(bytes, adaptor.getDst(), loc);
+      r.eraseOp(op);
+      return success();
+    }
+
     Type srcTy = op.getSrc().getType();
     Type dstTy = op.getDst().getType();
     sol::DataLocation srcDataLoc = sol::getDataLocation(srcTy);
@@ -2680,13 +2711,15 @@ struct BalanceOpLowering
 // old codegen end
 
 struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
-  using OpConversionPattern<sol::EncodeOp>::OpConversionPattern;
+  EncodeOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                   evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::EncodeOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
     mlir::solgen::BuilderExt bExt(r, loc);
-    evm::Builder evmB(getModule(op), r, loc);
+    evm::Builder evmB(getModule(op), r, loc, literals);
 
     Value freePtr = evmB.genFreePtr();
     if (op.getPacked()) {
@@ -2726,6 +2759,8 @@ struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
     r.replaceOp(op, freePtr);
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct DecodeOpLowering : public OpConversionPattern<sol::DecodeOp> {
@@ -2758,14 +2793,16 @@ struct DecodeOpLowering : public OpConversionPattern<sol::DecodeOp> {
 };
 
 struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
-  using OpConversionPattern<sol::ExtCallOp>::OpConversionPattern;
+  ExtCallOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                    evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::ExtCallOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
     mlir::solgen::BuilderExt bExt(r, loc);
     auto mod = getModule(op);
-    evm::Builder evmB(mod, r, loc);
+    evm::Builder evmB(mod, r, loc, literals);
 
     assert(sol::evmCanOverchargeGasForCall(mod) && "NYI");
 
@@ -2942,22 +2979,37 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     r.replaceOp(op, newResults);
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 template <typename OpT, typename AdaptorT, typename OpBuilderFuncT>
 static LogicalResult lowerBareCallLikeOp(OpT op, AdaptorT adaptor,
                                          ConversionPatternRewriter &r,
+                                         evm::StringLiteralPool &literals,
                                          OpBuilderFuncT &&opBuilderFunc) {
   Location loc = op.getLoc();
   mlir::solgen::BuilderExt bExt(r, loc);
   auto mod = getModule(op);
-  evm::Builder evmB(mod, r, loc);
+  evm::Builder evmB(mod, r, loc, literals);
 
   assert(sol::evmSupportsReturnData(mod) && "NYI");
 
-  auto inpTy = cast<sol::StringType>(op.getInp().getType());
-  Value inpSize = evmB.genDynSize(adaptor.getInp(), inpTy, loc);
-  Value inpStart = evmB.genDataAddrPtr(adaptor.getInp(), inpTy, loc);
+  Value inpSize, inpStart;
+  if (isa<sol::ConstantStringType>(op.getInp().getType())) {
+    StringRef bytes =
+        cast<sol::ConstantStringOp>(op.getInp().getDefiningOp()).getValue();
+    // The callee reads the input only during the call, so it skips the
+    // allocation a memory literal gets: it is written at the free memory
+    // pointer, and the pointer does not move.
+    inpStart = evmB.genFreePtr(loc);
+    evmB.genStringLiteralData(bytes, inpStart, loc);
+    inpSize = bExt.genI256Const(bytes.size());
+  } else {
+    auto inpTy = cast<sol::StringType>(op.getInp().getType());
+    inpSize = evmB.genDynSize(adaptor.getInp(), inpTy, loc);
+    inpStart = evmB.genDataAddrPtr(adaptor.getInp(), inpTy, loc);
+  }
   // old codegen begin
   // (Via-IR cleans on casts, not here).
   Value addr = evmB.genCleanup(op.getAddr().getType(), adaptor.getAddr(), loc);
@@ -2984,12 +3036,14 @@ static LogicalResult lowerBareCallLikeOp(OpT op, AdaptorT adaptor,
 }
 
 struct BareCallOpLowering : public OpConversionPattern<sol::BareCallOp> {
-  using OpConversionPattern<sol::BareCallOp>::OpConversionPattern;
+  BareCallOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                     evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::BareCallOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     return lowerBareCallLikeOp(
-        op, adaptor, r,
+        op, adaptor, r, literals,
         [](Location loc, auto adaptor, Value gas, Value addr, Value inpStart,
            Value inpSize, Value zero, ConversionPatternRewriter &r) {
           return r.create<yul::CallOp>(loc, gas, addr, adaptor.getVal(),
@@ -2998,16 +3052,20 @@ struct BareCallOpLowering : public OpConversionPattern<sol::BareCallOp> {
                                        /*outSize=*/zero);
         });
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct BareDelegateCallOpLowering
     : public OpConversionPattern<sol::BareDelegateCallOp> {
-  using OpConversionPattern<sol::BareDelegateCallOp>::OpConversionPattern;
+  BareDelegateCallOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                             evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::BareDelegateCallOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     return lowerBareCallLikeOp(
-        op, adaptor, r,
+        op, adaptor, r, literals,
         [](Location loc, auto adaptor, Value gas, Value addr, Value inpStart,
            Value inpSize, Value zero, ConversionPatternRewriter &r) {
           return r.create<yul::DelegateCallOp>(loc, gas, addr,
@@ -3016,16 +3074,20 @@ struct BareDelegateCallOpLowering
                                                /*outSize=*/zero);
         });
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct BareStaticCallOpLowering
     : public OpConversionPattern<sol::BareStaticCallOp> {
-  using OpConversionPattern<sol::BareStaticCallOp>::OpConversionPattern;
+  BareStaticCallOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                           evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::BareStaticCallOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     return lowerBareCallLikeOp(
-        op, adaptor, r,
+        op, adaptor, r, literals,
         [](Location loc, auto adaptor, Value gas, Value addr, Value inpStart,
            Value inpSize, Value zero, ConversionPatternRewriter &r) {
           return r.create<yul::StaticCallOp>(loc, gas, addr,
@@ -3034,6 +3096,8 @@ struct BareStaticCallOpLowering
                                              /*outSize=*/zero);
         });
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 /// Lowers the common value-transfer call pattern used by 'sol.send' and
@@ -3132,13 +3196,15 @@ struct ExtICallOpLowering : public OpConversionPattern<sol::ExtICallOp> {
 };
 
 struct NewOpLowering : public OpConversionPattern<sol::NewOp> {
-  using OpConversionPattern<sol::NewOp>::OpConversionPattern;
+  NewOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::NewOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
     mlir::solgen::BuilderExt bExt(r, loc);
-    evm::Builder evmB(getModule(op), r, loc);
+    evm::Builder evmB(getModule(op), r, loc, literals);
 
     Value bytecodeAddr = evmB.genFreePtr();
     Value dataOffset = r.create<yul::DataOffsetOp>(loc, op.getObjName());
@@ -3167,6 +3233,8 @@ struct NewOpLowering : public OpConversionPattern<sol::NewOp> {
     r.replaceOp(op, addr);
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct ObjectCodeOpLowering : public OpConversionPattern<sol::ObjectCodeOp> {
@@ -3499,13 +3567,14 @@ struct AssertOpLowering : public OpConversionPattern<sol::AssertOp> {
 };
 
 struct RequireOpLowering : public OpConversionPattern<sol::RequireOp> {
-  using OpConversionPattern<sol::RequireOp>::OpConversionPattern;
+  RequireOpLowering(MLIRContext *ctx, evm::StringLiteralPool &literals)
+      : OpConversionPattern(ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::RequireOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
     mlir::solgen::BuilderExt bExt(r, loc);
-    evm::Builder evmB(getModule(op), r, loc);
+    evm::Builder evmB(getModule(op), r, loc, literals);
 
     // Generate the revert condition.
     mlir::Value falseVal = bExt.genBool(false);
@@ -3528,16 +3597,20 @@ struct RequireOpLowering : public OpConversionPattern<sol::RequireOp> {
     r.eraseOp(op);
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct EmitOpLowering : public OpConversionPattern<sol::EmitOp> {
-  using OpConversionPattern<sol::EmitOp>::OpConversionPattern;
+  EmitOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                 evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::EmitOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = op.getLoc();
     mlir::solgen::BuilderExt bExt(r, loc);
-    evm::Builder evmB(getModule(op), r, loc);
+    evm::Builder evmB(getModule(op), r, loc, literals);
 
     // Collect the remapped indexed and non-indexed args.
     //
@@ -3554,6 +3627,14 @@ struct EmitOpLowering : public OpConversionPattern<sol::EmitOp> {
     for (Value origIdxArg : op.getIndexedArgs()) {
       Type origTy = origIdxArg.getType();
       Value val = remappedOperands[argIdx++];
+
+      // Constant string indexed arg: topic = keccak256 of its bytes.
+      if (isa<sol::ConstantStringType>(origTy)) {
+        StringRef bytes =
+            cast<sol::ConstantStringOp>(origIdxArg.getDefiningOp()).getValue();
+        indexedArgs.push_back(bExt.genI256Const(evm::keccak256AsAPInt(bytes)));
+        continue;
+      }
 
       // Reference-type indexed arg: topic = keccak256(packed_encode(arg)).
       if (isa<sol::StringType, sol::ArrayType, sol::StructType>(origTy)) {
@@ -3591,14 +3672,18 @@ struct EmitOpLowering : public OpConversionPattern<sol::EmitOp> {
 
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 struct RevertOpLowering : public OpConversionPattern<sol::RevertOp> {
-  using OpConversionPattern<sol::RevertOp>::OpConversionPattern;
+  RevertOpLowering(TypeConverter &tyConv, MLIRContext *ctx,
+                   evm::StringLiteralPool &literals)
+      : OpConversionPattern(tyConv, ctx), literals(literals) {}
 
   LogicalResult matchAndRewrite(sol::RevertOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
-    evm::Builder evmB(getModule(op), r, op.getLoc());
+    evm::Builder evmB(getModule(op), r, op.getLoc(), literals);
     if (op.getCall()) {
       // revert ErrorName(...)
       assert(op.getSignature() && !op.getSignature()->empty());
@@ -3614,6 +3699,8 @@ struct RevertOpLowering : public OpConversionPattern<sol::RevertOp> {
     r.eraseOp(op);
     return success();
   }
+
+  evm::StringLiteralPool &literals;
 };
 
 static void lowerSolRegionTerminatorsToYul(Region &region,
@@ -4258,9 +4345,11 @@ void evm::populateCheckedArithPats(RewritePatternSet &pats,
 }
 
 void evm::populateCryptoPats(mlir::RewritePatternSet &pats,
-                             mlir::TypeConverter &tyConv) {
-  pats.add<Keccak256OpLowering, Sha256OpLowering, Ripemd160OpLowering,
-           EcrecoverOpLowering>(tyConv, pats.getContext());
+                             mlir::TypeConverter &tyConv,
+                             evm::StringLiteralPool &literals) {
+  pats.add<Keccak256OpLowering, EcrecoverOpLowering>(tyConv, pats.getContext());
+  pats.add<Sha256OpLowering, Ripemd160OpLowering>(tyConv, pats.getContext(),
+                                                  literals);
 }
 
 LLVM::GlobalOp evm::StringLiteralPool::getOrCreate(StringRef literal,
@@ -4287,9 +4376,10 @@ void evm::populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv,
            DefaultStorageOpLowering, PushOpLowering, PopOpLowering,
            GepOpLowering, MapOpLowering, LoadOpLowering, StoreOpLowering,
            DataLocCastOpLowering, LengthOpLowering, SliceOpLowering,
-           CopyOpLowering, DeleteOpLowering, PushStringOpLowering,
-           ConcatOpLowering>(tyConv, pats.getContext());
-  pats.add<StringLitOpLowering>(tyConv, pats.getContext(), literals);
+           CopyOpLowering, DeleteOpLowering, PushStringOpLowering>(
+      tyConv, pats.getContext());
+  pats.add<StringLitOpLowering, ConcatOpLowering>(tyConv, pats.getContext(),
+                                                  literals);
   pats.add<AddrOfOpLowering, LoadImmutableOpLowering>(pats.getContext());
 }
 
@@ -4322,24 +4412,36 @@ void evm::populateAddrPat(RewritePatternSet &pats, TypeConverter &tyConv) {
 }
 
 void evm::populateAbiPats(mlir::RewritePatternSet &pats,
-                          mlir::TypeConverter &tyConv) {
-  pats.add<EncodeOpLowering, DecodeOpLowering>(tyConv, pats.getContext());
+                          mlir::TypeConverter &tyConv,
+                          evm::StringLiteralPool &literals) {
+  pats.add<DecodeOpLowering>(tyConv, pats.getContext());
+  pats.add<EncodeOpLowering>(tyConv, pats.getContext(), literals);
 }
 
-void evm::populateExtCallPat(RewritePatternSet &pats, TypeConverter &tyConv) {
-  pats.add<ExtCallOpLowering, ExtICallOpLowering, BareCallOpLowering,
-           BareDelegateCallOpLowering, BareStaticCallOpLowering, TryOpLowering,
-           NewOpLowering, CodeOpLowering, CodeSizeOpLowering,
-           ObjectCodeOpLowering, SendOpLowering, TransferOpLowering>(
-      tyConv, pats.getContext());
+void evm::populateExtCallPat(RewritePatternSet &pats, TypeConverter &tyConv,
+                             evm::StringLiteralPool &literals) {
+  pats.add<ExtICallOpLowering, TryOpLowering, CodeOpLowering,
+           CodeSizeOpLowering, ObjectCodeOpLowering, SendOpLowering,
+           TransferOpLowering>(tyConv, pats.getContext());
+  pats.add<ExtCallOpLowering, BareCallOpLowering, BareDelegateCallOpLowering,
+           BareStaticCallOpLowering, NewOpLowering>(tyConv, pats.getContext(),
+                                                    literals);
 }
 
-void evm::populateEmitPat(RewritePatternSet &pats, TypeConverter &tyConv) {
-  pats.add<EmitOpLowering, RevertOpLowering>(tyConv, pats.getContext());
+void evm::populateEmitPat(RewritePatternSet &pats, TypeConverter &tyConv,
+                          evm::StringLiteralPool &literals) {
+  pats.add<EmitOpLowering, RevertOpLowering>(tyConv, pats.getContext(),
+                                             literals);
 }
 
-void evm::populateRequirePat(RewritePatternSet &pats) {
-  pats.add<RequireOpLowering, AssertOpLowering>(pats.getContext());
+void evm::populateConstantStringPat(RewritePatternSet &pats) {
+  pats.add<ConstantStringOpLowering>(pats.getContext());
+}
+
+void evm::populateRequirePat(RewritePatternSet &pats,
+                             evm::StringLiteralPool &literals) {
+  pats.add<AssertOpLowering>(pats.getContext());
+  pats.add<RequireOpLowering>(pats.getContext(), literals);
 }
 
 void evm::populateContractPat(RewritePatternSet &pats,
@@ -4563,13 +4665,13 @@ void evm::populateStage1Pats(RewritePatternSet &pats, TypeConverter &tyConv,
   populateArithPats(pats, tyConv);
   populateInternalFuncPtrPats(pats, tyConv, dispatch);
   populateCheckedArithPats(pats, tyConv);
-  populateCryptoPats(pats, tyConv);
+  populateCryptoPats(pats, tyConv, literals);
   populateMemPats(pats, tyConv, literals);
   populateAddrPat(pats, tyConv);
-  populateAbiPats(pats, tyConv);
-  populateExtCallPat(pats, tyConv);
-  populateEmitPat(pats, tyConv);
-  populateRequirePat(pats);
+  populateAbiPats(pats, tyConv, literals);
+  populateExtCallPat(pats, tyConv, literals);
+  populateEmitPat(pats, tyConv, literals);
+  populateRequirePat(pats, literals);
   populateControlFlowPats(pats, tyConv);
   populateInlineAsmPats(pats, tyConv);
 }

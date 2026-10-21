@@ -17,6 +17,7 @@
 #include "mlir/Conversion/SolToYul/EVMUtil.h"
 #include "mlir/Conversion/SolToYul/EVMConstants.h"
 #include "mlir/Conversion/SolToYul/HelperSymbols.h"
+#include "mlir/Conversion/SolToYul/SolToYul.h"
 #include "mlir/Conversion/SolToYul/Util.h"
 #include "mlir/Dialect/Sol/DebugInfo.h"
 #include "mlir/Dialect/Sol/Sol.h"
@@ -1914,28 +1915,58 @@ void evm::Builder::genStore(Value val, Value addr, sol::DataLocation dataLoc,
   }
 }
 
-void evm::Builder::genStringStore(std::string const &str, Value addr,
-                                  std::optional<Location> locArg) {
+/// Returns the word of \p bytes at \p offset, with zeros past the last byte.
+static APInt getStringLiteralWord(StringRef bytes, uint64_t offset) {
+  assert(!bytes.empty() && "expected a non-empty string literal");
+  assert(offset < bytes.size() && "expected an offset inside the literal");
+  constexpr uint64_t wordSize = 32;
+  StringRef chunk = bytes.substr(offset, wordSize);
+  APInt word(256, 0);
+  for (char c : chunk) {
+    word <<= 8;
+    word |= static_cast<uint8_t>(c);
+  }
+  // A partial last word is left-aligned, with zeros past the bytes.
+  if (chunk.size() < wordSize)
+    word <<= 8 * (wordSize - chunk.size());
+  return word;
+}
+
+void evm::Builder::genStringLiteralData(StringRef bytes, Value addr,
+                                        std::optional<Location> locArg,
+                                        bool withCleanup) {
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
 
-  // Generate the size store.
-  b.create<yul::MStoreOp>(loc, addr, bExt.genI256Const(str.length()));
-
-  // Store the strings in 32 byte chunks of their numerical representation.
-  for (size_t i = 0; i < str.length(); i += 32) {
-    // Get a substring of up to 32 bytes and pad to the right with zeros.
-    std::string chunk = str.substr(i, 32);
-    // Left-align (pad on right with zeros to 32 bytes)
-    chunk.resize(32, '\0');
-    // Convert to APInt (big-endian)
-    llvm::APInt chunkVal(256, 0);
-    for (int j = 0; j < 32; ++j) {
-      chunkVal <<= 8;
-      chunkVal |= static_cast<uint8_t>(chunk[j]);
+  if (bytes.size() > maxImmediateStringLiteralSize) {
+    // Only bytes from the source are this long, and their lowerings pass the
+    // pool.
+    assert(literals && "expected the string literal pool");
+    LLVM::GlobalOp global = literals->getOrCreate(
+        bytes, *mod.getOps<sol::ContractOp>().begin(), b, loc);
+    auto codePtrTy =
+        LLVM::LLVMPointerType::get(b.getContext(), evm::AddrSpace_Code);
+    Value codePtr =
+        b.create<LLVM::AddressOfOp>(loc, codePtrTy, global.getSymName());
+    Value codeAddr =
+        b.create<LLVM::PtrToIntOp>(loc, b.getIntegerType(256), codePtr);
+    b.create<yul::CodeCopyOp>(loc, addr, codeAddr,
+                              bExt.genI256Const(bytes.size()));
+    if (withCleanup && bytes.size() % 32 != 0) {
+      Value cleanupAddr =
+          b.create<yul::AddOp>(loc, addr, bExt.genI256Const(bytes.size()));
+      b.create<yul::MStoreOp>(loc, cleanupAddr, bExt.genI256Const(0));
     }
-    addr = b.create<yul::AddOp>(loc, addr, bExt.genI256Const(32));
-    b.create<yul::MStoreOp>(loc, addr, bExt.genI256Const(chunkVal));
+    return;
+  }
+
+  for (uint64_t offset = 0, e = bytes.size(); offset < e; offset += 32) {
+    Value wordAddr =
+        offset == 0
+            ? addr
+            : b.create<yul::AddOp>(loc, addr, bExt.genI256Const(offset));
+    b.create<yul::MStoreOp>(
+        loc, wordAddr, bExt.genI256Const(getStringLiteralWord(bytes, offset)));
   }
 }
 
@@ -2192,6 +2223,55 @@ void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
     b.create<yul::SStoreOp>(loc, dstAddr, bExt.genI256Const(0, loc));
   }
   b.setInsertionPointAfter(ifOutOfPlace);
+}
+
+void evm::Builder::genCopyConstantStringToStorage(
+    StringRef bytes, Value dstAddr, std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  genHelperCall(
+      helpersym::copyConstantStringToStorage(bytes), {dstAddr},
+      [&](ValueRange args, Location bodyLoc) {
+        genCopyConstantStringToStorageInline(bytes, args[0], bodyLoc);
+      },
+      loc);
+}
+
+void evm::Builder::genCopyConstantStringToStorageInline(StringRef bytes,
+                                                        Value dstAddr,
+                                                        Location loc) {
+  mlir::solgen::BuilderExt bExt(b, loc);
+
+  // A long old value leaves data slots the new value does not overwrite.
+  Value oldLength = genStorageStringLength(
+      genLoad(dstAddr, sol::DataLocation::Storage, loc), loc);
+  genClearStringStorageTail(dstAddr, oldLength, bExt.genI256Const(bytes.size()),
+                            loc);
+
+  // The length is stored doubled, and its lowest bit is set only for the long
+  // form.
+  APInt doubleLength(256, 2 * bytes.size());
+  if (bytes.size() < 32) {
+    // Up to 31 bytes, the bytes sit left-aligned above the doubled length in
+    // one slot.
+    APInt slotValue = doubleLength;
+    if (!bytes.empty())
+      slotValue |= getStringLiteralWord(bytes, 0);
+    b.create<yul::SStoreOp>(loc, dstAddr, bExt.genI256Const(slotValue));
+    return;
+  }
+
+  // From 32 bytes, the words fill the slots from keccak256 of the slot on, and
+  // the slot holds the doubled length plus one.
+  Value dataSlot = genDataAddrPtr(dstAddr, sol::DataLocation::Storage, loc);
+  for (uint64_t offset = 0, e = bytes.size(); offset < e; offset += 32) {
+    Value slot = offset == 0
+                     ? dataSlot
+                     : b.create<yul::AddOp>(loc, dataSlot,
+                                            bExt.genI256Const(offset / 32));
+    b.create<yul::SStoreOp>(
+        loc, slot, bExt.genI256Const(getStringLiteralWord(bytes, offset)));
+  }
+  b.create<yul::SStoreOp>(loc, dstAddr, bExt.genI256Const(doubleLength + 1));
 }
 
 Value evm::Builder::genStorageArraySlotCount(Value len, Type eltTy,
@@ -3603,13 +3683,23 @@ Value evm::Builder::genABIEncodingImplInline(
   }
 
   // String
-  if (isa<sol::StringType>(ty)) {
+  if (isa<sol::StringType, sol::ConstantStringType>(ty)) {
     Value dataAddr =
         opts.dynamicInplace
             ? dstAddr
             : b.create<yul::AddOp>(loc, tailAddr, bExt.genI256Const(32));
-    Value size = genCopyStringDataToMemory(src, ty, dataAddr, loc,
-                                           /*withCleanup=*/true);
+    Value size;
+    if (isa<sol::ConstantStringType>(ty)) {
+      StringRef bytes =
+          cast<sol::ConstantStringOp>(src.getDefiningOp()).getValue();
+      // A padded encoding needs zeros past the bytes, since the memory may
+      // hold what an earlier write left there.
+      genStringLiteralData(bytes, dataAddr, loc, /*withCleanup=*/opts.padded);
+      size = bExt.genI256Const(bytes.size());
+    } else {
+      size = genCopyStringDataToMemory(src, ty, dataAddr, loc,
+                                       /*withCleanup=*/true);
+    }
     if (!opts.dynamicInplace)
       b.create<yul::MStoreOp>(loc, tailAddr, size);
     Value advanceBy = opts.padded ? bExt.genRoundUpToMultiple<32>(size) : size;
@@ -3853,6 +3943,33 @@ Value evm::Builder::genABIEncodingImplInline(
   llvm_unreachable("NYI");
 }
 
+/// The arguments of a helper that encodes \p vals: every value but a constant
+/// string, which the helper body re-creates.
+static SmallVector<Value> getHelperArgs(ValueRange vals) {
+  return llvm::filter_to_vector(vals, [](Value val) {
+    return !isa<sol::ConstantStringType>(val.getType());
+  });
+}
+
+/// The values a helper body encodes for the caller's \p vals: a copy of each
+/// constant string, whose op is in the caller, and every other value from
+/// \p args, in order.
+static SmallVector<Value> getHelperValues(OpBuilder &b, ValueRange vals,
+                                          ValueRange args, Location loc) {
+  SmallVector<Value> result;
+  auto argIt = args.begin();
+  for (Value val : vals) {
+    if (!isa<sol::ConstantStringType>(val.getType())) {
+      result.push_back(*argIt++);
+      continue;
+    }
+    auto constant = cast<sol::ConstantStringOp>(val.getDefiningOp());
+    result.push_back(
+        b.create<sol::ConstantStringOp>(loc, constant.getValueAttr()));
+  }
+  return result;
+}
+
 Value evm::Builder::genABIEncoding(TypeRange tys, ValueRange vals,
                                    Value startAddr,
                                    std::optional<mlir::Location> locArg) {
@@ -3883,14 +4000,15 @@ Value evm::Builder::genABIEncoding(TypeRange tys, ValueRange vals,
   // pass.
   if (tys.empty())
     return genABIEncodingInline(tys, vals, startAddr, opts, loc);
-  SmallVector<Value> args(vals.begin(), vals.end());
+  SmallVector<Value> args = getHelperArgs(vals);
   args.push_back(startAddr);
   return genHelperCall(
-      helpersym::abiEncodeTuple(opts.padded, opts.dynamicInplace, tys), args,
-      b.getIntegerType(256),
+      helpersym::abiEncodeTuple(opts.padded, opts.dynamicInplace, tys, vals),
+      args, b.getIntegerType(256),
       [&](ValueRange a, Location bodyLoc) {
-        return genABIEncodingInline(tys, a.drop_back(), a.back(), opts,
-                                    bodyLoc);
+        return genABIEncodingInline(
+            tys, getHelperValues(b, vals, a.drop_back(), bodyLoc), a.back(),
+            opts, bodyLoc);
       },
       loc);
 }
@@ -3955,7 +4073,9 @@ Value evm::Builder::genABITupleEncoding(std::string const &str, Value headStart,
 
   // Generate the string creation at the tail address.
   auto tailAddr = b.create<yul::AddOp>(loc, headStart, thirtyTwo);
-  genStringStore(str, tailAddr, loc);
+  b.create<yul::MStoreOp>(loc, tailAddr, bExt.genI256Const(str.length()));
+  Value dataAddr = b.create<yul::AddOp>(loc, tailAddr, thirtyTwo);
+  genStringLiteralData(str, dataAddr, loc, /*withCleanup=*/true);
   Value stringSize = bExt.genI256Const(
       32 + mlir::solgen::getRoundUpToMultiple<32>(str.length()));
 
@@ -4358,9 +4478,10 @@ void evm::Builder::genRevert(TypeRange tys, ValueRange vals,
                              std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   genHelperCall(
-      helpersym::revertError(signature, tys), vals,
+      helpersym::revertError(signature, tys, vals), getHelperArgs(vals),
       [&](ValueRange a, Location bodyLoc) {
-        genRevertInline(tys, a, signature, bodyLoc);
+        genRevertInline(tys, getHelperValues(b, vals, a, bodyLoc), signature,
+                        bodyLoc);
       },
       loc);
 }

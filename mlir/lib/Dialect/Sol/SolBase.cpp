@@ -80,6 +80,8 @@ void SolDialect::initialize() {
 
 Operation *SolDialect::materializeConstant(OpBuilder &builder, Attribute val,
                                            Type type, Location loc) {
+  if (isa<ConstantStringType>(type))
+    return builder.create<ConstantStringOp>(loc, cast<StringAttr>(val));
   return builder.create<ConstantOp>(loc, type, cast<TypedAttr>(val));
 }
 
@@ -214,6 +216,10 @@ bool mlir::sol::isDynamicallySized(Type ty) {
 
 bool mlir::sol::hasDynamicallySizedElt(Type ty) {
   if (isa<StringType>(ty))
+    return true;
+
+  // The ABI encodes a constant string as a string, in the tail.
+  if (isa<ConstantStringType>(ty))
     return true;
 
   if (auto arrTy = dyn_cast<ArrayType>(ty))
