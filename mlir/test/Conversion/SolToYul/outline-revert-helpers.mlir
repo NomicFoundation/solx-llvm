@@ -8,6 +8,7 @@
 // storage string encodes from a different location, and the calldata string
 // lowers to two words, so each location gets its own helper. Every panic goes
 // through the contract's one `__sol.panic`, which takes the code.
+// A constant string argument is keyed as `constant_string_<keccak>`.
 
 #Contract = #sol<ContractKind Contract>
 #Default = #sol<RevertStrings Default>
@@ -48,10 +49,24 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
       sol.revert "E(string)"(%0 : !sol.string<Storage>) {call}
       sol.return
     }
+    sol.func @lit(%arg0: i1, %arg1: ui256) attributes {state_mutability = #Pure} {
+      %0 = sol.constant_string "abc"
+      sol.require %arg0, "E(string,uint256)"(%0, %arg1 : !sol.constant_string, ui256) {call}
+      %1 = sol.constant_string "abc"
+      sol.revert "E(string,uint256)" (%1, %arg1 : !sol.constant_string, ui256) {call}
+      sol.return
+    }
   } {kind = #Contract, runtime}
 }
 
 // CHECK-LABEL: yul.object @C_deployed
+// A require and a revert of the same literal share one helper.
+// CHECK-LABEL:   yul.func @__sol.revert.f2047230.constant_string_4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45.ui256 : (i256) -> ()
+// CHECK-NEXT:    ^bb0(%[[X:.*]]: i256):
+// CHECK:           %[[MEM:.*]] = yul.mload
+// CHECK:           %[[START:.*]] = yul.add %[[MEM]]
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.constant_string_4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45.ui256(%[[X]], %[[START]]) : (i256, i256) -> i256
+// CHECK:           yul.revert %[[MEM]]
 // The same `E(string)` from three locations: three helpers, each with its
 // own lowered argument type and its own encoder.
 // CHECK-LABEL:   yul.func @__sol.revert.3e9992c9.string$_Storage_$ : (i256) -> ()
@@ -81,6 +96,10 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%arg0
 // CHECK:           yul.revert %[[E]]
 
+// CHECK-LABEL:   yul.func @lit :
+// CHECK:           yul.if
+// CHECK-NEXT:        yul.func_call @__sol.revert.f2047230.constant_string_4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45.ui256(%arg1) : (i256) -> ()
+// CHECK:           yul.func_call @__sol.revert.f2047230.constant_string_4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45.ui256(%arg1) : (i256) -> ()
 // CHECK-LABEL:   yul.func @st
 // CHECK:           yul.func_call @__sol.revert.3e9992c9.string$_Storage_$(%c0{{.*}}) : (i256) -> ()
 // CHECK-LABEL:   yul.func @cd

@@ -273,6 +273,7 @@ struct ConvertSolToYulPass
 
       RewritePatternSet pats(&getContext());
       evm::populateFuncOpPats(pats, tyConv);
+      evm::populateConstantStringPat(pats);
 
       if (failed(applyPartialConversion(mod, convTgt, std::move(pats))))
         return failure();

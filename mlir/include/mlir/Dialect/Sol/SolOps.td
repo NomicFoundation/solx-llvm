@@ -387,7 +387,8 @@ def Sol_MapOp : Sol_Op<"map"> {
   }];
 }
 
-def Sol_CopyOp : Sol_Op<"copy"> {
+def Sol_CopyOp : Sol_Op<"copy", [DeclareOpInterfaceMethods<
+    Sol_ConstantStringConsumerOpInterface, ["takesConstantString"]>]> {
   let arguments = (ins AnyType:$src, AnyType:$dst);
 
   let assemblyFormat = [{
@@ -483,7 +484,8 @@ def Sol_FixedBytes4SelectorType : Type<
         "::llvm::cast<::mlir::sol::FixedBytesType>($_self).getSize() == 4">,
   "!sol.fixedbytes<4>">;
 
-def Sol_EncodeOp : Sol_Op<"encode", [AttrSizedOperandSegments]> {
+def Sol_EncodeOp : Sol_Op<"encode", [AttrSizedOperandSegments,
+                                     Sol_ConstantStringConsumerOpInterface]> {
   // When $packed is set, values are encoded without per-element padding.
   // When $selector is set, it is prepended as the first 4 bytes while $ins are
   // ABI-encoded as a tuple.
@@ -496,6 +498,8 @@ def Sol_EncodeOp : Sol_Op<"encode", [AttrSizedOperandSegments]> {
     (`selector` `(` $selector^ `:` type($selector) `)`)? ($ins^)?
     `:` functional-type($ins, $res) attr-dict
   }];
+
+  let hasCanonicalizeMethod = 1;
 }
 
 def Sol_DecodeOp : Sol_Op<"decode"> {
@@ -504,7 +508,7 @@ def Sol_DecodeOp : Sol_Op<"decode"> {
   let assemblyFormat = "$addr `:` type($addr) (`->` type($outs)^)? attr-dict";
 }
 
-def Sol_EmitOp : Sol_Op<"emit"> {
+def Sol_EmitOp : Sol_Op<"emit", [Sol_ConstantStringConsumerOpInterface]> {
   let arguments = (ins Variadic<AnyType>:$args, I8Attr:$indexedArgsCount,
                        OptionalAttr<StrAttr>:$signature);
 
@@ -545,7 +549,8 @@ def Sol_EmitOp : Sol_Op<"emit"> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def Sol_RevertOp : Sol_Op<"revert"> {
+def Sol_RevertOp : Sol_Op<"revert", [DeclareOpInterfaceMethods<
+    Sol_ConstantStringConsumerOpInterface, ["takesConstantString"]>]> {
   // $signature represents the error call's signature if $call is set,
   // otherwise the user-supplied reason string. It is absent for a plain
   // `revert()`.
@@ -561,7 +566,8 @@ def Sol_AssertOp : Sol_Op<"assert"> {
   let assemblyFormat = "$cond attr-dict";
 }
 
-def Sol_RequireOp : Sol_Op<"require"> {
+def Sol_RequireOp : Sol_Op<"require", [DeclareOpInterfaceMethods<
+    Sol_ConstantStringConsumerOpInterface, ["takesConstantString"]>]> {
   // $msg represents the error call's signature if $call is set.
   let arguments = (ins I1:$cond, OptionalAttr<StrAttr>:$msg,
                        Variadic<AnyType>:$args, UnitAttr:$call);
@@ -893,7 +899,8 @@ def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefType> {
 def ExtICallOp : Sol_ICallOpBase<"ext_icall", Sol_ExtFuncRefType,
     (ins Optional<UI256>:$gas, UI256:$value, UnitAttr:$static_call,
          UnitAttr:$try_call),
-    "(`gas` $gas^)? `value` $value ", [AttrSizedOperandSegments]>;
+    "(`gas` $gas^)? `value` $value ",
+    [AttrSizedOperandSegments, Sol_ConstantStringConsumerOpInterface]>;
 
 def CallOp : Sol_Op<"call", [CallOpInterface]> {
   let arguments = (ins FlatSymbolRefAttr:$callee,
@@ -1090,7 +1097,8 @@ def Sol_SelfdestructOp : Sol_Op<"selfdestruct"> {
 
 // Without $gas, the call forwards all the gas left at the call.
 def Sol_ExtCallOp : Sol_Op<"ext_call",
-    [CallOpInterface, AttrSizedOperandSegments]> {
+    [CallOpInterface, AttrSizedOperandSegments,
+     Sol_ConstantStringConsumerOpInterface]> {
   let arguments = (ins StrAttr:$callee, Variadic<AnyType>:$ins,
                        AnyTypeOf<[Sol_AddressType, UI256]>:$addr,
                        Optional<UI256>:$gas, UI256:$val,
@@ -1136,11 +1144,15 @@ def Sol_MemoryStringType : Type<
           "::mlir::sol::DataLocation::Memory">,
     "!sol.string<Memory>">;
 
+def Sol_BareCallInputType
+    : AnyTypeOf<[Sol_MemoryStringType, Sol_ConstantStringType]>;
+
 // Without $gas, the call forwards all the gas left at the call, as do the bare
 // delegate and static calls.
-def Sol_BareCallOp : Sol_Op<"bare_call"> {
+def Sol_BareCallOp : Sol_Op<"bare_call",
+    [Sol_ConstantStringConsumerOpInterface]> {
   let arguments = (ins Sol_AddressType:$addr, Optional<UI256>:$gas, UI256:$val,
-                       Sol_MemoryStringType:$inp);
+                       Sol_BareCallInputType:$inp);
   let results = (outs I1:$status, Sol_MemoryStringType:$ret_data);
 
   let assemblyFormat = [{
@@ -1151,9 +1163,10 @@ def Sol_BareCallOp : Sol_Op<"bare_call"> {
   }];
 }
 
-def Sol_BareDelegateCallOp : Sol_Op<"bare_delegate_call"> {
+def Sol_BareDelegateCallOp : Sol_Op<"bare_delegate_call",
+    [Sol_ConstantStringConsumerOpInterface]> {
   let arguments = (ins Sol_AddressType:$addr, Optional<UI256>:$gas,
-                       Sol_MemoryStringType:$inp);
+                       Sol_BareCallInputType:$inp);
   let results = (outs I1:$status, Sol_MemoryStringType:$ret_data);
 
   let assemblyFormat = [{
@@ -1163,9 +1176,10 @@ def Sol_BareDelegateCallOp : Sol_Op<"bare_delegate_call"> {
   }];
 }
 
-def Sol_BareStaticCallOp : Sol_Op<"bare_static_call"> {
+def Sol_BareStaticCallOp : Sol_Op<"bare_static_call",
+    [Sol_ConstantStringConsumerOpInterface]> {
   let arguments = (ins Sol_AddressType:$addr, Optional<UI256>:$gas,
-                       Sol_MemoryStringType:$inp);
+                       Sol_BareCallInputType:$inp);
   let results = (outs I1:$status, Sol_MemoryStringType:$ret_data);
 
   let assemblyFormat = [{
@@ -1192,7 +1206,8 @@ def Sol_TransferOp : Sol_Op<"transfer"> {
   }];
 }
 
-def Sol_NewOp : Sol_Op<"new", [AttrSizedOperandSegments]> {
+def Sol_NewOp : Sol_Op<"new", [AttrSizedOperandSegments,
+                               Sol_ConstantStringConsumerOpInterface]> {
   let arguments = (ins StrAttr:$objName, UI256:$val,
                    Optional<UI256>:$salt,
                    Variadic<AnyType>:$ctorArgs,
@@ -1363,15 +1378,32 @@ def Sol_StringLitOp : Sol_Op<"string_lit"> {
   let arguments = (ins StrAttr:$value);
   let results = (outs Res<Sol_StringType, "", [MemAlloc]>:$addr);
   let assemblyFormat = "$value attr-dict `->` qualified(type($addr))";
+
+  let hasCanonicalizeMethod = 1;
 }
 
-def Sol_ConcatOp : Sol_Op<"concat"> {
+def Sol_ConstantStringOp : Sol_Op<"constant_string", [ConstantLike, Pure]> {
+  let summary = "String literal held as its bytes";
+  let description = [{
+    Each consumer writes or hashes the bytes itself.
+  }];
+  let arguments = (ins StrAttr:$value);
+  let results = (outs Sol_ConstantStringType:$result);
+  let assemblyFormat = "$value attr-dict";
+
+  let hasFolder = 1;
+  let hasVerifier = 1;
+}
+
+def Sol_ConcatOp : Sol_Op<"concat", [Sol_ConstantStringConsumerOpInterface]> {
   let summary = "Concatenate bytes/string values into a new memory string";
-  let arguments =
-      (ins Variadic<AnyTypeOf<[Sol_FixedBytesType, Sol_StringType]>>:$args);
+  let arguments = (ins Variadic<AnyTypeOf<[Sol_FixedBytesType, Sol_StringType,
+                                           Sol_ConstantStringType]>>:$args);
   let results = (outs Sol_StringType:$result);
 
   let assemblyFormat = "($args^ `:` type($args))? attr-dict `->` type($result)";
+
+  let hasCanonicalizeMethod = 1;
 }
 
 def Sol_InlineAsmOp : Sol_Op<"inline_asm", [NoTerminator, SingleBlock,

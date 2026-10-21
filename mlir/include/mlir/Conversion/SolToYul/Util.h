@@ -208,6 +208,11 @@ public:
                              std::optional<Location> locArg = std::nullopt) {
     static_assert(llvm::isPowerOf2_32(multiple));
     Location loc = locArg ? *locArg : defLoc;
+    // A constant is rounded at compile time.
+    if (auto constant = val.getDefiningOp<yul::ConstantOp>())
+      return genI256Const((constant.getValue() + (multiple - 1)) &
+                              ~llvm::APInt(/*numBits=*/256, multiple - 1),
+                          loc);
     auto add = b.create<yul::AddOp>(loc, val, genI256Const(multiple - 1));
     return b.create<yul::AndOp>(
         loc, add, genI256Const(~(llvm::APInt(/*numBits=*/256, multiple - 1))));

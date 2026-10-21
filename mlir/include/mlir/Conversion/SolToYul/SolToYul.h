@@ -106,35 +106,48 @@ void populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv);
 void populateInternalFuncPtrPats(RewritePatternSet &pats, TypeConverter &tyConv,
                                  InternalDispatch &dispatch);
 
-/// Adds the conversion patterns of crypto ops in the sol dialect.
-void populateCryptoPats(RewritePatternSet &pats, TypeConverter &tyConv);
+/// Adds the conversion patterns of crypto ops in the sol dialect. Literal
+/// inputs take their globals from `literals`.
+void populateCryptoPats(RewritePatternSet &pats, TypeConverter &tyConv,
+                        StringLiteralPool &literals);
 
 /// Adds the conversion patterns of checked arithmetic ops in the sol dialect.
 void populateCheckedArithPats(RewritePatternSet &pats, TypeConverter &tyConv);
 
 /// Adds the conversion patterns of sol dialect ops dealing with stack, memory
-/// and storage allocations. String literals take their globals from
-/// `literals`.
+/// and storage allocations. String literals and literal arguments of
+/// sol.concat take their globals from `literals`.
 ///
 /// Stack access will have 32-byte alignment while all other access will have
 /// 1-byte alignment.
 void populateMemPats(RewritePatternSet &pats, TypeConverter &tyConv,
                      StringLiteralPool &literals);
 
-/// Adds the conversion pattern of sol.emit.
-void populateEmitPat(RewritePatternSet &pats, TypeConverter &tyConv);
+/// Adds the conversion pattern of sol.emit. Literal arguments take their
+/// globals from `literals`.
+void populateEmitPat(RewritePatternSet &pats, TypeConverter &tyConv,
+                     StringLiteralPool &literals);
 
-/// Adds the conversion pattern of sol.require.
-void populateRequirePat(RewritePatternSet &pats);
+/// Adds the pattern that erases a sol.constant_string, which its consumers
+/// leave unused once they are lowered.
+void populateConstantStringPat(RewritePatternSet &pats);
+
+/// Adds the conversion pattern of sol.require. Literal reasons take their
+/// globals from `literals`.
+void populateRequirePat(RewritePatternSet &pats, StringLiteralPool &literals);
 
 /// Adds the conversion patterns for address/block/tx/msg/gas-related ops.
 void populateAddrPat(RewritePatternSet &pats, TypeConverter &tyConv);
 
-/// Adds the conversion patterns of abi ops.
-void populateAbiPats(RewritePatternSet &pats, TypeConverter &tyConv);
+/// Adds the conversion patterns of abi ops. Encoded literals take their
+/// globals from `literals`.
+void populateAbiPats(RewritePatternSet &pats, TypeConverter &tyConv,
+                     StringLiteralPool &literals);
 
-/// Adds the conversion pattern of sol.ext_call.
-void populateExtCallPat(RewritePatternSet &pats, TypeConverter &tyConv);
+/// Adds the conversion pattern of sol.ext_call. Literal arguments and inputs
+/// take their globals from `literals`.
+void populateExtCallPat(RewritePatternSet &pats, TypeConverter &tyConv,
+                        StringLiteralPool &literals);
 
 /// Adds the conversion patterns of control flow ops in the sol dialect.
 void populateControlFlowPats(RewritePatternSet &pats, TypeConverter &tyConv);

@@ -9,6 +9,7 @@
 #ifndef MLIR_DIALECT_SOL_SOLBASE_TD
 #define MLIR_DIALECT_SOL_SOLBASE_TD
 
+include "SolInterfaces.td"
 include "mlir/Interfaces/CastInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
@@ -96,6 +97,13 @@ def Sol_StringType : Sol_Type<"String", "string"> {
   let parameters = (ins Sol_DataLocation:$dataLocation);
 
   let hasCustomAssemblyFormat = 1;
+}
+
+def Sol_ConstantStringType : Sol_Type<"ConstantString", "constant_string"> {
+  let summary = "Type of a `sol.constant_string`";
+  let description = [{
+    Every use reads the bytes from the op that defines the value.
+  }];
 }
 
 // Optional APInt parameter whose comparator explicitly checks bit-widths before
@@ -417,8 +425,10 @@ class Sol_ModOp<string mnemonic, list<Trait> traits = []>
   let assemblyFormat = "$x `,` $y `,` $mod attr-dict `:` type($result)";
 }
 
-class Sol_HashPreCompileOp<string mnemonic> : Sol_Op<mnemonic> {
-  let arguments = (ins Sol_StringType:$data);
+class Sol_HashPreCompileOp<string mnemonic>
+    : Sol_Op<mnemonic, [Sol_ConstantStringConsumerOpInterface]> {
+  let arguments =
+      (ins AnyTypeOf<[Sol_StringType, Sol_ConstantStringType]>:$data);
   let results = (outs Sol_FixedBytesType:$result);
 }
 
