@@ -1,0 +1,146 @@
+# REQUIRES: asserts
+# RUN: llc -x mir -run-pass=evm-backward-propagation-stackification -evm-force-reg-spills=1,2 < %s | FileCheck %s
+
+# The spill stores of an instruction's definitions walk down from the stack
+# top. A spilled definition that the next layout does not hold is stored
+# without a copy and leaves the stack, which exposes the definition below.
+# The walk stops at the first definition that stays, and every spilled
+# definition below it is copied before its store. The call to the recursive
+# function @rec compresses the stack, so a value that is first used after
+# that call is absent from the call's entry stack.
+
+# Both results of @multival are first used after the call to @rec. Both are
+# stored without a copy, the top one first.
+# CHECK-LABEL: name: both_unneeded
+# CHECK:       PseudoCALL @multival
+# CHECK-NEXT:  PUSH_FRAME %stack.0
+# CHECK-NEXT:  MSTORE_S
+# CHECK-NEXT:  PUSH_FRAME %stack.1
+# CHECK-NEXT:  MSTORE_S
+# CHECK-NEXT:  PseudoCALL @rec
+
+# The top result %2 is first used after the call to @rec and leaves the
+# stack. That exposes %1, which the next instruction needs, so %1 is copied
+# before its store.
+# CHECK-LABEL: name: top_unneeded
+# CHECK:       PseudoCALL @multival
+# CHECK-NEXT:  PUSH_FRAME %stack.0
+# CHECK-NEXT:  MSTORE_S
+# CHECK-NEXT:  DUP1_S
+# CHECK-NEXT:  PUSH_FRAME %stack.1
+# CHECK-NEXT:  MSTORE_S
+
+# The top result %2 is needed by the next instruction, so the walk stops
+# there. The result %1 below it is not needed, but it is not on the stack
+# top, so it is copied before its store like any kept definition. The
+# permutation to the next layout pops it afterwards.
+# CHECK-LABEL: name: top_needed
+# CHECK:       PseudoCALL @multival
+# CHECK-NEXT:  DUP1_S
+# CHECK-NEXT:  PUSH_FRAME %stack.0
+# CHECK-NEXT:  MSTORE_S
+# CHECK-NEXT:  DUP2_S
+# CHECK-NEXT:  PUSH_FRAME %stack.1
+# CHECK-NEXT:  MSTORE_S
+# CHECK-NEXT:  SWAP1_S
+# CHECK-NEXT:  POP_S
+# CHECK-NEXT:  ADD_S
+# CHECK-NEXT:  PseudoCALL @rec
+
+--- |
+  target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
+  target triple = "evm"
+
+  declare fastcc { i256, i256 } @multival()
+  declare fastcc i256 @rec(i256) #0
+
+  define fastcc i256 @both_unneeded(i256 %a) { ret i256 0 }
+  define fastcc i256 @top_unneeded(i256 %a) { ret i256 0 }
+  define fastcc i256 @top_needed(i256 %a) { ret i256 0 }
+
+  attributes #0 = { "evm-recursive" }
+...
+---
+name:            both_unneeded
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+  - { id: 4, class: gpr }
+  - { id: 5, class: gpr }
+liveins:
+  - { reg: '$arguments' }
+  - { reg: '$value_stack' }
+frameInfo:
+  hasCalls:        true
+machineFunctionInfo:
+  numberOfParameters: 1
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    %0:gpr = ARGUMENT 0, implicit $arguments
+    %1:gpr, %2:gpr = FCALL @multival, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %3:gpr = FCALL @rec, %0, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %4:gpr = ADD %1, %2, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %4, %3, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    RET %5, implicit-def dead $arguments
+...
+---
+name:            top_unneeded
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+  - { id: 4, class: gpr }
+  - { id: 5, class: gpr }
+liveins:
+  - { reg: '$arguments' }
+  - { reg: '$value_stack' }
+frameInfo:
+  hasCalls:        true
+machineFunctionInfo:
+  numberOfParameters: 1
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    %0:gpr = ARGUMENT 0, implicit $arguments
+    %1:gpr, %2:gpr = FCALL @multival, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %3:gpr = ADD %1, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %4:gpr = FCALL @rec, %3, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %4, %2, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    RET %5, implicit-def dead $arguments
+...
+---
+name:            top_needed
+tracksRegLiveness: true
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+  - { id: 4, class: gpr }
+  - { id: 5, class: gpr }
+liveins:
+  - { reg: '$arguments' }
+  - { reg: '$value_stack' }
+frameInfo:
+  hasCalls:        true
+machineFunctionInfo:
+  numberOfParameters: 1
+body:             |
+  bb.0:
+    liveins: $arguments, $value_stack
+
+    %0:gpr = ARGUMENT 0, implicit $arguments
+    %1:gpr, %2:gpr = FCALL @multival, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %3:gpr = ADD %2, %0, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %4:gpr = FCALL @rec, %3, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %4, %1, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    RET %5, implicit-def dead $arguments
+...

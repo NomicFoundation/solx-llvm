@@ -378,8 +378,7 @@ void EVMStackifyCodeEmitter::emitPrologue(const Stack &Layout) {
 
   // A spilled argument on the stack top that the first instruction does not
   // need is stored without a copy and leaves the stack. Each store exposes
-  // the next argument. A saved word ends the walk, because its swap triple
-  // keeps the stack height.
+  // the next argument.
   const MachineBasicBlock &MBB = MF.front();
   auto Insts = StackModel.instructionsToProcess(&MBB);
   const Stack &FirstTargetStack =
@@ -442,40 +441,37 @@ void EVMStackifyCodeEmitter::emitSpills(const MachineBasicBlock &MBB,
   if (none_of(Defs, isSpillReg))
     return;
 
-  // In case of a single definition, we can remove it from the stack
-  // if it is not used after spill.
-  if (Defs.size() == 1) {
-    // Find the first instruction from which we can get entry stack.
-    while (Start != MBB.end() && StackModel.skipMI(*Start))
-      ++Start;
+  // Find the first instruction from which we can get entry stack.
+  while (Start != MBB.end() && StackModel.skipMI(*Start))
+    ++Start;
 
-    // Find the next target stack, as we need to check if the register
-    // is used after spill.
-    const Stack &NextTargetStack =
-        Start != MBB.end() && !EVMInstrInfo::isStack(&*Start)
-            ? StackModel.getInstEntryStack(&*Start)
-            : StackModel.getMBBExitStack(&MBB);
-    const auto *RegSlot = cast<RegisterSlot>(Defs[0]);
+  // Find the next target stack, as we need to check if a register is used
+  // after its spill.
+  const Stack &NextTargetStack =
+      Start != MBB.end() && !EVMInstrInfo::isStack(&*Start)
+          ? StackModel.getInstEntryStack(&*Start)
+          : StackModel.getMBBExitStack(&MBB);
 
-    // Find if if the register is used after spill. If it is we need to
-    // emit DUP instruction to keep it on the stack.
-    bool UsedAfter = is_contained(NextTargetStack, RegSlot);
-    Emitter.emitSpill(RegSlot->getReg(), UsedAfter);
-
-    // Remove the register from the current stack, if it is not used
-    // after spill.
-    if (!UsedAfter)
-      CurrentStack.pop_back();
-  } else {
-    // TODO: In case definition are not used after spill, we can
-    // remove them from the current stack, and not emit DUP. This
-    // is more complex when we have multiple definitions, as we
-    // need to do stack manipulation to keep the stack in sync
-    // with the target stack.
-    for (auto [DefIdx, Def] : enumerate(reverse(Defs)))
-      if (isSpillReg(Def))
-        Emitter.emitSpill(cast<RegisterSlot>(Def)->getReg(), DefIdx + 1);
+  // A spilled definition on the stack top that the next target stack does
+  // not hold is stored without a copy and leaves the stack. Each store
+  // exposes the next definition. The walk stops at the first definition
+  // that stays.
+  unsigned NumKept = Defs.size();
+  while (NumKept > 0 && isSpillReg(Defs[NumKept - 1]) &&
+         !is_contained(NextTargetStack, Defs[NumKept - 1])) {
+    Emitter.emitSpill(cast<RegisterSlot>(Defs[NumKept - 1])->getReg(),
+                      /*DupIdx=*/0);
+    CurrentStack.pop_back();
+    --NumKept;
   }
+
+  // The remaining spilled definitions are copied before the store, because
+  // consuming a definition below the stack top would need extra swaps. The
+  // permutation to the next target stack drops the unneeded ones.
+  ArrayRef<const StackSlot *> KeptDefs(Defs.begin(), NumKept);
+  for (auto [DefIdx, Def] : enumerate(reverse(KeptDefs)))
+    if (isSpillReg(Def))
+      Emitter.emitSpill(cast<RegisterSlot>(Def)->getReg(), DefIdx + 1);
   assert(Emitter.stackHeight() == CurrentStack.size());
 }
 
