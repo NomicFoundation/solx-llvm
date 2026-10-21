@@ -26,12 +26,25 @@ module {
     // CHECK:             yul.mstore %{{.*}}, %c45885808075951196297010052350408398216268308371140631434831267343051471716352_i256
     // CHECK:             yul.revert %[[P]], %{{.*}}
 
+    // revert("<65 bytes>"): Error(string), with the bytes codecopied and a zero
+    // stored right after them, since they end inside a word.
+    // CHECK:             yul.mstore %[[TAIL:.*]], %c65_i256
+    // CHECK-NEXT:        %[[DATA:.*]] = yul.add %[[TAIL]], %{{.*}}
+    // CHECK:             %[[SIZE:.*]] = yul.constant 65
+    // CHECK-NEXT:        yul.codecopy %[[DATA]], %{{.*}}, %[[SIZE]]
+    // CHECK-NEXT:        %[[OFFSET:.*]] = yul.constant 65
+    // CHECK-NEXT:        %[[END:.*]] = yul.add %[[DATA]], %[[OFFSET]]
+    // CHECK-NEXT:        %[[ZERO:.*]] = yul.constant 0
+    // CHECK-NEXT:        yul.mstore %[[END]], %[[ZERO]]
+    // CHECK:             yul.revert
+
     // revert()
     // CHECK:             yul.revert %[[Z:.*]], %[[Z]]
     // CHECK-NEXT:        yul.func_return
     sol.func @revert(%a: ui256) attributes {state_mutability = #NonPayable} {
       sol.revert "E(uint256)"(%a : ui256) {call}
       sol.revert "error message"
+      sol.revert "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabc"
       sol.revert
       sol.return
     }

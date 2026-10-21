@@ -81,4 +81,31 @@ def Sol_LoopOpInterface : OpInterface<"LoopOpInterface", [
   }];
 }
 
+def Sol_ConstantStringConsumerOpInterface
+    : OpInterface<"ConstantStringConsumerOpInterface"> {
+  let cppNamespace = "::mlir::sol";
+  let description = [{
+    An op whose lowering writes or hashes the bytes of a string literal itself,
+    so the literal needs no memory at the operands that take a
+    `!sol.constant_string`.
+  }];
+
+  let methods = [
+    InterfaceMethod<[{
+        The default suits an op whose operand types admit a constant string
+        only where it takes one.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"takesConstantString",
+      /*args=*/(ins "::mlir::OpOperand &":$operand),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/"return true;"
+    >
+  ];
+
+  let verify = [{
+    return ::mlir::sol::detail::verifyConstantStringConsumerOpInterface($_op);
+  }];
+}
+
 #endif // MLIR_DIALECT_SOL_SOLINTERFACES_TD

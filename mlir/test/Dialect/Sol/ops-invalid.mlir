@@ -255,3 +255,115 @@ sol.modifier @m() {
   sol.placeholder
   sol.return
 }
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// The bytes of a constant string are an attribute of the op that defines it.
+sol.contract @C {
+  sol.func @f(%arg0: !sol.constant_string) -> !sol.string<Memory> {
+    // expected-error @below {{'sol.encode' op expects operand #0 to be defined by sol.constant_string}}
+    %0 = sol.encode %arg0 : (!sol.constant_string) -> !sol.string<Memory>
+    sol.return %0 : !sol.string<Memory>
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// An operand of string type has a runtime value, which a constant string lacks.
+sol.contract @C {
+  sol.func @f(%arg0: !sol.constant_string) -> !sol.fixedbytes<4> {
+    // expected-error @below {{'sol.dyn_bytes_to_fixedbytes' op operand #0 must be}}
+    %0 = "sol.dyn_bytes_to_fixedbytes"(%arg0) : (!sol.constant_string) -> !sol.fixedbytes<4>
+    sol.return %0 : !sol.fixedbytes<4>
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// A copy writes a constant string only to a storage string.
+sol.contract @C {
+  sol.func @f(%arg0: !sol.string<Memory>) {
+    // expected-error @below {{'sol.constant_string' op expects operand #0 of sol.copy to take a constant string}}
+    %0 = sol.constant_string "x"
+    sol.copy %0, %arg0 : !sol.constant_string, !sol.string<Memory>
+    sol.return
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// The hash of a literal folds from its memory string.
+sol.contract @C {
+  sol.func @f(%arg0: !sol.constant_string) -> !sol.fixedbytes<32> {
+    // expected-error @below {{'sol.keccak256' op operand #0 must be}}
+    %0 = "sol.keccak256"(%arg0) : (!sol.constant_string) -> !sol.fixedbytes<32>
+    sol.return %0 : !sol.fixedbytes<32>
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// Only the call form of a revert encodes its operands.
+sol.contract @C {
+  sol.func @f() {
+    // expected-error @below {{'sol.constant_string' op expects operand #0 of sol.revert to take a constant string}}
+    %0 = sol.constant_string "x"
+    sol.revert "x" (%0 : !sol.constant_string)
+    sol.return
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// Only the call form of a require encodes its operands.
+sol.contract @C {
+  sol.func @f(%arg0: i1) {
+    // expected-error @below {{'sol.constant_string' op expects operand #1 of sol.require to take a constant string}}
+    %0 = sol.constant_string "x"
+    sol.require %arg0, "x" (%0 : !sol.constant_string)
+    sol.return
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// The callee of a call reads its arguments at runtime.
+sol.contract @C {
+  sol.func @g(%arg0: !sol.constant_string) {
+    sol.return
+  }
+
+  sol.func @f() {
+    // expected-error @below {{'sol.constant_string' op expects operand #0 of sol.call to take a constant string}}
+    %0 = sol.constant_string "x"
+    sol.call @g(%0) : (!sol.constant_string) -> ()
+    sol.return
+  }
+} {kind = #Contract, runtime}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// A return hands its values to the caller at runtime.
+sol.contract @C {
+  sol.func @f() -> !sol.constant_string {
+    // expected-error @below {{'sol.constant_string' op expects operand #0 of sol.return to take a constant string}}
+    %0 = sol.constant_string "x"
+    sol.return %0 : !sol.constant_string
+  }
+} {kind = #Contract, runtime}

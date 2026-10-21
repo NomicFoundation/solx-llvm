@@ -25,6 +25,8 @@ class TypeConverter;
 
 namespace evm {
 
+class StringLiteralPool;
+
 enum AddrSpace : unsigned {
   AddrSpace_Stack = 0,
   AddrSpace_Heap = 1,
@@ -75,6 +77,10 @@ llvm::APInt getArrayEltStride(sol::ArrayType arrTy);
 /// the element type size.
 int64_t getMallocSize(Type ty);
 
+/// The longest string literal, in bytes, written as immediate words. A longer
+/// one is cheaper to copy from the code, in gas and in code size.
+constexpr uint64_t maxImmediateStringLiteralSize = 64;
+
 /// ABI encoding knobs. Trimmed subset of upstream solc's `EncodingOptions` in
 /// libsolidity/codegen/ABIFunctions.h:129-146 - only the two fields any type
 /// branch currently consults are kept. The two common shapes
@@ -117,11 +123,20 @@ class Builder {
   ModuleOp mod;
   OpBuilder &b;
   Location defLoc;
+  StringLiteralPool *literals = nullptr;
 
 public:
   explicit Builder(ModuleOp mod, OpBuilder &b, Location loc)
       : mod(mod), b(b), defLoc(loc) {
     assert(mod && "expected attached module for EVM builder");
+  }
+
+  /// For a lowering that writes the bytes of a literal from the source, whose
+  /// globals come from \p literals.
+  explicit Builder(ModuleOp mod, OpBuilder &b, Location loc,
+                   StringLiteralPool &literals)
+      : Builder(mod, b, loc) {
+    this->literals = &literals;
   }
 
   /// Generates a pointer to the address in the heap.
@@ -300,6 +315,10 @@ private:
 
   void genCopyStringToStorageInline(mlir::Value src, mlir::Type ty,
                                     mlir::Value dstAddr, mlir::Location loc);
+
+  void genCopyConstantStringToStorageInline(llvm::StringRef bytes,
+                                            mlir::Value dstAddr,
+                                            mlir::Location loc);
 
   /// Inline expansion behind genCopyStringDataFromStorageToMemory.
   void genCopyStringDataFromStorageToMemoryInline(mlir::Value src,
@@ -504,9 +523,15 @@ public:
   void genStore(Value val, Value addr, sol::DataLocation dataLoc,
                 std::optional<Location> locArg = std::nullopt);
 
-  /// Generates the store of string at address.
-  void genStringStore(std::string const &str, Value addr,
-                      std::optional<Location> locArg = std::nullopt);
+  /// Writes the bytes of a string literal at \p addr: up to
+  /// `maxImmediateStringLiteralSize` bytes as immediate words, the last one
+  /// with zeros past the bytes, and above that by a CODECOPY of the bytes from
+  /// their global in the string literal pool. With \p withCleanup, a CODECOPY
+  /// that ends inside a word is followed by clearing the word at addr + size,
+  /// so the last word has zeros past the bytes as well.
+  void genStringLiteralData(StringRef bytes, Value addr,
+                            std::optional<Location> locArg = std::nullopt,
+                            bool withCleanup = false);
 
   /// Returns the length of the storage string whose loaded length slot is
   /// \p lengthSlot, through `helpersym::storageStringLength`.
@@ -577,6 +602,13 @@ public:
   void
   genCopyStringToStorage(mlir::Value src, mlir::Type ty, mlir::Value dstAddr,
                          std::optional<mlir::Location> locArg = std::nullopt);
+
+  /// Writes the constant string \p bytes and its length to the storage slot
+  /// \p dstAddr and its data slots, zeroing the data slots no longer needed,
+  /// through a helper per literal that every assignment of it shares.
+  void genCopyConstantStringToStorage(
+      llvm::StringRef bytes, mlir::Value dstAddr,
+      std::optional<mlir::Location> locArg = std::nullopt);
 
   /// Copies an object from (\p srcAddr, \p srcDataLoc) to
   /// (\p dstAddr, \p dstDataLoc).
