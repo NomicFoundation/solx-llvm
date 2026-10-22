@@ -10,7 +10,7 @@
 // CHECK:           yul.if %[[OOB]] {
 // CHECK-NEXT:        %[[Z:.*]] = yul.constant 0
 // CHECK-NEXT:        yul.revert %[[Z]], %[[Z]]
-// CHECK-NEXT:        yul.yield
+// CHECK-NEXT:      } else {
 // CHECK-LABEL:   yul.func @get_fixArr : (i256) -> i256
 // CHECK:           yul.func_call @__sol.index_storage_array.array$_3_ui256_$_Storage_$.nopanic(%{{.*}}, %arg0)
 // CHECK:           yul.sload
@@ -36,7 +36,7 @@ module {
 // CHECK:           yul.if %[[OOB]] {
 // CHECK-NEXT:        %[[Z:.*]] = yul.constant 0
 // CHECK-NEXT:        yul.revert %[[Z]], %[[Z]]
-// CHECK-NEXT:        yul.yield
+// CHECK-NEXT:      } else {
 // CHECK:           yul.keccak256
 // CHECK-LABEL:   yul.func @get_dynArr : (i256) -> i256
 // CHECK:           yul.func_call @__sol.index_storage_array.array$_dyn_ui256_$_Storage_$.nopanic(%{{.*}}, %arg0)

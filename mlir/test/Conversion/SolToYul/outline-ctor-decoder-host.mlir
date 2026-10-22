@@ -22,12 +22,12 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 }
 
 // The entry code calls the helper, which is defined in the object, one level
-// below the module, after the entry code and before the constructor. No
-// function sits at module scope.
+// below the module, before the constructor and the entry code. No function
+// sits at module scope.
 // CHECK-NOT:  {{^}}  yul.func
 // CHECK:      {{^}}  yul.object @C {
-// CHECK:      {{^}}    %{{.*}} = yul.func_call @__sol.abi_decode_tuple.memory.array$_dyn_ui8_$_Memory_$(
 // CHECK:      {{^}}    yul.func @__sol.abi_decode_tuple.memory.array$_dyn_ui8_$_Memory_$ : (i256, i256) -> i256 {
 // CHECK:      {{^}}    yul.func @ctor
+// CHECK:      {{^}}    %{{.*}} = yul.func_call @__sol.abi_decode_tuple.memory.array$_dyn_ui8_$_Memory_$(
 // CHECK:      {{^}}  }
 // CHECK-NOT:  {{^}}  yul.func

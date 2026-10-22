@@ -10,13 +10,6 @@
 // An ABI-decoded word must have its low 64 bits clear. The dispatcher decodes
 // each argument tuple through its helper. A top-level argument is split into
 // the pair; an array element is stored as the raw word.
-// CHECK:         case 286331153 {
-// CHECK:           %[[FP:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ext_func_ref$_$_ui256_$returnsui256_$(
-// CHECK:           yul.func_call @setExtFn(%[[FP]])
-// CHECK:         case 572662306 {
-// CHECK:           %[[ARR:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_ext_func_ref$_$_ui256_$returnsui256_$_$_Memory_$(
-// CHECK:           yul.func_call @setArr(%[[ARR]])
-
 // CHECK-LABEL: yul.func @__sol.abi_decode.calldata.memory.array$_dyn_ext_func_ref$_$_ui256_$returnsui256_$_$_Memory_$ : (i256, i256) -> i256
 // CHECK:         yul.for
 // CHECK:           %[[EW:.*]] = yul.calldataload
@@ -55,6 +48,13 @@
 // CHECK:         %[[VS:.*]] = yul.arith_shl %[[V]], %{{.*}}
 // CHECK:         %[[W:.*]] = yul.or %{{.*}}, %[[VS]]
 // CHECK:         yul.sstore %{{.*}}, %[[W]]
+
+// CHECK:         case 286331153 {
+// CHECK:           %[[FP:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ext_func_ref$_$_ui256_$returnsui256_$(
+// CHECK:           yul.func_call @setExtFn(%[[FP]])
+// CHECK:         case 572662306 {
+// CHECK:           %[[ARR:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_ext_func_ref$_$_ui256_$returnsui256_$_$_Memory_$(
+// CHECK:           yul.func_call @setArr(%[[ARR]])
 module {
   sol.contract @C {
     sol.state_var @fn slot 0 offset 8 : !sol.ext_func_ref<(ui256) -> ui256>
