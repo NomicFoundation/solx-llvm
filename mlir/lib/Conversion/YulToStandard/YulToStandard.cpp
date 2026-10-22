@@ -42,50 +42,33 @@ ArrayAttr getFuncPassthrough(PatternRewriter &r, ModuleOp mod) {
   return r.getArrayAttr(attrs);
 }
 
-// Returns an existing or a new (if not found) FuncOp in the ModuleOp `mod`.
+// Creates the entry function `__entry` at the start of `mod`.
 //
-// Both functions created here (`__entry` and `.unreachable`) are generated, so
-// a new one carries an artificial subprogram at the module's location.
-func::FuncOp getOrInsertFuncOp(PatternRewriter &r, ModuleOp mod, StringRef name,
-                               FunctionType fnTy, LLVM::Linkage linkage,
-                               Block::iterator insertPt) {
-  if (auto found = mod.lookupSymbol<func::FuncOp>(name))
-    return found;
-
+// It is generated, so it carries an artificial subprogram at the module's
+// location.
+func::FuncOp createEntryFuncOp(PatternRewriter &r, ModuleOp mod) {
+  StringRef name = "__entry";
   OpBuilder::InsertionGuard insertGuard(r);
-  r.setInsertionPoint(mod.getBody(), insertPt);
+  r.setInsertionPointToStart(mod.getBody());
 
   std::vector<NamedAttribute> attrs;
   attrs.push_back(r.getNamedAttr(
-      "llvm.linkage", LLVM::LinkageAttr::get(r.getContext(), linkage)));
+      "llvm.linkage",
+      LLVM::LinkageAttr::get(r.getContext(), LLVM::Linkage::External)));
   attrs.push_back(r.getNamedAttr("passthrough", getFuncPassthrough(r, mod)));
 
   return r.create<func::FuncOp>(
-      evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name, fnTy,
-      attrs);
+      evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name,
+      r.getFunctionType({}, {}), attrs);
 }
 
-// Creates a call to a wrapper function of the LLVM::UnreachableOp. This is a
-// hack to create a non-terminator unreachable op.
-void createCallToUnreachableWrapper(PatternRewriter &r, ModuleOp mod,
-                                    Location loc) {
-  auto fnTy = FunctionType::get(mod.getContext(), {}, {});
-  // At the end, since the entry function must be first.
-  func::FuncOp fn =
-      getOrInsertFuncOp(r, mod, ".unreachable", fnTy, LLVM::Linkage::Private,
-                        mod.getBody()->end());
-  r.create<func::CallOp>(
-      loc, FlatSymbolRefAttr::get(mod.getContext(), ".unreachable"),
-      TypeRange{}, ValueRange{});
-
-  if (fn.getBody().empty()) {
-    Block *blk = r.createBlock(&fn.getBody());
-    OpBuilder::InsertionGuard insertGuard(r);
-    r.setInsertionPointToStart(blk);
-    // The body is shared by every caller, so it is at line 0 of the module
-    // its subprogram is at; only the call above is at `loc`.
-    r.create<LLVM::UnreachableOp>(evm::artificialLoc(mod.getLoc()));
-  }
+// Replaces the halting `op` with a call to the intrinsic `id` on `ins`,
+// terminated by an unreachable.
+void replaceWithHaltingIntrCall(Operation *op, llvm::Intrinsic::ID id,
+                                ValueRange ins, StringRef name,
+                                PatternRewriter &r) {
+  r.create<LLVM::IntrCallOp>(op->getLoc(), id, /*resTy=*/Type{}, ins, name);
+  r.replaceOpWithNewOp<LLVM::UnreachableOp>(op);
 }
 
 // For some dialects, we have to pass i1 instead of i256 for boolean values,
@@ -677,13 +660,9 @@ struct SelfDestructOpLowering : public OpRewritePattern<yul::SelfDestructOp> {
 
   LogicalResult matchAndRewrite(yul::SelfDestructOp op,
                                 PatternRewriter &r) const override {
-    Location loc = op.getLoc();
-    auto mod = getModule(op);
-    r.replaceOpWithNewOp<LLVM::IntrCallOp>(
-        op, llvm::Intrinsic::evm_selfdestruct,
-        /*resTy=*/Type{},
-        /*ins=*/ValueRange{op.getAddr()}, "evm.selfdestruct");
-    createCallToUnreachableWrapper(r, mod, loc);
+    replaceWithHaltingIntrCall(op, llvm::Intrinsic::evm_selfdestruct,
+                               /*ins=*/ValueRange{op.getAddr()},
+                               "evm.selfdestruct", r);
     return success();
   }
 };
@@ -1193,16 +1172,12 @@ struct RevertOpLowering : public OpRewritePattern<yul::RevertOp> {
 
   LogicalResult matchAndRewrite(yul::RevertOp op,
                                 PatternRewriter &r) const override {
-    Location loc = op.getLoc();
-    auto mod = getModule(op);
-    evm::Builder evmB(mod, r, loc);
+    evm::Builder evmB(getModule(op), r, op.getLoc());
 
-    r.replaceOpWithNewOp<LLVM::IntrCallOp>(
+    replaceWithHaltingIntrCall(
         op, llvm::Intrinsic::evm_revert,
-        /*resTy=*/Type{},
         /*ins=*/ValueRange{evmB.genHeapPtr(op.getAddr()), op.getSize()},
-        "evm.revert");
-    createCallToUnreachableWrapper(r, mod, loc);
+        "evm.revert", r);
     return success();
   }
 };
@@ -1288,16 +1263,12 @@ struct BuiltinRetOpLowering : public OpRewritePattern<yul::ReturnOp> {
 
   LogicalResult matchAndRewrite(yul::ReturnOp op,
                                 PatternRewriter &r) const override {
-    Location loc = op.getLoc();
-    auto mod = getModule(op);
-    evm::Builder evmB(mod, r, loc);
+    evm::Builder evmB(getModule(op), r, op.getLoc());
 
-    r.replaceOpWithNewOp<LLVM::IntrCallOp>(
+    replaceWithHaltingIntrCall(
         op, llvm::Intrinsic::evm_return,
-        /*resTy=*/Type{},
         /*ins=*/ValueRange{evmB.genHeapPtr(op.getAddr()), op.getSize()},
-        "evm.return");
-    createCallToUnreachableWrapper(r, mod, loc);
+        "evm.return", r);
     return success();
   }
 };
@@ -1307,10 +1278,8 @@ struct StopOpLowering : public OpRewritePattern<yul::StopOp> {
 
   LogicalResult matchAndRewrite(yul::StopOp op,
                                 PatternRewriter &r) const override {
-    r.replaceOpWithNewOp<LLVM::IntrCallOp>(op, llvm::Intrinsic::evm_stop,
-                                           /*resTy=*/Type{},
-                                           /*ins=*/ValueRange{}, "evm.stop");
-    createCallToUnreachableWrapper(r, getModule(op), op.getLoc());
+    replaceWithHaltingIntrCall(op, llvm::Intrinsic::evm_stop,
+                               /*ins=*/ValueRange{}, "evm.stop", r);
     return success();
   }
 };
@@ -1320,10 +1289,18 @@ struct InvalidOpLowering : public OpRewritePattern<yul::InvalidOp> {
 
   LogicalResult matchAndRewrite(yul::InvalidOp op,
                                 PatternRewriter &r) const override {
-    r.replaceOpWithNewOp<LLVM::IntrCallOp>(op, llvm::Intrinsic::evm_invalid,
-                                           /*resTy=*/Type{},
-                                           /*ins=*/ValueRange{}, "evm.invalid");
-    createCallToUnreachableWrapper(r, getModule(op), op.getLoc());
+    replaceWithHaltingIntrCall(op, llvm::Intrinsic::evm_invalid,
+                               /*ins=*/ValueRange{}, "evm.invalid", r);
+    return success();
+  }
+};
+
+struct UnreachableOpLowering : public OpRewritePattern<yul::UnreachableOp> {
+  using OpRewritePattern<yul::UnreachableOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(yul::UnreachableOp op,
+                                PatternRewriter &r) const override {
+    r.replaceOpWithNewOp<LLVM::UnreachableOp>(op);
     return success();
   }
 };
@@ -1615,9 +1592,7 @@ struct ObjectOpLowering : public OpRewritePattern<yul::ObjectOp> {
     OpBuilder::InsertionGuard insertGuard(r);
 
     // Generate the entry function.
-    func::FuncOp entryFn =
-        getOrInsertFuncOp(r, mod, "__entry", r.getFunctionType({}, {}),
-                          LLVM::Linkage::External, mod.getBody()->begin());
+    func::FuncOp entryFn = createEntryFuncOp(r, mod);
 
     // Execution starts at the first function, so the backend checks that the
     // entry function comes first, and emits no JUMPDEST for it.
@@ -1732,6 +1707,7 @@ void evm::populateYulPats(RewritePatternSet &pats, TypeConverter &tyConv) {
       RevertOpLowering,
       StopOpLowering,
       InvalidOpLowering,
+      UnreachableOpLowering,
       CallValOpLowering,
       CallDataLoadOpLowering,
       CallDataSizeOpLowering,

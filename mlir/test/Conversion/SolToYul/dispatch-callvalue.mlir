@@ -32,6 +32,7 @@ module {
 }
 
 // CHECK-LABEL: yul.object @AllNonPayable_deployed {
+// CHECK:         yul.func @f
 // CHECK:         yul.calldatasize
 // CHECK:         yul.callvalue
 // CHECK:         yul.switch
@@ -42,7 +43,6 @@ module {
 // CHECK-NOT:     yul.callvalue
 // CHECK:         yul.func_call @receive()
 // CHECK-NOT:     yul.callvalue
-// CHECK:         yul.func @receive
 
 
 // -----
@@ -67,6 +67,7 @@ module {
 }
 
 // CHECK-LABEL: yul.object @Mixed_deployed {
+// CHECK:         yul.func @f
 // CHECK-NOT:     yul.callvalue
 // CHECK:         yul.switch
 // CHECK:         case 1 {
@@ -76,7 +77,6 @@ module {
 // CHECK-NOT:     yul.callvalue
 // CHECK:         yul.func_call @g()
 // CHECK-NOT:     yul.callvalue
-// CHECK:         yul.func @g
 
 
 // -----
@@ -102,6 +102,7 @@ module {
 }
 
 // CHECK-LABEL: yul.object @PayableFallback_deployed {
+// CHECK:         yul.func @f
 // CHECK-NOT:     yul.callvalue
 // CHECK:         case 1 {
 // CHECK:         yul.callvalue
@@ -109,7 +110,6 @@ module {
 // CHECK-NOT:     yul.callvalue
 // CHECK:         yul.func_call @fallback()
 // CHECK-NOT:     yul.callvalue
-// CHECK:         yul.func @fallback
 
 
 // -----
@@ -194,7 +194,7 @@ module {
 }
 
 // CHECK-LABEL: yul.object @Lib_deployed {
+// CHECK:         yul.func @f
 // CHECK-NOT:     yul.callvalue
 // CHECK:         yul.func_call @f()
 // CHECK-NOT:     yul.callvalue
-// CHECK:         yul.func @f

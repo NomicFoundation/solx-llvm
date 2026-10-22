@@ -19,17 +19,14 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
   sol.contract @C {
     sol.func @one(%arg0: ui256) attributes {orig_fn_type = (ui256) -> (), selector = 1 : i32, state_mutability = #Pure} {
       sol.revert "E(uint256)"(%arg0 : ui256) {call}
-      sol.return
     }
     sol.func @two(%arg0: ui256) attributes {orig_fn_type = (ui256) -> (), selector = 2 : i32, state_mutability = #Pure} {
       %c7_ui256 = sol.constant 7 : ui256
       sol.revert "E(uint256)"(%c7_ui256 : ui256) {call}
-      sol.return
     }
     sol.func @three(%arg0: i1) attributes {orig_fn_type = (i1) -> (), selector = 3 : i32, state_mutability = #Pure} {
       sol.require %arg0, "F()" {call}
       sol.revert "F()" {call}
-      sol.return
     }
     sol.func @panic(%arg0: ui256) -> !sol.array<? x ui256, Memory> attributes {orig_fn_type = (ui256) -> !sol.array<? x ui256, Memory>, selector = 4 : i32, state_mutability = #Pure} {
       %0 = sol.malloc %arg0 zero_init : (ui256) -> !sol.array<? x ui256, Memory>
@@ -38,23 +35,19 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
     sol.state_var @s slot 0 offset 0 : !sol.string<Storage>
     sol.func @mem(%arg0: !sol.string<Memory>) attributes {orig_fn_type = (!sol.string<Memory>) -> (), selector = 5 : i32, state_mutability = #Pure} {
       sol.revert "E(string)"(%arg0 : !sol.string<Memory>) {call}
-      sol.return
     }
     sol.func @cd(%arg0: !sol.string<CallData>) attributes {orig_fn_type = (!sol.string<CallData>) -> (), selector = 6 : i32, state_mutability = #Pure} {
       sol.revert "E(string)"(%arg0 : !sol.string<CallData>) {call}
-      sol.return
     }
     sol.func @st() attributes {orig_fn_type = () -> (), selector = 7 : i32, state_mutability = #View} {
       %0 = sol.addr_of @s : !sol.string<Storage>
       sol.revert "E(string)"(%0 : !sol.string<Storage>) {call}
-      sol.return
     }
     sol.func @lit(%arg0: i1, %arg1: ui256) attributes {state_mutability = #Pure} {
       %0 = sol.constant_string "abc"
       sol.require %arg0, "E(string,uint256)"(%0, %arg1 : !sol.constant_string, ui256) {call}
       %1 = sol.constant_string "abc"
       sol.revert "E(string,uint256)" (%1, %arg1 : !sol.constant_string, ui256) {call}
-      sol.return
     }
   } {kind = #Contract, runtime}
 }
@@ -115,3 +108,4 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK:           yul.func_call @__sol.revert.002ff067.ui256(%c7
 // CHECK-LABEL:   yul.func @one
 // CHECK:           yul.func_call @__sol.revert.002ff067.ui256(%arg0) : (i256) -> ()
+// CHECK-NEXT:      yul.unreachable

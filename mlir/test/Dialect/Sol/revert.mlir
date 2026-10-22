@@ -1,35 +1,33 @@
 // RUN: mlir-opt %s | mlir-opt | FileCheck %s
 
-// Each revert is followed by a result-defining op that must not be taken for
-// its operands.
+// Each revert form ends its own block; the next line must be the following
+// block's label (or the closing brace), not absorbed into the revert.
 
 // CHECK-LABEL: func @roundtrip
 func.func @roundtrip(%a: ui256, %msg: !sol.string<Memory>) {
   // CHECK:      sol.revert{{$}}
-  // CHECK-NEXT: sol.constant 1
+  // CHECK-NEXT: ^bb1:
   sol.revert
-  %c1 = sol.constant 1 : ui256
+^bb1:
   // CHECK:      sol.revert "oops"{{$}}
-  // CHECK-NEXT: sol.constant 2
+  // CHECK-NEXT: ^bb2:
   sol.revert "oops"
-  %c2 = sol.constant 2 : ui256
+^bb2:
   // CHECK:      sol.revert ""{{$}}
-  // CHECK-NEXT: sol.constant 3
+  // CHECK-NEXT: ^bb3:
   sol.revert ""
-  %c3 = sol.constant 3 : ui256
-  // CHECK:      sol.revert "Error(string)"(%{{.*}} : !sol.string<Memory>) {call}
-  // CHECK-NEXT: sol.constant 4
+^bb3:
+  // CHECK:      sol.revert "Error(string)"(%{{.*}} : !sol.string<Memory>) {call}{{$}}
+  // CHECK-NEXT: ^bb4:
   sol.revert "Error(string)"(%msg : !sol.string<Memory>) {call}
-  %c4 = sol.constant 4 : ui256
-  // CHECK:      sol.revert "E(uint256,uint256)"(%{{.*}}, %{{.*}} : ui256, ui256) {call}
-  // CHECK-NEXT: sol.constant 5
+^bb4:
+  // CHECK:      sol.revert "E(uint256,uint256)"(%{{.*}}, %{{.*}} : ui256, ui256) {call}{{$}}
+  // CHECK-NEXT: ^bb5:
   sol.revert "E(uint256,uint256)"(%a, %a : ui256, ui256) {call}
-  %c5 = sol.constant 5 : ui256
+^bb5:
   // CHECK:      sol.revert(%{{.*}} : ui256){{$}}
-  // CHECK-NEXT: sol.constant 6
+  // CHECK-NEXT: }
   sol.revert(%a : ui256)
-  %c6 = sol.constant 6 : ui256
-  return
 }
 
 // CHECK-LABEL: func @require
