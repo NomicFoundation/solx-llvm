@@ -62,7 +62,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeEVMTarget() {
   initializeEVMBPStackificationPass(PR);
   initializeEVMAAWrapperPassPass(PR);
   initializeEVMExternalAAWrapperPass(PR);
-  initializeEVMAlwaysInlinePass(PR);
+  initializeEVMInlinePolicyPass(PR);
   initializeEVMLowerJumpUnlessPass(PR);
   initializeEVMBranchFolderPass(PR);
   initializeEVMFinalizeStackFramesPass(PR);
@@ -154,7 +154,7 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
         PM.addPass(EVMFoldMemoryGuardPass());
         PM.addPass(EVMLowerSetImmutablesPass());
         if (Level != OptimizationLevel::O0)
-          PM.addPass(EVMAlwaysInlinePass());
+          PM.addPass(EVMInlinePolicyPass());
         PM.addPass(EVMLinkRuntimePass());
         PM.addPass(GlobalDCEPass());
         PM.addPass(createModuleToFunctionPassAdaptor(EVMAllocaHoistingPass()));
@@ -199,8 +199,8 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
           PM.addPass(EVMMarkRecursiveFunctionsPass());
           return true;
         }
-        if (PassName == "evm-always-inline") {
-          PM.addPass(EVMAlwaysInlinePass());
+        if (PassName == "evm-inline-policy") {
+          PM.addPass(EVMInlinePolicyPass());
           return true;
         }
         if (PassName == "evm-verifier") {
