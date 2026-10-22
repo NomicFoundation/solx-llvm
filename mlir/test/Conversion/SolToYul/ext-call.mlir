@@ -35,8 +35,9 @@ module {
 
 module {
   sol.contract @C {
-    // A view caller uses staticcall with a 96-byte return buffer, then decodes
-    // three words from it through the tuple helper.
+    // A view caller uses staticcall with a 96-byte return buffer, reverts on
+    // less return data than that, then decodes three words from it through
+    // the tuple helper.
     // CHECK-LABEL: yul.func @__sol.abi_decode_tuple.memory.ui256.ui256.ui256 : (i256, i256) -> (i256, i256, i256)
     // CHECK:       ^bb0(%[[HEAD:.*]]: i256, %[[END:.*]]: i256):
     // CHECK:         %[[SIZE:.*]] = yul.sub %[[END]], %[[HEAD]]
@@ -56,7 +57,8 @@ module {
     // CHECK:         yul.if %[[FAIL]] {
     // CHECK:           yul.returndatacopy
     // CHECK:         %[[R:.*]]:3 = yul.if %{{.*}} -> i256, i256, i256 {
-    // CHECK:           yul.returndatasize
+    // CHECK:           %[[RDS:.*]] = yul.returndatasize
+    // CHECK:           yul.cmp ult, %[[RDS]], %[[C96]]
     // CHECK:           %[[D:.*]]:3 = yul.func_call @__sol.abi_decode_tuple.memory.ui256.ui256.ui256(%[[BUF]], %{{.*}})
     // CHECK:           yul.yield %[[D]]#0, %[[D]]#1, %[[D]]#2 : i256, i256, i256
     // CHECK:         yul.func_return %[[R]]#0, %[[R]]#1, %[[R]]#2 : i256, i256, i256
@@ -183,7 +185,6 @@ module {
     // CHECK:         yul.revert
     // CHECK:         yul.returndatasize
     // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %{{.*}}
-    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %{{.*}}
     // CHECK:         yul.func_call @__sol.abi_decode_tuple.memory.array$_2_ui256_$_Memory_$(%[[BUF]], %{{.*}})
     sol.func @fixedArrayRet(%arg0: !sol.address) -> !sol.array<2 x ui256, Memory> attributes {state_mutability = #View} {
       %sel = sol.constant 1481905832 : ui256
@@ -207,7 +208,6 @@ module {
     // CHECK:         yul.static_call
     // CHECK:         yul.revert
     // CHECK:         yul.returndatasize
-    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %{{.*}}
     // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %{{.*}}
     // CHECK:         yul.func_call @__sol.abi_decode_tuple.memory.ui256.array$_2_ui256_$_Memory_$(%[[BUF]], %{{.*}})
     sol.func @mixedRet(%arg0: !sol.address) -> (ui256, !sol.array<2 x ui256, Memory>) attributes {state_mutability = #View} {
