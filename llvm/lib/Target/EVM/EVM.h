@@ -56,7 +56,7 @@ constexpr StringLiteral EVMStackRegionSizeFlag = "evm-stack-region-size";
 FunctionPass *createEVMCodegenPreparePass();
 ImmutablePass *createEVMAAWrapperPass();
 ImmutablePass *createEVMExternalAAWrapperPass();
-ModulePass *createEVMAlwaysInlinePass();
+ModulePass *createEVMInlinePolicyPass();
 
 // ISel and immediate followup passes.
 FunctionPass *createEVMISelDag(EVMTargetMachine &TM, CodeGenOptLevel OptLevel);
@@ -89,7 +89,7 @@ void initializeEVMSplitCriticalEdgesPass(PassRegistry &);
 void initializeEVMBPStackificationPass(PassRegistry &);
 void initializeEVMAAWrapperPassPass(PassRegistry &);
 void initializeEVMExternalAAWrapperPass(PassRegistry &);
-void initializeEVMAlwaysInlinePass(PassRegistry &);
+void initializeEVMInlinePolicyPass(PassRegistry &);
 void initializeEVMLowerJumpUnlessPass(PassRegistry &);
 void initializeEVMFinalizeStackFramesPass(PassRegistry &);
 void initializeEVMMarkRecursiveFunctionsPass(PassRegistry &);
@@ -120,8 +120,8 @@ struct EVMMarkRecursiveFunctionsPass
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };
 
-struct EVMAlwaysInlinePass : PassInfoMixin<EVMAlwaysInlinePass> {
-  EVMAlwaysInlinePass() = default;
+struct EVMInlinePolicyPass : PassInfoMixin<EVMInlinePolicyPass> {
+  EVMInlinePolicyPass() = default;
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
 };
 
