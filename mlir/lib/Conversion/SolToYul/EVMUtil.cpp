@@ -2354,7 +2354,7 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
 /// creating it on first request: a `sol.func` with signature
 /// `argTys -> resTys` whose body is emitted by \p genBody (which receives the
 /// entry-block arguments and the location to build at, line 0 since every
-/// caller shares the body, and must emit the terminating `sol.return`). The
+/// caller shares the body, and must emit the body's terminator). The
 /// symbol must come from a `helpersym` generator, which guarantees it is
 /// unique to one helper. The signature is verified when an existing helper is
 /// reused. The symbol is registered before \p genBody runs, so a
@@ -2405,6 +2405,17 @@ void evm::Builder::genHelperCall(
                                          b.create<sol::ReturnOp>(bodyLoc);
                                        });
   b.create<sol::CallOp>(loc, fn, args);
+}
+
+void evm::Builder::genHaltingHelperCall(
+    StringRef symbol, ValueRange args,
+    llvm::function_ref<void(ValueRange, Location)> genBody,
+    std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  sol::FuncOp fn =
+      getOrCreateHelperFn(mod, b, symbol, args.getTypes(), {}, genBody);
+  b.create<sol::CallOp>(loc, fn, args);
+  b.create<yul::UnreachableOp>(loc);
 }
 
 Value evm::Builder::genHelperCall(
@@ -4445,7 +4456,7 @@ void evm::Builder::genABITupleDecodingInline(TypeRange tys, Value tupleStart,
 void evm::Builder::genPanic(PanicCode code, std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
-  genHelperCall(
+  genHaltingHelperCall(
       helpersym::panic(), {bExt.genI256Const(static_cast<int64_t>(code))},
       [&](ValueRange a, Location bodyLoc) { genPanicInline(a[0], bodyLoc); },
       loc);
@@ -4462,10 +4473,8 @@ void evm::Builder::genPanicInline(Value code, Location loc) {
 void evm::Builder::genPanic(PanicCode code, Value cond,
                             std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  mlir::solgen::BuilderExt bExt(b, loc);
-
-  auto ifOp = bExt.createIf(cond);
-  b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  auto ifOp = b.create<yul::IfOp>(loc, TypeRange{}, cond);
+  b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genPanic(code, loc);
   b.setInsertionPointAfter(ifOp);
 }
@@ -4484,12 +4493,9 @@ void evm::Builder::genForwardingRevert(std::optional<Location> locArg) {
 void evm::Builder::genForwardingRevert(Value cond,
                                        std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  mlir::solgen::BuilderExt bExt(b, loc);
-
-  auto ifOp = bExt.createIf(cond);
-
   OpBuilder::InsertionGuard insertGuard(b);
-  b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  auto ifOp = b.create<yul::IfOp>(loc, TypeRange{}, cond);
+  b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genForwardingRevert(loc);
 }
 
@@ -4502,12 +4508,9 @@ void evm::Builder::genRevert(std::optional<Location> locArg) {
 
 void evm::Builder::genRevert(Value cond, std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  mlir::solgen::BuilderExt bExt(b, loc);
-
-  auto ifOp = bExt.createIf(cond);
-
   OpBuilder::InsertionGuard insertGuard(b);
-  b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  auto ifOp = b.create<yul::IfOp>(loc, TypeRange{}, cond);
+  b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genRevert(loc);
 }
 
@@ -4515,7 +4518,7 @@ void evm::Builder::genRevert(TypeRange tys, ValueRange vals,
                              StringRef signature,
                              std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  genHelperCall(
+  genHaltingHelperCall(
       helpersym::revertError(signature, tys, vals), getHelperArgs(vals),
       [&](ValueRange a, Location bodyLoc) {
         genRevertInline(tys, getHelperValues(b, vals, a, bodyLoc), signature,
@@ -4541,11 +4544,9 @@ void evm::Builder::genRevert(Value cond, TypeRange tys, ValueRange vals,
                              StringRef signature,
                              std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  mlir::solgen::BuilderExt bExt(b, loc);
-
-  auto ifOp = bExt.createIf(cond);
   OpBuilder::InsertionGuard insertGuard(b);
-  b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  auto ifOp = b.create<yul::IfOp>(loc, TypeRange{}, cond);
+  b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genRevert(tys, vals, signature, loc);
 }
 
@@ -4573,12 +4574,9 @@ void evm::Builder::genRevertWithMsg(std::string const &msg,
 void evm::Builder::genRevertWithMsg(Value cond, std::string const &msg,
                                     std::optional<mlir::Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  mlir::solgen::BuilderExt bExt(b, loc);
-
-  auto ifOp = bExt.createIf(cond);
-
   OpBuilder::InsertionGuard insertGuard(b);
-  b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  auto ifOp = b.create<yul::IfOp>(loc, TypeRange{}, cond);
+  b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genRevertWithMsg(msg, loc);
 }
 
@@ -4633,10 +4631,8 @@ void evm::Builder::genDbgRevert(ValueRange vals,
 void evm::Builder::genCondDbgRevert(Value cond, ValueRange vals,
                                     std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  mlir::solgen::BuilderExt bExt(b, loc);
-
-  auto ifOp = bExt.createIf(cond);
   OpBuilder::InsertionGuard insertGuard(b);
-  b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  auto ifOp = b.create<yul::IfOp>(loc, TypeRange{}, cond);
+  b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genDbgRevert(vals, loc);
 }

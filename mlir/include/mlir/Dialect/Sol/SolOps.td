@@ -563,7 +563,7 @@ def Sol_EmitOp : Sol_Op<"emit", [Sol_ConstantStringConsumerOpInterface]> {
   let hasCustomAssemblyFormat = 1;
 }
 
-def Sol_RevertOp : Sol_Op<"revert", [DeclareOpInterfaceMethods<
+def Sol_RevertOp : Sol_Op<"revert", [Terminator, DeclareOpInterfaceMethods<
     Sol_ConstantStringConsumerOpInterface, ["takesConstantString"]>]> {
   // $signature represents the error call's signature if $call is set,
   // otherwise the user-supplied reason string. It is absent for a plain
@@ -1102,7 +1102,7 @@ def Sol_BlobHashOp : Sol_Op<"blobhash"> {
   let assemblyFormat = "$idx attr-dict `:` type($val)";
 }
 
-def Sol_SelfdestructOp : Sol_Op<"selfdestruct"> {
+def Sol_SelfdestructOp : Sol_Op<"selfdestruct", [Terminator]> {
   let summary = "Terminates the contract and sends balance to the recipient";
   let arguments = (ins Sol_AddressType:$recipient);
 

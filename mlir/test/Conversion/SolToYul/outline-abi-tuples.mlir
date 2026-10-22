@@ -39,12 +39,6 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 }
 
 // CHECK-LABEL: yul.object @C_deployed
-// CHECK:           yul.func_call @__sol.abi_decode_tuple.calldata.ui256.array$_dyn_ui8_$_Memory_$({{.*}}) : (i256, i256) -> (i256, i256)
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_dyn_ui8_$_Memory_$(
-// CHECK:           yul.func_call @__sol.abi_decode_tuple.calldata.ui256.array$_dyn_ui8_$_Memory_$({{.*}}) : (i256, i256) -> (i256, i256)
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_dyn_ui8_$_Memory_$(
-// CHECK:           yul.func_call @__sol.abi_decode_tuple.calldata.ui256(
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(
 // CHECK-LABEL:   yul.func @__sol.abi_encode_tuple.padded.tail.ui256 : (i256, i256) -> i256
 // CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.ui256 : (i256, i256) -> i256
 // CHECK-LABEL:   yul.func @__sol.abi_encode_array.memory.padded.tail.array$_dyn_ui8_$_Memory_$ : (i256, i256, i256) -> i256
@@ -76,3 +70,9 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK-LABEL:   yul.func @g
 // CHECK-LABEL:   yul.func @f2
 // CHECK-LABEL:   yul.func @f1
+// CHECK:           yul.func_call @__sol.abi_decode_tuple.calldata.ui256.array$_dyn_ui8_$_Memory_$({{.*}}) : (i256, i256) -> (i256, i256)
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_dyn_ui8_$_Memory_$(
+// CHECK:           yul.func_call @__sol.abi_decode_tuple.calldata.ui256.array$_dyn_ui8_$_Memory_$({{.*}}) : (i256, i256) -> (i256, i256)
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.array$_dyn_ui8_$_Memory_$(
+// CHECK:           yul.func_call @__sol.abi_decode_tuple.calldata.ui256(
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(

@@ -3362,7 +3362,6 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
       evm::Builder evmB(getModule(tryOp), r, loc);
       r.setInsertionPointToStart(&ifStatus.getElseRegion().emplaceBlock());
       evmB.genForwardingRevert();
-      r.setInsertionPoint(r.create<sol::YieldOp>(loc));
     } else {
       r.inlineRegionBefore(tryOp.getFallbackRegion(), ifStatus.getElseRegion(),
                            ifStatus.getElseRegion().begin());
@@ -4136,8 +4135,6 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       // Generate the return.
       assert(tupleSize);
       r.create<yul::ReturnOp>(fnLoc, tupleStart, tupleSize);
-
-      r.create<yul::YieldOp>(fnLoc);
     }
   }
 
@@ -4239,9 +4236,9 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       auto callDataSz = r.create<yul::CallDataSizeOp>(loc);
       auto callDataSzIsZero =
           bExt.genCmp(yul::CmpPredicate::eq, callDataSz, bExt.genI256Const(0));
-      auto ifOp = bExt.createIf(callDataSzIsZero);
       OpBuilder::InsertionGuard insertGuard(r);
-      r.setInsertionPointToStart(&ifOp.getThenRegion().front());
+      auto ifOp = r.create<yul::IfOp>(loc, TypeRange{}, callDataSzIsZero);
+      r.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
       r.create<sol::CallOp>(loc, fns.receive, /*operands=*/ValueRange{});
       r.create<yul::StopOp>(loc);
     }
@@ -4323,12 +4320,14 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     else
       genCreationCode(op, fns.ctor, runtimeObjName, r, loc);
 
-    // The functions and the string literal globals follow the code, the last
-    // one first, which keeps the layout of the object and so its bytecode.
+    // The functions and the string literal globals precede the code, which
+    // ends in a halting terminator, the last one first, which keeps the layout
+    // of the object and so its bytecode.
+    Operation *code = &obj.getEntryBlock()->front();
     for (Operation &i :
          llvm::make_early_inc_range(llvm::reverse(*op.getBody()))) {
       if (isa<FunctionOpInterface, LLVM::GlobalOp>(i))
-        r.moveOpBefore(&i, obj.getEntryBlock(), obj.getEntryBlock()->end());
+        r.moveOpBefore(&i, code);
       else if (!isa<sol::StateVarOp, sol::ImmutableOp>(i))
         llvm_unreachable("NYI");
     }
@@ -4565,6 +4564,9 @@ struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
     for (yul::FuncOp fn : fns)
       r.moveOpBefore(fn, &destBlock, destBlock.begin());
 
+    // The Solidity code after a body that halts is unreachable.
+    if (!block.empty() && block.back().hasTrait<OpTrait::IsTerminator>())
+      r.eraseBlock(r.splitBlock(op->getBlock(), std::next(op->getIterator())));
     r.inlineBlockBefore(&block, op);
     r.eraseOp(op);
     return success();

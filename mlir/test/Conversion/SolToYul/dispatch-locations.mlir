@@ -19,6 +19,8 @@
  subprogramFlags = Definition>
 
 // CHECK-LABEL: yul.object @C {
+// CHECK:         yul.func @ctor
+// CHECK:         } {{.*}} loc(fused<#llvm.di_subprogram<{{.*}}name = "constructor"{{.*}}>>["C.sol":2:3])
 // CHECK:         yul.mstore {{.*}} loc("C.sol":1:1)
 // CHECK:         yul.callvalue loc("C.sol":2:3)
 // CHECK:         yul.datasize {obj = @C} loc("C.sol":2:3)
@@ -28,8 +30,6 @@
 // CHECK:         yul.datasize {obj = @C_deployed} loc("C.sol":1:1)
 // CHECK:         yul.codecopy {{.*}} loc("C.sol":1:1)
 // CHECK:         yul.return {{.*}} loc("C.sol":1:1)
-// CHECK:         yul.func @ctor
-// CHECK:         } {{.*}} loc(fused<#llvm.di_subprogram<{{.*}}name = "constructor"{{.*}}>>["C.sol":2:3])
 // CHECK:       } loc("C.sol":1:1)
 
 module {
@@ -57,6 +57,8 @@ module {
  subprogramFlags = Definition>
 
 // CHECK-LABEL: yul.object @C_deployed {
+// CHECK:         yul.func @f
+// CHECK:         } {{.*}} loc(fused<#llvm.di_subprogram<{{.*}}name = "f"{{.*}}>>["C.sol":3:3])
 // CHECK:         yul.calldatasize loc("C.sol":1:1)
 // CHECK:         yul.callvalue loc("C.sol":1:1)
 // CHECK:         yul.arith_shr {{.*}} loc("C.sol":1:1)
@@ -65,8 +67,6 @@ module {
 // CHECK:           yul.func_call @f({{.*}}) : (i256) -> i256 loc("C.sol":3:3)
 // CHECK:           yul.return {{.*}} loc("C.sol":3:3)
 // CHECK:         yul.revert {{.*}} loc("C.sol":1:1)
-// CHECK:         yul.func @f
-// CHECK:         } {{.*}} loc(fused<#llvm.di_subprogram<{{.*}}name = "f"{{.*}}>>["C.sol":3:3])
 // CHECK:       } loc("C.sol":1:1)
 
 module {

@@ -23,15 +23,6 @@
 using namespace mlir;
 using solgen::getModule;
 
-/// Generates undef values of the given types.
-static SmallVector<Value> genUndefs(TypeRange tys, Location loc, OpBuilder &b) {
-  SmallVector<Value> undefs;
-  undefs.reserve(tys.size());
-  for (Type ty : tys)
-    undefs.push_back(b.create<LLVM::UndefOp>(loc, ty));
-  return undefs;
-}
-
 /// Returns the number of words `tys` lower to.
 static unsigned getNumWords(TypeRange tys) {
   unsigned numWords = 0;
@@ -188,7 +179,6 @@ void evm::InternalDispatch::genDispatchFns() {
         solgen::BuilderExt(b, loc).genI256Const(static_cast<int64_t>(
             mlir::evm::PanicCode::InvalidInternalFunction)),
         loc);
-    b.create<yul::YieldOp>(loc, genUndefs(resTys, loc, b));
 
     b.setInsertionPointToEnd(entry);
     b.create<yul::FuncReturnOp>(loc, switchOp.getResults());

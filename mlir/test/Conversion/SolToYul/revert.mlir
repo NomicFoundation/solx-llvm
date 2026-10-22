@@ -4,7 +4,8 @@
 module {
   sol.contract @C {
     // revert E(a) goes through the error's helper, which stores the selector
-    // and ABI-encodes the argument after it.
+    // and ABI-encodes the argument after it. The helper never returns, so its
+    // call ends the caller's block.
     // CHECK-LABEL:     yul.func @__sol.revert.002ff067.ui256 : (i256) -> () {
     // CHECK:           ^bb0(%[[A:.*]]: i256):
     // CHECK:             %[[P:.*]] = yul.mload %c64_i256
@@ -12,12 +13,26 @@ module {
     // CHECK:             %[[OFF:.*]] = yul.add %[[P]], %c4_i256
     // CHECK:             yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%[[A]], %[[OFF]])
     // CHECK:             yul.revert %[[P]], %{{.*}}
+    // CHECK-NEXT:      }
 
-    // CHECK-LABEL:     yul.func @revert : (i256) -> () {
+    // CHECK-LABEL:     yul.func @revert_custom : (i256) -> () {
     // CHECK:           ^bb0(%[[A:.*]]: i256):
-    // CHECK:             yul.func_call @__sol.revert.002ff067.ui256(%[[A]]) : (i256) -> ()
+    // CHECK-NEXT:        yul.func_call @__sol.revert.002ff067.ui256(%[[A]]) : (i256) -> ()
+    // CHECK-NEXT:        yul.unreachable
+    // CHECK-NEXT:      }
+    sol.func @revert_custom(%a: ui256) attributes {state_mutability = #NonPayable} {
+      sol.revert "E(uint256)"(%a : ui256) {call}
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
 
+// -----
+
+#NonPayable = #sol<StateMutability NonPayable>
+module {
+  sol.contract @C {
     // revert("error message"): Error(string), length 13.
+    // CHECK-LABEL:     yul.func @revert_msg : () -> () {
     // CHECK:             %[[P:.*]] = yul.mload %c64_i256
     // CHECK:             yul.mstore %[[P]], %c3963877391197344453575983046348115674221700746820753546331534351508065746944_i256
     // CHECK:             %[[OFF:.*]] = yul.add %[[P]], %c4_i256
@@ -25,9 +40,21 @@ module {
     // CHECK:             yul.mstore %{{.*}}, %c13_i256
     // CHECK:             yul.mstore %{{.*}}, %c45885808075951196297010052350408398216268308371140631434831267343051471716352_i256
     // CHECK:             yul.revert %[[P]], %{{.*}}
+    // CHECK-NEXT:      }
+    sol.func @revert_msg() attributes {state_mutability = #NonPayable} {
+      sol.revert "error message"
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
 
+// -----
+
+#NonPayable = #sol<StateMutability NonPayable>
+module {
+  sol.contract @C {
     // revert("<65 bytes>"): Error(string), with the bytes codecopied and a zero
     // stored right after them, since they end inside a word.
+    // CHECK-LABEL:     yul.func @revert_long_msg : () -> () {
     // CHECK:             yul.mstore %[[TAIL:.*]], %c65_i256
     // CHECK-NEXT:        %[[DATA:.*]] = yul.add %[[TAIL]], %{{.*}}
     // CHECK:             %[[SIZE:.*]] = yul.constant 65
@@ -37,16 +64,24 @@ module {
     // CHECK-NEXT:        %[[ZERO:.*]] = yul.constant 0
     // CHECK-NEXT:        yul.mstore %[[END]], %[[ZERO]]
     // CHECK:             yul.revert
-
-    // revert()
-    // CHECK:             yul.revert %[[Z:.*]], %[[Z]]
-    // CHECK-NEXT:        yul.func_return
-    sol.func @revert(%a: ui256) attributes {state_mutability = #NonPayable} {
-      sol.revert "E(uint256)"(%a : ui256) {call}
-      sol.revert "error message"
+    // CHECK-NEXT:      }
+    sol.func @revert_long_msg() attributes {state_mutability = #NonPayable} {
       sol.revert "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabc"
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+#NonPayable = #sol<StateMutability NonPayable>
+module {
+  sol.contract @C {
+    // revert()
+    // CHECK-LABEL:     yul.func @revert_empty : () -> () {
+    // CHECK:             yul.revert %[[Z:.*]], %[[Z]]
+    // CHECK-NEXT:      }
+    sol.func @revert_empty() attributes {state_mutability = #NonPayable} {
       sol.revert
-      sol.return
     }
   } {kind = #sol<ContractKind Contract>, runtime}
 }
@@ -100,12 +135,14 @@ module {
     // CHECK:         %[[F:.*]] = yul.cmp eq, %[[COND]], %c0_i256
     // CHECK:         yul.if %[[F]] {
     // CHECK-NEXT:      yul.func_call @__sol.revert.002ff067.ui256(%[[A]]) : (i256) -> ()
+    // CHECK-NEXT:      yul.unreachable
     // CHECK:         }
 
     // require(c, msg)
     // CHECK:         %[[F:.*]] = yul.cmp eq, %[[COND]], %c0_i256
     // CHECK:         yul.if %[[F]] {
     // CHECK-NEXT:      yul.func_call @__sol.revert.08c379a0.string$_Memory_$(%[[MSG]]) : (i256) -> ()
+    // CHECK-NEXT:      yul.unreachable
     // CHECK:         }
     sol.func @require(%c: i1, %a: ui256, %msg: !sol.string<Memory>) {
       sol.require %c
@@ -137,6 +174,7 @@ module {
     // CHECK:         yul.if %[[FAIL]] {
     // CHECK:           %[[ONE:.*]] = yul.constant 1{{$}}
     // CHECK:           yul.func_call @__sol.panic(%[[ONE]]) : (i256) -> ()
+    // CHECK-NEXT:      yul.unreachable
     // CHECK:         yul.func_return
     sol.func @assert(%c: i1) attributes {state_mutability = #NonPayable} {
       sol.assert %c

@@ -20,18 +20,18 @@
  subprogramFlags = Definition>
 
 // CHECK-LABEL: yul.object @C {
-// CHECK:         yul.func_call @[[DECODE:__sol\.abi_decode_tuple\.memory[^(]*]]({{.*}}) : (i256, i256) -> i256 loc("C.sol":2:3)
 // CHECK:         yul.func @[[NESTED:__sol\.abi_decode\.[^ ]*]] : (i256, i256) -> i256 {
 // CHECK-NEXT:    ^bb0(%arg0: i256 loc("C.sol":0:0), %arg1: i256 loc("C.sol":0:0)):
 // CHECK:           yul.mstore {{.*}} loc("C.sol":0:0)
 // CHECK:           yul.func_return {{.*}} loc("C.sol":0:0)
 // CHECK-NEXT:    } {{.*}} loc(fused<#llvm.di_subprogram<{{.*}}name = "[[NESTED]]"{{.*}}line = 2, scopeLine = 2, {{.*}}flags = Artificial>>["C.sol":2:1])
-// CHECK:         yul.func @[[DECODE]] : (i256, i256) -> i256 {
+// CHECK:         yul.func @[[DECODE:__sol\.abi_decode_tuple\.memory[^ ]*]] : (i256, i256) -> i256 {
 // CHECK-NEXT:    ^bb0(%arg0: i256 loc("C.sol":0:0), %arg1: i256 loc("C.sol":0:0)):
 // CHECK:           yul.func_call @[[NESTED]]({{.*}}) : (i256, i256) -> i256 loc("C.sol":0:0)
 // CHECK:           yul.func_return {{.*}} loc("C.sol":0:0)
 // CHECK-NEXT:    } {{.*}} loc(fused<#llvm.di_subprogram<{{.*}}name = "[[DECODE]]"{{.*}}line = 2, scopeLine = 2, {{.*}}flags = Artificial>>["C.sol":2:1])
 // CHECK:         yul.func @ctor
+// CHECK:         yul.func_call @[[DECODE]]({{.*}}) : (i256, i256) -> i256 loc("C.sol":2:3)
 // CHECK:       } loc(fused<#llvm.di_compile_unit<{{.*}}>>["C.sol":2:1])
 
 module {

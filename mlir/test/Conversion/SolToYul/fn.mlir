@@ -8,41 +8,6 @@
 // the helper of its types; the argument validation lives in the decoders.
 // No route is payable, so the call value is tested once above the switch.
 // CHECK-LABEL: yul.object @C_deployed {
-// CHECK:         yul.callvalue
-// CHECK:         %[[W:.*]] = yul.calldataload
-// CHECK:         %[[C224:.*]] = yul.constant 224{{$}}
-// CHECK:         %[[SEL:.*]] = yul.arith_shr %[[W]], %[[C224]]
-// CHECK:         yul.switch %[[SEL]] : i256
-// CHECK-NEXT:    case 3346476778 {
-// CHECK:           %[[B:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.i1(
-// CHECK:           %[[R:.*]] = yul.func_call @i1(%[[B]]) : (i256) -> i256
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.i1(%[[R]],
-// CHECK:         case 1090974155 {
-// CHECK:           %[[V:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ui64(
-// CHECK:           %[[R:.*]] = yul.func_call @ui64(%[[V]]) : (i256) -> i256
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui64(%[[R]],
-// CHECK:         case 2427338207 {
-// CHECK:           %[[A:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ui256(
-// CHECK:           %[[R:.*]] = yul.func_call @ui256(%[[A]]) : (i256) -> i256
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%[[R]],
-// CHECK:         case 2749301445 {
-// CHECK:           %[[A:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.enum$_2_$(
-// CHECK:           %[[R:.*]] = yul.func_call @e(%[[A]]) : (i256) -> i256
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.enum$_2_$(%[[R]],
-// CHECK:         case 3200940114 {
-// CHECK:           %[[V:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.fixedbytes$_1_$(
-// CHECK:           %[[R:.*]] = yul.func_call @b1(%[[V]]) : (i256) -> i256
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.fixedbytes$_1_$(%[[R]],
-// CHECK:         case 829795042 {
-// CHECK:           %[[T:.*]]:2 = yul.func_call @tuple() : () -> (i256, i256)
-// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256.ui256(%[[T]]#0, %[[T]]#1,
-// CHECK:         case 638722032 {
-// CHECK-NOT:       yul.callvalue
-// CHECK:           yul.func_call @empty() : () -> ()
-// CHECK:           %[[MEM:.*]] = yul.mload
-// CHECK:           %[[Z:.*]] = yul.constant 0{{$}}
-// CHECK:           yul.return %[[MEM]], %[[Z]]
-// CHECK:         default {
 
 // CHECK-LABEL:   yul.func @__sol.abi_encode_tuple.padded.tail.ui256.ui256 : (i256, i256, i256) -> i256
 // CHECK:           yul.mstore %arg2, %arg0
@@ -100,6 +65,42 @@
 // CHECK-LABEL:   yul.func @ui256 : (i256) -> i256
 // CHECK:           %[[R:.*]] = yul.func_call @ui256_internal(%arg0) : (i256) -> i256
 // CHECK:           yul.func_return %[[R]] : i256
+
+// CHECK:         yul.callvalue
+// CHECK:         %[[W:.*]] = yul.calldataload
+// CHECK:         %[[C224:.*]] = yul.constant 224{{$}}
+// CHECK:         %[[SEL:.*]] = yul.arith_shr %[[W]], %[[C224]]
+// CHECK:         yul.switch %[[SEL]] : i256
+// CHECK-NEXT:    case 3346476778 {
+// CHECK:           %[[B:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.i1(
+// CHECK:           %[[R:.*]] = yul.func_call @i1(%[[B]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.i1(%[[R]],
+// CHECK:         case 1090974155 {
+// CHECK:           %[[V:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ui64(
+// CHECK:           %[[R:.*]] = yul.func_call @ui64(%[[V]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui64(%[[R]],
+// CHECK:         case 2427338207 {
+// CHECK:           %[[A:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.ui256(
+// CHECK:           %[[R:.*]] = yul.func_call @ui256(%[[A]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%[[R]],
+// CHECK:         case 2749301445 {
+// CHECK:           %[[A:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.enum$_2_$(
+// CHECK:           %[[R:.*]] = yul.func_call @e(%[[A]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.enum$_2_$(%[[R]],
+// CHECK:         case 3200940114 {
+// CHECK:           %[[V:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.fixedbytes$_1_$(
+// CHECK:           %[[R:.*]] = yul.func_call @b1(%[[V]]) : (i256) -> i256
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.fixedbytes$_1_$(%[[R]],
+// CHECK:         case 829795042 {
+// CHECK:           %[[T:.*]]:2 = yul.func_call @tuple() : () -> (i256, i256)
+// CHECK:           yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256.ui256(%[[T]]#0, %[[T]]#1,
+// CHECK:         case 638722032 {
+// CHECK-NOT:       yul.callvalue
+// CHECK:           yul.func_call @empty() : () -> ()
+// CHECK:           %[[MEM:.*]] = yul.mload
+// CHECK:           %[[Z:.*]] = yul.constant 0{{$}}
+// CHECK:           yul.return %[[MEM]], %[[Z]]
+// CHECK:         default {
 module {
   sol.contract @C {
     sol.func @i1(%arg0: i1) -> i1 attributes {orig_fn_type = (i1) -> i1, selector = -948490518 : i32, state_mutability = #NonPayable} {

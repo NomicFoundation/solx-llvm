@@ -82,9 +82,9 @@ module {
     // CHECK:         %[[MASK:.*]] = yul.constant 1461501637330902918203684832716283019655932542975
     // CHECK:         %[[A:.*]] = yul.and %[[R]], %[[MASK]]
     // CHECK:         yul.selfdestruct %[[A]]
+    // CHECK-NEXT:  }
     sol.func @kill(%arg0: !sol.address<payable>) {
       sol.selfdestruct %arg0 : !sol.address<payable>
-      sol.return
     }
   } {kind = #Contract, runtime}
 }
