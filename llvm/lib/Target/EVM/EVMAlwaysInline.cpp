@@ -6,13 +6,18 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This pass adds alwaysinline attribute to functions with one call site.
+// This pass adds the noinline attribute to the functions of every call graph
+// cycle and the alwaysinline attribute to the other functions with one call
+// site.
 //
 //===----------------------------------------------------------------------===//
 
 #include "EVM.h"
+#include "llvm/ADT/SCCIterator.h"
+#include "llvm/Analysis/CallGraph.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/InitializePasses.h"
 
 #define DEBUG_TYPE "evm-always-inline"
 
@@ -28,6 +33,7 @@ public:
   StringRef getPassName() const override { return "EVM always inline"; }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<CallGraphWrapperPass>();
     ModulePass::getAnalysisUsage(AU);
   }
 
@@ -36,8 +42,29 @@ public:
 
 } // end anonymous namespace
 
-static bool runImpl(Module &M) {
+/// Keep the functions of every call graph cycle out of line. A function that
+/// already has the alwaysinline attribute is left alone, because the two
+/// attributes exclude each other.
+static bool markRecursiveNoInline(CallGraph &CG) {
   bool Changed = false;
+  for (auto SCCI = scc_begin(&CG); !SCCI.isAtEnd(); ++SCCI) {
+    const auto &SCC = *SCCI;
+    if (SCC.size() == 1 && !SCCI.hasCycle())
+      continue;
+    for (const auto *Node : SCC) {
+      Function *F = Node->getFunction();
+      if (!F || F->isDeclaration() || F->hasFnAttribute(Attribute::NoInline) ||
+          F->hasFnAttribute(Attribute::AlwaysInline))
+        continue;
+      F->addFnAttr(Attribute::NoInline);
+      Changed = true;
+    }
+  }
+  return Changed;
+}
+
+static bool runImpl(Module &M, CallGraph &CG) {
+  bool Changed = markRecursiveNoInline(CG);
   for (auto &F : M) {
     if (F.isDeclaration() || F.hasOptNone() ||
         F.hasFnAttribute(Attribute::NoInline) || !F.hasOneUse())
@@ -60,19 +87,25 @@ static bool runImpl(Module &M) {
 bool EVMAlwaysInline::runOnModule(Module &M) {
   if (skipModule(M))
     return false;
-  return runImpl(M);
+  return runImpl(M, getAnalysis<CallGraphWrapperPass>().getCallGraph());
 }
 
 char EVMAlwaysInline::ID = 0;
 
-INITIALIZE_PASS(EVMAlwaysInline, "evm-always-inline",
-                "Add alwaysinline attribute to functions with one call site",
-                false, false)
+INITIALIZE_PASS_BEGIN(EVMAlwaysInline, "evm-always-inline",
+                      "Add noinline to recursive functions and alwaysinline "
+                      "to functions with one call site",
+                      false, false)
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+INITIALIZE_PASS_END(EVMAlwaysInline, "evm-always-inline",
+                    "Add noinline to recursive functions and alwaysinline "
+                    "to functions with one call site",
+                    false, false)
 
 ModulePass *llvm::createEVMAlwaysInlinePass() { return new EVMAlwaysInline; }
 
 PreservedAnalyses EVMAlwaysInlinePass::run(Module &M,
                                            ModuleAnalysisManager &AM) {
-  runImpl(M);
+  runImpl(M, AM.getResult<CallGraphAnalysis>(M));
   return PreservedAnalyses::all();
 }
