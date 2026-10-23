@@ -8,8 +8,8 @@ coverage:
     patch:
       default: false  # disable the patch status that measures patch changes
 
-# Coverage arrives from solx's CI on main only, so no pull request gets a
-# report to comment on.
+# Coverage arrives only from solx's main pushes, so no pull request here
+# gets a report to comment on.
 comment: false
 
 # The fork code solx exercises.
