@@ -28,6 +28,15 @@
 
 #include "mlir/Dialect/Yul/Yul.h"
 
+namespace mlir {
+namespace sol {
+namespace detail {
+/// Verifies that a sol.constant_string defines every constant string operand.
+LogicalResult verifyConstantStringConsumerOpInterface(Operation *op);
+} // namespace detail
+} // namespace sol
+} // namespace mlir
+
 #include "mlir/Dialect/Sol/SolInterfaces.h.inc"
 #include "mlir/Dialect/Sol/SolOpsDialect.h.inc"
 #include "mlir/Dialect/Sol/SolOpsEnums.h.inc"

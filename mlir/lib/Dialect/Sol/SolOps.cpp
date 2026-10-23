@@ -921,5 +921,112 @@ LogicalResult ContractOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// ConstantStringConsumerOpInterface
+//===----------------------------------------------------------------------===//
+
+static bool takesConstantString(OpOperand &use) {
+  auto consumer = dyn_cast<ConstantStringConsumerOpInterface>(use.getOwner());
+  return consumer && consumer.takesConstantString(use);
+}
+
+LogicalResult
+mlir::sol::detail::verifyConstantStringConsumerOpInterface(Operation *op) {
+  for (OpOperand &operand : op->getOpOperands()) {
+    // The bytes are an attribute of the op that defines the value.
+    if (isa<ConstantStringType>(operand.get().getType()) &&
+        !operand.get().getDefiningOp<ConstantStringOp>())
+      return op->emitOpError("expects operand #")
+             << operand.getOperandNumber()
+             << " to be defined by sol.constant_string";
+  }
+  return success();
+}
+
+bool CopyOp::takesConstantString(OpOperand &operand) {
+  auto dstTy = dyn_cast<StringType>(getDst().getType());
+  return &operand == &getSrcMutable() && dstTy &&
+         dstTy.getDataLocation() == DataLocation::Storage;
+}
+
+bool RevertOp::takesConstantString(OpOperand &operand) { return getCall(); }
+
+bool RequireOp::takesConstantString(OpOperand &operand) { return getCall(); }
+
+//===----------------------------------------------------------------------===//
+// StringLitOp
+//===----------------------------------------------------------------------===//
+
+// A literal whose every use takes a constant string needs no memory. The uses
+// only read the literal, so nothing writes its memory before they do, and none
+// sees its address.
+LogicalResult StringLitOp::canonicalize(StringLitOp op,
+                                        PatternRewriter &rewriter) {
+  for (OpOperand &use : op->getUses())
+    if (!takesConstantString(use))
+      return failure();
+  rewriter.replaceOpWithNewOp<ConstantStringOp>(op, op.getValue());
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// ConstantStringOp
+//===----------------------------------------------------------------------===//
+
+OpFoldResult ConstantStringOp::fold(FoldAdaptor adaptor) {
+  return getValueAttr();
+}
+
+LogicalResult ConstantStringOp::verify() {
+  for (OpOperand &use : getResult().getUses())
+    if (!takesConstantString(use))
+      return emitOpError("expects operand #")
+             << use.getOperandNumber() << " of " << use.getOwner()->getName()
+             << " to take a constant string";
+  return success();
+}
+
+/// The bytes of \p vals one after another, if every value is a constant
+/// string.
+static std::optional<std::string> getConstantStringBytes(ValueRange vals) {
+  std::string bytes;
+  for (Value val : vals) {
+    auto constant = val.getDefiningOp<ConstantStringOp>();
+    if (!constant)
+      return std::nullopt;
+    bytes += constant.getValue();
+  }
+  return bytes;
+}
+
+//===----------------------------------------------------------------------===//
+// ConcatOp
+//===----------------------------------------------------------------------===//
+
+// A concatenation of constant strings is a literal of their bytes.
+LogicalResult ConcatOp::canonicalize(ConcatOp op, PatternRewriter &rewriter) {
+  std::optional<std::string> bytes = getConstantStringBytes(op.getArgs());
+  if (!bytes)
+    return failure();
+  rewriter.replaceOpWithNewOp<StringLitOp>(op, op.getType(), *bytes);
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// EncodeOp
+//===----------------------------------------------------------------------===//
+
+// A packed encoding of constant strings is a literal of their bytes, so a hash
+// of it folds like the hash of a literal.
+LogicalResult EncodeOp::canonicalize(EncodeOp op, PatternRewriter &rewriter) {
+  if (!op.getPacked())
+    return failure();
+  std::optional<std::string> bytes = getConstantStringBytes(op.getIns());
+  if (!bytes)
+    return failure();
+  rewriter.replaceOpWithNewOp<StringLitOp>(op, op.getType(), *bytes);
+  return success();
+}
+
 #define GET_OP_CLASSES
 #include "mlir/Dialect/Sol/SolOps.cpp.inc"

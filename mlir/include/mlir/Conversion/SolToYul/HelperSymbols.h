@@ -29,6 +29,12 @@ namespace helpersym {
 /// memory, calldata or storage. Takes the source reference and the slot.
 std::string copyStringToStorage(mlir::sol::DataLocation src);
 
+/// `__sol.copy_string.constant_string_<keccak>.storage`
+///
+/// Emitted when a constant string is assigned into storage, one per literal,
+/// since the bytes are immediates in its body. Takes the slot.
+std::string copyConstantStringToStorage(llvm::StringRef bytes);
+
 /// `__sol.copy_struct.<src>.storage.<src name or ty>.<dst name or ty>`
 ///
 /// Emitted for every struct copy into storage.
@@ -129,11 +135,13 @@ std::string abiDecodeTuple(mlir::sol::DataLocation src, mlir::TypeRange tys);
 std::string abiEncodeMemoryArray(bool padded, bool dynamicInplace,
                                  mlir::sol::ArrayType ty);
 
-/// `__sol.abi_encode_tuple.<padded|packed>.<tail|inplace>.<ty>...`
+/// `__sol.abi_encode_tuple.<padded|packed>.<tail|inplace>.<elt>...`
 ///
-/// Emitted for every non-empty ABI tuple encoded into memory.
+/// Emitted for every non-empty ABI tuple encoded into memory. An `<elt>` is
+/// the element's type, or `constant_string_<keccak>` for a constant string
+/// among \p vals, which may be empty when \p tys has none.
 std::string abiEncodeTuple(bool padded, bool dynamicInplace,
-                           mlir::TypeRange tys);
+                           mlir::TypeRange tys, mlir::ValueRange vals = {});
 
 /// `__sol.index_storage_array.<ty>[.nopanic]`
 ///
@@ -167,11 +175,13 @@ std::string popStorageArray(mlir::sol::ArrayType ty);
 /// Emitted for every panic.
 std::string panic();
 
-/// `__sol.revert.<selector>.<ty>...`
+/// `__sol.revert.<selector>.<elt>...`
 ///
 /// Emitted for every `revert` and `require` with a custom error, keyed by the
-/// error's selector in hex followed by the Sol types of its arguments.
-std::string revertError(llvm::StringRef signature, mlir::TypeRange tys);
+/// error's selector in hex followed by its arguments, each `<elt>` and \p vals
+/// as in `abiEncodeTuple`.
+std::string revertError(llvm::StringRef signature, mlir::TypeRange tys,
+                        mlir::ValueRange vals = {});
 
 /// `__sol.internal_dispatch.<index>`
 ///

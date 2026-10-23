@@ -124,8 +124,21 @@ static std::string locName(sol::DataLocation loc) {
   return sol::stringifyDataLocation(loc).lower();
 }
 
+/// A constant string spelled by the keccak of its bytes in hex. The escapes of
+/// typeName drop blanks, so "a b" and "ab" would otherwise spell the same, and
+/// the hash keeps a long literal's symbol short.
+static std::string constantStringName(StringRef bytes) {
+  return "constant_string_" +
+         llvm::toHex(evm::keccak256(bytes), /*LowerCase=*/true);
+}
+
 std::string evm::helpersym::copyStringToStorage(sol::DataLocation src) {
   return makeHelperSymbol("copy_string", {locName(src), "storage"});
+}
+
+std::string evm::helpersym::copyConstantStringToStorage(StringRef bytes) {
+  return makeHelperSymbol("copy_string",
+                          {constantStringName(bytes), "storage"});
 }
 
 std::string evm::helpersym::copyStructToStorage(sol::DataLocation src,
@@ -213,17 +226,34 @@ static SmallVector<std::string> typeNames(TypeRange tys) {
   return llvm::to_vector(llvm::map_range(tys, typeName));
 }
 
+/// The spellings of a tuple's elements, a constant string by the keccak of its
+/// bytes.
+static SmallVector<std::string> tupleNames(TypeRange tys, ValueRange vals) {
+  if (vals.empty())
+    return typeNames(tys);
+  SmallVector<std::string> names;
+  for (auto [ty, val] : llvm::zip_equal(tys, vals)) {
+    if (!isa<sol::ConstantStringType>(ty)) {
+      names.push_back(typeName(ty));
+      continue;
+    }
+    auto constant = cast<sol::ConstantStringOp>(val.getDefiningOp());
+    names.push_back(constantStringName(constant.getValue()));
+  }
+  return names;
+}
+
 std::string evm::helpersym::abiDecodeTuple(sol::DataLocation src,
                                            TypeRange tys) {
   return makeListSymbol("abi_decode_tuple", {locName(src)}, typeNames(tys));
 }
 
 std::string evm::helpersym::abiEncodeTuple(bool padded, bool dynamicInplace,
-                                           TypeRange tys) {
+                                           TypeRange tys, ValueRange vals) {
   return makeListSymbol(
       "abi_encode_tuple",
       {padded ? "padded" : "packed", dynamicInplace ? "inplace" : "tail"},
-      typeNames(tys));
+      tupleNames(tys, vals));
 }
 
 std::string evm::helpersym::abiEncodeMemoryArray(bool padded,
@@ -265,10 +295,11 @@ std::string evm::helpersym::popStorageArray(sol::ArrayType ty) {
 
 std::string evm::helpersym::panic() { return makeHelperSymbol("panic", {}); }
 
-std::string evm::helpersym::revertError(StringRef signature, TypeRange tys) {
+std::string evm::helpersym::revertError(StringRef signature, TypeRange tys,
+                                        ValueRange vals) {
   std::string selector = llvm::utohexstr(evm::selectorFromSignature(signature),
                                          /*LowerCase=*/true, /*Width=*/8);
-  return makeListSymbol("revert", {selector}, typeNames(tys));
+  return makeListSymbol("revert", {selector}, tupleNames(tys, vals));
 }
 
 std::string evm::helpersym::internalDispatch(unsigned index) {
