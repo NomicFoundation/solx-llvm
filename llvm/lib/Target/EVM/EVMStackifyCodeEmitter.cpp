@@ -198,63 +198,91 @@ void EVMStackifyCodeEmitter::CodeEmitter::emitCondJump(
   verify(NewMI);
 }
 
-void EVMStackifyCodeEmitter::CodeEmitter::emitReload(Register Reg) {
+void EVMStackifyCodeEmitter::CodeEmitter::emitFrameLoad(int FI) {
   StackHeight += 1;
   auto NewMI =
       BuildMI(*CurMBB, CurMBB->end(), DebugLoc(), TII->get(EVM::PUSH_FRAME))
-          .addFrameIndex(getStackSlot(Reg));
+          .addFrameIndex(FI);
   verify(NewMI);
   NewMI = BuildMI(*CurMBB, CurMBB->end(), DebugLoc(), TII->get(EVM::MLOAD_S));
   NewMI->setAsmPrinterFlag(MachineInstr::ReloadReuse);
   verify(NewMI);
 }
 
-void EVMStackifyCodeEmitter::CodeEmitter::emitSpill(Register Reg,
-                                                    unsigned DupIdx) {
-  if (DupIdx == 0) {
-    assert(StackHeight > 0 && "Expected at least one operand on the stack");
+void EVMStackifyCodeEmitter::CodeEmitter::emitFrameStore(int FI) {
+  assert(StackHeight > 0 && "Expected at least one operand on the stack");
 
-    // Reduce height if we are not going to duplicate the register.
-    // In this case, register will be used by the MSTORE instruction
-    // that is used for spilling.
-    StackHeight -= 1;
-  } else {
-    assert(StackHeight >= DupIdx &&
-           "Not enough operands on the stack for DUP while spilling");
-
-    // Register is used after spill, so we need to duplicate it.
-    emitDUP(DupIdx);
-
-    // Since we are going to spill the register, stack height doesn't
-    // change, so we need to reduce it by 1, as emitDUP increases
-    // the stack height by that amount.
-    StackHeight -= 1;
-  }
-
+  // The stack top is consumed by the MSTORE instruction.
+  StackHeight -= 1;
   auto NewMI =
       BuildMI(*CurMBB, CurMBB->end(), DebugLoc(), TII->get(EVM::PUSH_FRAME))
-          .addFrameIndex(getStackSlot(Reg));
+          .addFrameIndex(FI);
   verify(NewMI);
   NewMI = BuildMI(*CurMBB, CurMBB->end(), DebugLoc(), TII->get(EVM::MSTORE_S));
   NewMI->setAsmPrinterFlag(MachineInstr::ReloadReuse);
   verify(NewMI);
 }
 
-int EVMStackifyCodeEmitter::CodeEmitter::getStackSlot(Register Reg) {
-  int StackSlot = VRM.getStackSlot(Reg);
-  if (StackSlot != VirtRegMap::NO_STACK_SLOT)
-    return StackSlot;
+void EVMStackifyCodeEmitter::CodeEmitter::emitReload(Register Reg) {
+  emitFrameLoad(getStackSlot(Reg));
+}
 
-  // Generate a new stack slot for the register and add register's live interval
-  // to the stack slot. This is the same thing what InlineSpiller does, and this
+void EVMStackifyCodeEmitter::CodeEmitter::emitSpill(Register Reg,
+                                                    unsigned DupIdx) {
+  if (DupIdx != 0) {
+    assert(StackHeight >= DupIdx &&
+           "Not enough operands on the stack for DUP while spilling");
+
+    // Register is used after spill, so we need to duplicate it. The copy is
+    // consumed by the store, so the net stack height does not change.
+    emitDUP(DupIdx);
+  }
+  emitFrameStore(getStackSlot(Reg));
+}
+
+void EVMStackifyCodeEmitter::CodeEmitter::emitCalleeSaveSpill(Register Reg,
+                                                              unsigned Depth) {
+  int FI = getStackSlot(Reg, /*CalleeSaved=*/true);
+  emitFrameLoad(FI);
+  emitSWAP(Depth + 1);
+  emitFrameStore(FI);
+}
+
+void EVMStackifyCodeEmitter::CodeEmitter::emitCalleeSaveLoad(Register Reg) {
+  emitFrameLoad(getStackSlot(Reg, /*CalleeSaved=*/true));
+}
+
+void EVMStackifyCodeEmitter::CodeEmitter::emitCalleeSaveRestore(Register Reg) {
+  emitFrameStore(getStackSlot(Reg));
+}
+
+int EVMStackifyCodeEmitter::CodeEmitter::getStackSlot(Register Reg,
+                                                      bool CalleeSaved) {
+  int StackSlot = VRM.getStackSlot(Reg);
+  if (StackSlot != VirtRegMap::NO_STACK_SLOT) {
+    assert(!CalleeSaved && "Callee-saved slot must be created by the prologue");
+    return StackSlot;
+  }
+
+  // Generate a new stack slot for the register and add its live interval to
+  // the stack slot. This is the same thing what InlineSpiller does, and this
   // is needed to StackSlotColoring afterwards to reduce the stack area.
   StackSlot = VRM.assignVirt2StackSlot(Reg);
   auto &StackInt =
       LSS.getOrCreateInterval(StackSlot, MF.getRegInfo().getRegClass(Reg));
-  StackInt.getNextValue(SlotIndex(), LSS.getVNInfoAllocator());
+  VNInfo *VNI = StackInt.getNextValue(SlotIndex(), LSS.getVNInfoAllocator());
   assert(StackInt.getNumValNums() == 1 && "Bad stack interval values");
-  StackInt.MergeSegmentsInAsValue(LIS.getInterval(Reg),
-                                  StackInt.getValNumInfo(0));
+  if (CalleeSaved) {
+    // The callee-saved word makes the slot's memory live for the whole
+    // function and not just for the spilled register's live range, so
+    // StackSlotColoring must not share the slot.
+    const SlotIndexes *Indexes = LIS.getSlotIndexes();
+    StackInt.addSegment(
+        LiveInterval::Segment(Indexes->getMBBStartIdx(&MF.front()),
+                              Indexes->getMBBEndIdx(&MF.back()), VNI));
+  } else {
+    StackInt.MergeSegmentsInAsValue(LIS.getInterval(Reg), VNI);
+  }
   return StackSlot;
 }
 
@@ -329,48 +357,121 @@ void EVMStackifyCodeEmitter::emitMI(const MachineInstr &MI) {
              CurrentStack.end() - MI.getNumExplicitDefs());
 }
 
+void EVMStackifyCodeEmitter::emitPrologue(const Stack &Layout) {
+  // The saved word of a spilled argument takes the argument's position. The
+  // saved word of any other spilled register was appended by the solver on
+  // top of the caller's stack. The register of PUSHDEPLOYADDRESS is not a
+  // parameter either, but its function has no return and therefore no saved
+  // words.
+  auto IsNonArgumentSave = [this](const StackSlot *S) {
+    const auto *Save = dyn_cast<CalleeSavedSlot>(S);
+    return Save && !is_contained(StackModel.getFunctionParameters(),
+                                 StackModel.getRegisterSlot(Save->getReg()));
+  };
+  const unsigned NumOnTop = count_if(Layout, IsNonArgumentSave);
+  const unsigned CallerSize = Layout.size() - NumOnTop;
+  assert(CallerSize == StackModel.getFunctionEntryStack().size() &&
+         "Entry layout prefix is not the caller's stack");
+
+  CurrentStack.assign(Layout.begin(), Layout.begin() + CallerSize);
+  Emitter.enterMBB(&MF.front(), CallerSize);
+
+  // A spilled argument on the stack top that the first instruction does not
+  // need is stored without a copy and leaves the stack. Each store exposes
+  // the next argument.
+  const MachineBasicBlock &MBB = MF.front();
+  auto Insts = StackModel.instructionsToProcess(&MBB);
+  const Stack &FirstTargetStack =
+      Insts.begin() != Insts.end()
+          ? StackModel.getInstEntryStack(&*Insts.begin())
+          : StackModel.getMBBExitStack(&MBB);
+  while (!CurrentStack.empty() && isSpillReg(CurrentStack.back()) &&
+         !is_contained(FirstTargetStack, CurrentStack.back())) {
+    Emitter.emitSpill(cast<RegisterSlot>(CurrentStack.back())->getReg(),
+                      /*DupIdx=*/0);
+    CurrentStack.pop_back();
+  }
+  const unsigned KeptSize = CurrentStack.size();
+
+  // Plain stores of the remaining spilled arguments without a saved word.
+  // Walk from the top, so that the first parameter gets the first spill
+  // slot.
+  for (unsigned Depth = 0; Depth < KeptSize; ++Depth)
+    if (const StackSlot *S = CurrentStack[KeptSize - 1 - Depth]; isSpillReg(S))
+      Emitter.emitSpill(cast<RegisterSlot>(S)->getReg(), Depth + 1);
+
+  // Fused save and store of the spilled arguments with a saved word. The
+  // previous slot contents and the argument swap places, with the argument
+  // entering the slot. The stack height remains unchanged.
+  for (unsigned Depth = 0; Depth < KeptSize; ++Depth)
+    if (const auto *Save =
+            dyn_cast<CalleeSavedSlot>(CurrentStack[KeptSize - 1 - Depth])) {
+      // The solver never selects a spilled argument that is out of reach
+      // for its save, see EVMStackSolver::hasUnreachableDef, and it rejects
+      // a forced one, see EVMStackSolver::run.
+      assert(Depth + 1 <= StackModel.stackDepthLimit() &&
+             "Spilled argument is out of reach for its save");
+      Emitter.emitCalleeSaveSpill(Save->getReg(), Depth);
+    }
+
+  // The saved words of the remaining spill slots are loaded on top. Their
+  // registers are defined later. The spill stores happen at the definitions
+  // in emitSpills, safely after these loads.
+  for (const StackSlot *S : drop_begin(Layout, CallerSize)) {
+    Emitter.emitCalleeSaveLoad(cast<CalleeSavedSlot>(S)->getReg());
+    CurrentStack.push_back(S);
+  }
+
+#ifndef NDEBUG
+  // The result is the layout without the stored arguments that left the
+  // stack. The permutation to the first instruction's entry stack starts
+  // from here.
+  Stack Expected;
+  Expected.append(Layout.begin(), Layout.begin() + KeptSize);
+  Expected.append(Layout.begin() + CallerSize, Layout.end());
+  assert(CurrentStack == Expected && "Prologue missed the entry layout");
+#endif // NDEBUG
+  assert(Emitter.stackHeight() == CurrentStack.size());
+}
+
 void EVMStackifyCodeEmitter::emitSpills(const MachineBasicBlock &MBB,
                                         MachineBasicBlock::const_iterator Start,
                                         const Stack &Defs) {
   // Check if we have any spillable registers.
-  if (find_if(Defs, [](const StackSlot *Slot) { return isSpillReg(Slot); }) ==
-      Defs.end())
+  if (none_of(Defs, isSpillReg))
     return;
 
-  // In case of a single definition, we can remove it from the stack
-  // if it is not used after spill.
-  if (Defs.size() == 1) {
-    // Find the first instruction from which we can get entry stack.
-    while (Start != MBB.end() && StackModel.skipMI(*Start))
-      ++Start;
+  // Find the first instruction from which we can get entry stack.
+  while (Start != MBB.end() && StackModel.skipMI(*Start))
+    ++Start;
 
-    // Find the next target stack, as we need to check if the register
-    // is used after spill.
-    const Stack &NextTargetStack =
-        Start != MBB.end() && !EVMInstrInfo::isStack(&*Start)
-            ? StackModel.getInstEntryStack(&*Start)
-            : StackModel.getMBBExitStack(&MBB);
-    const auto *RegSlot = cast<RegisterSlot>(Defs[0]);
+  // Find the next target stack, as we need to check if a register is used
+  // after its spill.
+  const Stack &NextTargetStack =
+      Start != MBB.end() && !EVMInstrInfo::isStack(&*Start)
+          ? StackModel.getInstEntryStack(&*Start)
+          : StackModel.getMBBExitStack(&MBB);
 
-    // Find if if the register is used after spill. If it is we need to
-    // emit DUP instruction to keep it on the stack.
-    bool UsedAfter = is_contained(NextTargetStack, RegSlot);
-    Emitter.emitSpill(RegSlot->getReg(), UsedAfter);
-
-    // Remove the register from the current stack, if it is not used
-    // after spill.
-    if (!UsedAfter)
-      CurrentStack.pop_back();
-  } else {
-    // TODO: In case definition are not used after spill, we can
-    // remove them from the current stack, and not emit DUP. This
-    // is more complex when we have multiple definitions, as we
-    // need to do stack manipulation to keep the stack in sync
-    // with the target stack.
-    for (auto [DefIdx, Def] : enumerate(reverse(Defs)))
-      if (isSpillReg(Def))
-        Emitter.emitSpill(cast<RegisterSlot>(Def)->getReg(), DefIdx + 1);
+  // A spilled definition on the stack top that the next target stack does
+  // not hold is stored without a copy and leaves the stack. Each store
+  // exposes the next definition. The walk stops at the first definition
+  // that stays.
+  unsigned NumKept = Defs.size();
+  while (NumKept > 0 && isSpillReg(Defs[NumKept - 1]) &&
+         !is_contained(NextTargetStack, Defs[NumKept - 1])) {
+    Emitter.emitSpill(cast<RegisterSlot>(Defs[NumKept - 1])->getReg(),
+                      /*DupIdx=*/0);
+    CurrentStack.pop_back();
+    --NumKept;
   }
+
+  // The remaining spilled definitions are copied before the store, because
+  // consuming a definition below the stack top would need extra swaps. The
+  // permutation to the next target stack drops the unneeded ones.
+  ArrayRef<const StackSlot *> KeptDefs(Defs.begin(), NumKept);
+  for (auto [DefIdx, Def] : enumerate(reverse(KeptDefs)))
+    if (isSpillReg(Def))
+      Emitter.emitSpill(cast<RegisterSlot>(Def)->getReg(), DefIdx + 1);
   assert(Emitter.stackHeight() == CurrentStack.size());
 }
 
@@ -429,6 +530,12 @@ void EVMStackifyCodeEmitter::emitStackPermutations(const Stack &TargetStack) {
             report_fatal_error(ErrMsg.c_str());
           }
         }
+
+        // A callee-saved word exists only on the stack once its spill slot
+        // has been overwritten. It is materialized exactly once, in
+        // emitPrologue. Reaching this point means the layouts lost it.
+        assert(!isa<CalleeSavedSlot>(Slot) &&
+               "Callee-saved word of a spill slot cannot be rematerialized");
 
         // Rematerialize the slot.
         assert(Slot->isRematerializable() || isSpillReg(Slot));
@@ -507,17 +614,19 @@ void EVMStackifyCodeEmitter::run() {
     if (!Visited.insert(MBB).second)
       continue;
 
-    CurrentStack = StackModel.getMBBEntryStack(MBB);
-    Emitter.enterMBB(MBB, CurrentStack.size());
-
     // Get branch information before we start to change the BB.
     auto [BranchTy, TBB, FBB, BrInsts, Condition] = getBranchInfo(MBB);
     bool HasReturn = MBB->isReturnBlock();
     const MachineInstr *ReturnMI = HasReturn ? &MBB->back() : nullptr;
 
-    // Emit the spills for the arguments in the entry block, if needed.
-    if (MBB == &MF.front())
-      emitSpills(*MBB, MBB->begin(), StackModel.getMBBEntryStack(MBB));
+    if (MBB == &MF.front()) {
+      // The entry MBB starts from the stack as the caller leaves it. The
+      // prologue turns it into the layout the solver computed.
+      emitPrologue(StackModel.getMBBEntryStack(MBB));
+    } else {
+      CurrentStack = StackModel.getMBBEntryStack(MBB);
+      Emitter.enterMBB(MBB, CurrentStack.size());
+    }
 
     for (const auto &MI : StackModel.instructionsToProcess(MBB)) {
       // We are done if the MI is in the stack form.
@@ -557,6 +666,15 @@ void EVMStackifyCodeEmitter::run() {
                StackModel.getMBBExitStack(MBB));
         // Create the function return stack and jump.
         emitStackPermutations(StackModel.getMBBExitStack(MBB));
+        // The callee-saved words sit on top of the return address. Store
+        // each of them back to its spill slot. This restores the enclosing
+        // activation's view of the spill area.
+        while (!CurrentStack.empty() &&
+               isa<CalleeSavedSlot>(CurrentStack.back())) {
+          const auto *Save = cast<CalleeSavedSlot>(CurrentStack.back());
+          Emitter.emitCalleeSaveRestore(Save->getReg());
+          CurrentStack.pop_back();
+        }
         Emitter.emitRet(ReturnMI);
       }
     } else if (BranchTy == EVMInstrInfo::BT_Uncond ||

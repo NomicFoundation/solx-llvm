@@ -1,0 +1,423 @@
+# RUN: llc -x mir -run-pass=evm-backward-propagation-stackification < %s | FileCheck %s
+
+# The stack is always compressed across a call to a recursive function.
+# All five functions have the same shape: an 8-byte literal is used before
+# and after the call.
+
+# Self-recursive call: the literal does not cross the call.
+# CHECK-LABEL: name: self
+# CHECK-LABEL: bb.2.rec:
+# CHECK: PUSH8_S i256 1311768467463790320
+# CHECK-NOT: DUP1_S
+# CHECK: PseudoCALL @self
+# CHECK-NEXT: PUSH8_S i256 1311768467463790320
+# CHECK-NEXT: MUL_S
+
+# Call into the same call graph cycle: the literal does not cross the call.
+# CHECK-LABEL: name: mutual
+# CHECK-LABEL: bb.2.rec:
+# CHECK: PUSH8_S i256 1311768467463790320
+# CHECK-NOT: DUP1_S
+# CHECK: PseudoCALL @peer
+# CHECK-NEXT: PUSH8_S i256 1311768467463790320
+# CHECK-NEXT: MUL_S
+
+# Call into a different call graph cycle: the callee is recursive, so the
+# literal does not cross the call either.
+# CHECK-LABEL: name: other
+# CHECK-LABEL: bb.2.rec:
+# CHECK: PUSH8_S i256 1311768467463790320
+# CHECK-NOT: DUP1_S
+# CHECK: PseudoCALL @unrel
+# CHECK-NEXT: PUSH8_S i256 1311768467463790320
+# CHECK-NEXT: MUL_S
+
+# Non-recursive function calling a recursive one: the literal does not cross
+# the call.
+# CHECK-LABEL: name: caller
+# CHECK-LABEL: bb.2.rec:
+# CHECK: PUSH8_S i256 1311768467463790320
+# CHECK-NOT: DUP1_S
+# CHECK: PseudoCALL @self
+# CHECK-NEXT: PUSH8_S i256 1311768467463790320
+# CHECK-NEXT: MUL_S
+
+# Non-recursive function calling a non-recursive one: the literal is dupped
+# and stays on the stack across the call.
+# CHECK-LABEL: name: plain
+# CHECK-LABEL: bb.2.rec:
+# CHECK: PUSH8_S i256 1311768467463790320
+# CHECK-NEXT: DUP1_S
+# CHECK: PseudoCALL @leaf
+# CHECK-NEXT: MUL_S
+
+--- |
+  ; ModuleID = '<stdin>'
+  source_filename = "<stdin>"
+  target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
+  target triple = "evm"
+
+  declare fastcc i256 @peer(i256) #0
+
+  declare fastcc i256 @unrel(i256) #1
+
+  declare fastcc i256 @leaf(i256)
+
+  define fastcc i256 @self(i256 %n) #0 {
+  entry:
+    %c = icmp eq i256 %n, 0
+    br i1 %c, label %ret, label %rec
+
+  rec:                                              ; preds = %entry
+    %a = add i256 %n, 1311768467463790320
+    %r = call fastcc i256 @self(i256 %a)
+    %x = mul i256 %r, 1311768467463790320
+    br label %ret
+
+  ret:                                              ; preds = %rec, %entry
+    %p = phi i256 [ 0, %entry ], [ %x, %rec ]
+    ret i256 %p
+  }
+
+  define fastcc i256 @mutual(i256 %n) #0 {
+  entry:
+    %c = icmp eq i256 %n, 0
+    br i1 %c, label %ret, label %rec
+
+  rec:                                              ; preds = %entry
+    %a = add i256 %n, 1311768467463790320
+    %r = call fastcc i256 @peer(i256 %a)
+    %x = mul i256 %r, 1311768467463790320
+    br label %ret
+
+  ret:                                              ; preds = %rec, %entry
+    %p = phi i256 [ 0, %entry ], [ %x, %rec ]
+    ret i256 %p
+  }
+
+  define fastcc i256 @other(i256 %n) #0 {
+  entry:
+    %c = icmp eq i256 %n, 0
+    br i1 %c, label %ret, label %rec
+
+  rec:                                              ; preds = %entry
+    %a = add i256 %n, 1311768467463790320
+    %r = call fastcc i256 @unrel(i256 %a)
+    %x = mul i256 %r, 1311768467463790320
+    br label %ret
+
+  ret:                                              ; preds = %rec, %entry
+    %p = phi i256 [ 0, %entry ], [ %x, %rec ]
+    ret i256 %p
+  }
+
+  define fastcc i256 @caller(i256 %n) {
+  entry:
+    %c = icmp eq i256 %n, 0
+    br i1 %c, label %ret, label %rec
+
+  rec:                                              ; preds = %entry
+    %a = add i256 %n, 1311768467463790320
+    %r = call fastcc i256 @self(i256 %a)
+    %x = mul i256 %r, 1311768467463790320
+    br label %ret
+
+  ret:                                              ; preds = %rec, %entry
+    %p = phi i256 [ 0, %entry ], [ %x, %rec ]
+    ret i256 %p
+  }
+
+  define fastcc i256 @plain(i256 %n) {
+  entry:
+    %c = icmp eq i256 %n, 0
+    br i1 %c, label %ret, label %rec
+
+  rec:                                              ; preds = %entry
+    %a = add i256 %n, 1311768467463790320
+    %r = call fastcc i256 @leaf(i256 %a)
+    %x = mul i256 %r, 1311768467463790320
+    br label %ret
+
+  ret:                                              ; preds = %rec, %entry
+    %p = phi i256 [ 0, %entry ], [ %x, %rec ]
+    ret i256 %p
+  }
+
+  attributes #0 = { "evm-recursive"="0" }
+  attributes #1 = { "evm-recursive"="1" }
+...
+---
+name:            self
+alignment:       1
+tracksRegLiveness: true
+noPhis:          true
+isSSA:           false
+noVRegs:         false
+hasFakeUses:     false
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+  - { id: 4, class: gpr }
+  - { id: 5, class: gpr }
+  - { id: 6, class: gpr }
+  - { id: 7, class: gpr }
+  - { id: 8, class: gpr }
+liveins:
+  - { reg: '$arguments' }
+  - { reg: '$value_stack' }
+frameInfo:
+  maxAlignment:    1
+  hasCalls:        true
+  maxCallFrameSize: 0
+machineFunctionInfo:
+  numberOfParameters: 1
+body:             |
+  bb.0.entry:
+    successors: %bb.1(0x30000000), %bb.2(0x50000000)
+    liveins: $arguments, $value_stack
+
+    %2:gpr = ARGUMENT 0, implicit $arguments
+    JUMPI %bb.2, %2, implicit-def dead $arguments
+
+  bb.1:
+    liveins: $value_stack
+
+    %7:gpr = CONST_I256 i256 0, implicit-def dead $arguments
+    JUMP %bb.3, implicit-def $arguments
+
+  bb.2.rec:
+    liveins: $value_stack
+
+    %4:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %8:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %2, %8, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %6:gpr = FCALL @self, %5, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %7:gpr = MUL %6, %4, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+
+  bb.3.ret:
+    liveins: $value_stack
+
+    RET %7, implicit-def dead $arguments
+...
+---
+name:            mutual
+alignment:       1
+tracksRegLiveness: true
+noPhis:          true
+isSSA:           false
+noVRegs:         false
+hasFakeUses:     false
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+  - { id: 4, class: gpr }
+  - { id: 5, class: gpr }
+  - { id: 6, class: gpr }
+  - { id: 7, class: gpr }
+  - { id: 8, class: gpr }
+liveins:
+  - { reg: '$arguments' }
+  - { reg: '$value_stack' }
+frameInfo:
+  maxAlignment:    1
+  hasCalls:        true
+  maxCallFrameSize: 0
+machineFunctionInfo:
+  numberOfParameters: 1
+body:             |
+  bb.0.entry:
+    successors: %bb.1(0x30000000), %bb.2(0x50000000)
+    liveins: $arguments, $value_stack
+
+    %2:gpr = ARGUMENT 0, implicit $arguments
+    JUMPI %bb.2, %2, implicit-def dead $arguments
+
+  bb.1:
+    liveins: $value_stack
+
+    %7:gpr = CONST_I256 i256 0, implicit-def dead $arguments
+    JUMP %bb.3, implicit-def $arguments
+
+  bb.2.rec:
+    liveins: $value_stack
+
+    %4:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %8:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %2, %8, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %6:gpr = FCALL @peer, %5, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %7:gpr = MUL %6, %4, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+
+  bb.3.ret:
+    liveins: $value_stack
+
+    RET %7, implicit-def dead $arguments
+...
+---
+name:            other
+alignment:       1
+tracksRegLiveness: true
+noPhis:          true
+isSSA:           false
+noVRegs:         false
+hasFakeUses:     false
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+  - { id: 4, class: gpr }
+  - { id: 5, class: gpr }
+  - { id: 6, class: gpr }
+  - { id: 7, class: gpr }
+  - { id: 8, class: gpr }
+liveins:
+  - { reg: '$arguments' }
+  - { reg: '$value_stack' }
+frameInfo:
+  maxAlignment:    1
+  hasCalls:        true
+  maxCallFrameSize: 0
+machineFunctionInfo:
+  numberOfParameters: 1
+body:             |
+  bb.0.entry:
+    successors: %bb.1(0x30000000), %bb.2(0x50000000)
+    liveins: $arguments, $value_stack
+
+    %2:gpr = ARGUMENT 0, implicit $arguments
+    JUMPI %bb.2, %2, implicit-def dead $arguments
+
+  bb.1:
+    liveins: $value_stack
+
+    %7:gpr = CONST_I256 i256 0, implicit-def dead $arguments
+    JUMP %bb.3, implicit-def $arguments
+
+  bb.2.rec:
+    liveins: $value_stack
+
+    %4:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %8:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %2, %8, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %6:gpr = FCALL @unrel, %5, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %7:gpr = MUL %6, %4, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+
+  bb.3.ret:
+    liveins: $value_stack
+
+    RET %7, implicit-def dead $arguments
+...
+---
+name:            caller
+alignment:       1
+tracksRegLiveness: true
+noPhis:          true
+isSSA:           false
+noVRegs:         false
+hasFakeUses:     false
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+  - { id: 4, class: gpr }
+  - { id: 5, class: gpr }
+  - { id: 6, class: gpr }
+  - { id: 7, class: gpr }
+  - { id: 8, class: gpr }
+liveins:
+  - { reg: '$arguments' }
+  - { reg: '$value_stack' }
+frameInfo:
+  maxAlignment:    1
+  hasCalls:        true
+  maxCallFrameSize: 0
+machineFunctionInfo:
+  numberOfParameters: 1
+body:             |
+  bb.0.entry:
+    successors: %bb.1(0x30000000), %bb.2(0x50000000)
+    liveins: $arguments, $value_stack
+
+    %2:gpr = ARGUMENT 0, implicit $arguments
+    JUMPI %bb.2, %2, implicit-def dead $arguments
+
+  bb.1:
+    liveins: $value_stack
+
+    %7:gpr = CONST_I256 i256 0, implicit-def dead $arguments
+    JUMP %bb.3, implicit-def $arguments
+
+  bb.2.rec:
+    liveins: $value_stack
+
+    %4:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %8:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %2, %8, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %6:gpr = FCALL @self, %5, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %7:gpr = MUL %6, %4, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+
+  bb.3.ret:
+    liveins: $value_stack
+
+    RET %7, implicit-def dead $arguments
+...
+---
+name:            plain
+alignment:       1
+tracksRegLiveness: true
+noPhis:          true
+isSSA:           false
+noVRegs:         false
+hasFakeUses:     false
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+  - { id: 4, class: gpr }
+  - { id: 5, class: gpr }
+  - { id: 6, class: gpr }
+  - { id: 7, class: gpr }
+  - { id: 8, class: gpr }
+liveins:
+  - { reg: '$arguments' }
+  - { reg: '$value_stack' }
+frameInfo:
+  maxAlignment:    1
+  hasCalls:        true
+  maxCallFrameSize: 0
+machineFunctionInfo:
+  numberOfParameters: 1
+body:             |
+  bb.0.entry:
+    successors: %bb.1(0x30000000), %bb.2(0x50000000)
+    liveins: $arguments, $value_stack
+
+    %2:gpr = ARGUMENT 0, implicit $arguments
+    JUMPI %bb.2, %2, implicit-def dead $arguments
+
+  bb.1:
+    liveins: $value_stack
+
+    %7:gpr = CONST_I256 i256 0, implicit-def dead $arguments
+    JUMP %bb.3, implicit-def $arguments
+
+  bb.2.rec:
+    liveins: $value_stack
+
+    %4:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %8:gpr = CONST_I256 i256 1311768467463790320, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %5:gpr = ADD %2, %8, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+    %6:gpr = FCALL @leaf, %5, implicit-def dead $arguments, implicit $sp, implicit-def $value_stack, implicit $value_stack
+    %7:gpr = MUL %6, %4, implicit-def dead $arguments, implicit-def $value_stack, implicit $value_stack
+
+  bb.3.ret:
+    liveins: $value_stack
+
+    RET %7, implicit-def dead $arguments
+...
