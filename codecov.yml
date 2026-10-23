@@ -7,3 +7,31 @@ coverage:
       default: false  # disable the default status that measures entire project
     patch:
       default: false  # disable the patch status that measures patch changes
+
+# Coverage arrives from solx's CI on main only, so no pull request gets a
+# report to comment on.
+comment: false
+
+# The fork code solx exercises.
+component_management:
+  individual_components:
+    - component_id: evm-backend
+      name: EVM backend
+      paths:
+        - llvm/lib/Target/EVM/**
+    - component_id: sol-dialect
+      name: Sol dialect
+      paths:
+        - mlir/lib/Dialect/Sol/**
+    - component_id: yul-dialect
+      name: Yul dialect
+      paths:
+        - mlir/lib/Dialect/Yul/**
+    - component_id: sol-to-yul
+      name: SolToYul
+      paths:
+        - mlir/lib/Conversion/SolToYul/**
+    - component_id: yul-to-standard
+      name: YulToStandard
+      paths:
+        - mlir/lib/Conversion/YulToStandard/**
