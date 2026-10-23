@@ -60,6 +60,13 @@ Location fuseSubprogram(LLVM::DICompileUnitAttr compileUnit, StringRef name,
 Location fuseArtificialSubprogram(ModuleOp mod, StringRef name,
                                   Location declLoc);
 
+/// Returns `loc` with the subprogram fused onto it under a fresh id, or `loc`
+/// if it carries none.
+///
+/// A function operation cloned with its location shares the original's
+/// subprogram, which the verifier rejects once both definitions are emitted.
+Location freshSubprogram(Location loc);
+
 } // namespace evm
 } // namespace mlir
 
