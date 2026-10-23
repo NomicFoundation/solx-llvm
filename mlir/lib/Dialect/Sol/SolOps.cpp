@@ -24,6 +24,7 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/KECCAK.h"
 
 using namespace mlir;
 using namespace mlir::sol;
@@ -158,6 +159,30 @@ bool BytesCastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
   // bytes -> int.
   return sol::isBytesLikeType(inpTy) &&
          sol::getNumBytes(inpTy) * 8 == cast<IntegerType>(outTy).getWidth();
+}
+
+//===----------------------------------------------------------------------===//
+// Keccak256Op
+//===----------------------------------------------------------------------===//
+
+// The hash of a string literal is known at compile time, so the literal needs
+// no memory and the hash no KECCAK256.
+LogicalResult Keccak256Op::canonicalize(Keccak256Op op,
+                                        PatternRewriter &rewriter) {
+  auto literal = op.getAddr().getDefiningOp<StringLitOp>();
+  if (!literal)
+    return failure();
+
+  APInt hash(256, 0);
+  for (uint8_t byte : llvm::KECCAK::KECCAK_256(literal.getValue())) {
+    hash <<= 8;
+    hash |= byte;
+  }
+  auto wordTy = IntegerType::get(op.getContext(), 256, IntegerType::Unsigned);
+  Value word = rewriter.create<ConstantOp>(op.getLoc(), wordTy,
+                                           IntegerAttr::get(wordTy, hash));
+  rewriter.replaceOpWithNewOp<BytesCastOp>(op, op.getType(), word);
+  return success();
 }
 
 //===----------------------------------------------------------------------===//

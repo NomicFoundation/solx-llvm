@@ -195,6 +195,8 @@ def Sol_MulModOp : Sol_ModOp<"mulmod">;
 def Sol_Keccak256Op : Sol_Op<"keccak256"> {
   let arguments = (ins Sol_StringType:$addr);
   let results = (outs Sol_FixedBytesType:$result);
+
+  let hasCanonicalizeMethod = 1;
 }
 
 def Sol_Sha256Op : Sol_HashPreCompileOp<"sha256">;
