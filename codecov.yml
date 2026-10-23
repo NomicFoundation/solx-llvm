@@ -35,3 +35,22 @@ component_management:
       name: YulToStandard
       paths:
         - mlir/lib/Conversion/YulToStandard/**
+    - component_id: evm-linker
+      name: EVM linker
+      paths:
+        - lld/lld-c/**
+        - lld/ELF/Arch/EVM.cpp
+    - component_id: sol-yul-c-api
+      name: Sol and Yul C API
+      paths:
+        - mlir/lib/CAPI/Dialect/Sol.cpp
+        - mlir/lib/CAPI/Dialect/SolPasses.cpp
+        - mlir/lib/CAPI/Dialect/Yul.cpp
+        - mlir/lib/CAPI/Dialect/YulPasses.cpp
+    - component_id: evm-ir-passes
+      name: EVM IR passes
+      paths:
+        - llvm/lib/Analysis/VMAliasAnalysis.cpp
+        - llvm/lib/Support/KECCAK.cpp
+        - llvm/lib/Transforms/Scalar/MergeIdenticalBB.cpp
+        - llvm/lib/Transforms/Scalar/SHA3ConstFolding.cpp
