@@ -111,6 +111,10 @@ bool mlir::sol::evmCanOverchargeGasForCall(ModuleOp mod) {
   return getEvmVersion(mod) >= EvmVersion::TangerineWhistle;
 }
 
+StringRef mlir::sol::evmTargetFeatures(ModuleOp mod) {
+  return getEvmVersion(mod) >= EvmVersion::Osaka ? "+osaka" : "";
+}
+
 Type mlir::sol::getEltType(Type ty, Index structTyIdx) {
   if (auto ptrTy = dyn_cast<sol::PointerType>(ty)) {
     return ptrTy.getPointeeType();

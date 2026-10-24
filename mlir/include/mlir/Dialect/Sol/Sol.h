@@ -105,6 +105,9 @@ unsigned getNumBytes(mlir::Type ty);
 ///
 bool evmSupportsReturnData(ModuleOp mod);
 bool evmCanOverchargeGasForCall(ModuleOp mod);
+/// The LLVM subtarget features of the evm version, empty for the generic
+/// subtarget.
+StringRef evmTargetFeatures(ModuleOp mod);
 
 struct StackResource : public SideEffects::Resource::Base<StackResource> {
   StringRef getName() final { return "<Stack>"; }
