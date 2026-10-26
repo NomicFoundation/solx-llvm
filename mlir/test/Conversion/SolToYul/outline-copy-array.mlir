@@ -65,6 +65,6 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK:         yul.func_return
 
 
-// STD: func.func @__sol.copy_array.calldata.storage.array$_dyn_ui256_$_CallData_$.array$_dyn_ui256_$_Storage_$(%arg0: !llvm.struct<(i256, i256)>, %arg1: i256) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid"]}
-// STD: func.func @__sol.copy_array.memory.storage.array$_dyn_ui256_$_Memory_$.array$_dyn_ui256_$_Storage_$({{.*}}) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid"]}
-// STD: func.func @m2s({{.*}}) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid"]}
+// STD: func.func @__sol.copy_array.calldata.storage.array$_dyn_ui256_$_CallData_$.array$_dyn_ui256_$_Storage_$(%arg0: !llvm.struct<(i256, i256)>, %arg1: i256) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"]]}
+// STD: func.func @__sol.copy_array.memory.storage.array$_dyn_ui256_$_Memory_$.array$_dyn_ui256_$_Storage_$({{.*}}) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"]]}
+// STD: func.func @m2s({{.*}}) attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"]]}

@@ -19,6 +19,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMAttrs.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Sol/DebugInfo.h"
+#include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/APInt.h"
@@ -29,6 +30,17 @@ using namespace mlir;
 using solgen::getModule;
 
 namespace {
+
+// The LLVM function attributes of every function the lowering creates, in the
+// `passthrough` form that the func-to-llvm conversion forwards.
+ArrayAttr getFuncPassthrough(PatternRewriter &r, ModuleOp mod) {
+  SmallVector<Attribute> attrs{r.getStringAttr("nofree"),
+                               r.getStringAttr("null_pointer_is_valid")};
+  if (std::string features = sol::evmTargetFeatures(mod); !features.empty())
+    attrs.push_back(r.getArrayAttr(
+        {r.getStringAttr("target-features"), r.getStringAttr(features)}));
+  return r.getArrayAttr(attrs);
+}
 
 // Returns an existing or a new (if not found) FuncOp in the ModuleOp `mod`.
 //
@@ -46,12 +58,7 @@ func::FuncOp getOrInsertFuncOp(PatternRewriter &r, ModuleOp mod, StringRef name,
   std::vector<NamedAttribute> attrs;
   attrs.push_back(r.getNamedAttr(
       "llvm.linkage", LLVM::LinkageAttr::get(r.getContext(), linkage)));
-
-  std::vector<Attribute> passthroughAttrs;
-  passthroughAttrs.push_back(r.getStringAttr("nofree"));
-  passthroughAttrs.push_back(r.getStringAttr("null_pointer_is_valid"));
-  attrs.push_back(r.getNamedAttr(
-      "passthrough", ArrayAttr::get(r.getContext(), passthroughAttrs)));
+  attrs.push_back(r.getNamedAttr("passthrough", getFuncPassthrough(r, mod)));
 
   return r.create<func::FuncOp>(
       evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name, fnTy,
@@ -226,14 +233,8 @@ struct FuncOpLowering : public OpRewritePattern<yul::FuncOp> {
       attrs.push_back(r.getNamedAttr(
           "llvm.linkage",
           LLVM::LinkageAttr::get(r.getContext(), LLVM::Linkage::Private)));
-
-    // Add the nofree and null_pointer_is_valid attributes of llvm via the
-    // passthrough attribute.
-    std::vector<Attribute> passthroughAttrs;
-    passthroughAttrs.push_back(r.getStringAttr("nofree"));
-    passthroughAttrs.push_back(r.getStringAttr("null_pointer_is_valid"));
     attrs.push_back(r.getNamedAttr(
-        "passthrough", ArrayAttr::get(r.getContext(), passthroughAttrs)));
+        "passthrough", getFuncPassthrough(r, op->getParentOfType<ModuleOp>())));
 
     // TODO: Add additional attribute for -O0 and -Oz
 
