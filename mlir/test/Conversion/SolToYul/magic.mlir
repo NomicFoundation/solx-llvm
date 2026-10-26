@@ -9,7 +9,8 @@ module {
     // CHECK:         %[[CC:.*]] = yul.signextend %c3_i256, %arg2
     // CHECK:         yul.mstore %{{.*}}, %[[CC]]
     // CHECK-LABEL: yul.func @encode : (i256, i256, i256) -> i256
-    // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256.ui8.si32(%arg0, %arg1, %arg2,
+    // CHECK:         %[[END:.*]] = yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256.ui8.si32(%arg0, %arg1, %arg2,
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %[[END]]
     sol.func @encode(%arg0: ui256, %arg1: ui8, %arg2: si32) -> !sol.string<Memory> {
       %0 = sol.encode %arg0, %arg1, %arg2 : (ui256, ui8, si32) -> !sol.string<Memory>
       sol.return %0 : !sol.string<Memory>
@@ -83,9 +84,106 @@ module {
     // CHECK:         yul.func_return %[[END]] : i256
     // CHECK-LABEL: yul.func @encode_packed : (i256, i256) -> i256
     // CHECK:         yul.func_call @__sol.abi_encode_tuple.packed.inplace.ui24.ui96(%arg0, %arg1,
+    // CHECK:         %[[SIZE:.*]] = yul.sub %[[END:[^,]+]], %
+    // CHECK:         yul.mstore %{{.*}}, %[[SIZE]]
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %[[END]]
     sol.func @encode_packed(%arg0: ui24, %arg1: ui96) -> !sol.string<Memory> {
       %0 = sol.encode %arg0, %arg1 : (ui24, ui96) -> !sol.string<Memory> {packed}
       sol.return %0 : !sol.string<Memory>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // An encoding that only the next op hashes leaves the free pointer where
+    // it was.
+    // CHECK-LABEL: yul.func @encode_hashed : (i256, i256) -> i256
+    // CHECK:         %[[FP:.*]] = yul.mload %c64_i256{{[_0-9]*}}
+    // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256.ui256(
+    // CHECK-NOT:     yul.mstore %c64_i256
+    // CHECK:         yul.keccak256
+    sol.func @encode_hashed(%arg0: ui256, %arg1: ui256) -> !sol.fixedbytes<32> {
+      %0 = sol.encode %arg0, %arg1 : (ui256, ui256) -> !sol.string<Memory>
+      %1 = "sol.keccak256"(%0) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+      sol.return %1 : !sol.fixedbytes<32>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // A packed encoding that only the next op hashes leaves the free pointer
+    // where it was.
+    // CHECK-LABEL: yul.func @encode_packed_hashed : (i256, i256) -> i256
+    // CHECK:         yul.func_call @__sol.abi_encode_tuple.packed.inplace.ui24.ui96(
+    // CHECK-NOT:     yul.mstore %c64_i256
+    // CHECK:         yul.keccak256
+    sol.func @encode_packed_hashed(%arg0: ui24, %arg1: ui96) -> !sol.fixedbytes<32> {
+      %0 = sol.encode %arg0, %arg1 : (ui24, ui96) -> !sol.string<Memory> {packed}
+      %1 = "sol.keccak256"(%0) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+      sol.return %1 : !sol.fixedbytes<32>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // A selector encoding that only the next op hashes leaves the free pointer
+    // where it was.
+    // CHECK-LABEL: yul.func @encode_selector_hashed : (i256, i256) -> i256
+    // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(
+    // CHECK-NOT:     yul.mstore %c64_i256
+    // CHECK:         yul.keccak256
+    sol.func @encode_selector_hashed(%arg0: !sol.fixedbytes<4>, %arg1: ui256) -> !sol.fixedbytes<32> {
+      %0 = sol.encode selector(%arg0 : !sol.fixedbytes<4>) %arg1 : (ui256) -> !sol.string<Memory>
+      %1 = "sol.keccak256"(%0) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+      sol.return %1 : !sol.fixedbytes<32>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // An allocation between the encoding and its hash would overwrite the
+    // encoding, so the encoding reserves its memory.
+    // CHECK-LABEL: yul.func @encode_hashed_apart : (i256) -> i256
+    // CHECK:         %[[END:.*]] = yul.func_call @__sol.abi_encode_tuple.packed.inplace.ui256(
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %[[END]]
+    // CHECK:         yul.mload %c64_i256
+    // CHECK:         yul.keccak256
+    sol.func @encode_hashed_apart(%arg0: ui256) -> !sol.fixedbytes<32> {
+      %0 = sol.encode %arg0 : (ui256) -> !sol.string<Memory> {packed}
+      %1 = sol.malloc : () -> !sol.struct<(ui256, ui256), Memory>
+      %2 = "sol.keccak256"(%0) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+      sol.return %2 : !sol.fixedbytes<32>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // An encoding that is also returned reserves its memory.
+    // CHECK-LABEL: yul.func @encode_hashed_returned : (i256) -> (i256, i256)
+    // CHECK:         %[[FP:.*]] = yul.mload %c64_i256{{[_0-9]*}}
+    // CHECK:         %[[END:.*]] = yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %[[END]]
+    // CHECK:         yul.keccak256
+    // CHECK:         yul.func_return %{{.*}}, %[[FP]] : i256, i256
+    sol.func @encode_hashed_returned(%arg0: ui256) -> (!sol.fixedbytes<32>, !sol.string<Memory>) {
+      %0 = sol.encode %arg0 : (ui256) -> !sol.string<Memory>
+      %1 = "sol.keccak256"(%0) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+      sol.return %1, %0 : !sol.fixedbytes<32>, !sol.string<Memory>
     }
   } {kind = #sol<ContractKind Contract>, runtime}
 }
@@ -186,6 +284,9 @@ module {
     // CHECK:         yul.mstore %[[P:.*]], %arg0
     // CHECK:         %[[ARGS:.*]] = yul.add %[[P]], %c4_i256
     // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%arg1, %[[ARGS]])
+    // CHECK:         %[[SIZE:.*]] = yul.sub %[[END:[^,]+]], %[[P]]
+    // CHECK:         yul.mstore %{{.*}}, %[[SIZE]]
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %[[END]]
     sol.func @encode_selector(%arg0: !sol.fixedbytes<4>, %arg1: ui256) -> !sol.string<Memory> {
       %0 = sol.encode selector(%arg0 : !sol.fixedbytes<4>) %arg1 : (ui256) -> !sol.string<Memory>
       sol.return %0 : !sol.string<Memory>

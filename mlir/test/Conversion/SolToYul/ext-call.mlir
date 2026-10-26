@@ -20,6 +20,9 @@ module {
     // CHECK:         yul.if %[[FAIL]] {
     // CHECK:           yul.returndatacopy
     // CHECK:           yul.revert
+    // CHECK:         yul.returndatasize
+    // CHECK-NOT:     yul.mstore %c64_i256
+    // CHECK:         yul.func_call @__sol.abi_decode_tuple.memory.ui256(%[[BUF]], %{{.*}})
     sol.func @f(%a: !sol.address, %x: ui256, %gas: ui256, %v: ui256) -> ui256 attributes {state_mutability = #NonPayable} {
       %sel = sol.constant 3017696395 : ui256
       %status, %outs = sol.ext_call "g"(%x) at %a gas %gas value %v selector %sel {callee_type = (ui256) -> ui256} : !sol.address, (ui256) -> (i1, ui256)
@@ -163,6 +166,56 @@ module {
       %1 = sol.load %0 : !sol.ptr<!sol.array<? x ui256, Memory>, Memory>, !sol.array<? x ui256, Memory>
       %2 = sol.length %1 : !sol.array<? x ui256, Memory>
       sol.return %2 : ui256
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+#View = #sol<StateMutability View>
+module {
+  sol.contract @C {
+    // A static array result is decoded from the return data in memory, which
+    // the call reserves.
+    // CHECK-LABEL: yul.func @fixedArrayRet : (i256) -> i256
+    // CHECK:         %[[BUF:.*]] = yul.mload
+    // CHECK:         yul.static_call
+    // CHECK:         yul.revert
+    // CHECK:         yul.returndatasize
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %{{.*}}
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %{{.*}}
+    // CHECK:         yul.func_call @__sol.abi_decode_tuple.memory.array$_2_ui256_$_Memory_$(%[[BUF]], %{{.*}})
+    sol.func @fixedArrayRet(%arg0: !sol.address) -> !sol.array<2 x ui256, Memory> attributes {state_mutability = #View} {
+      %sel = sol.constant 1481905832 : ui256
+      %gas = sol.gasleft : ui256
+      %c0 = sol.constant 0 : ui256
+      %status, %outs = sol.ext_call "h"() at %arg0 gas %gas value %c0 selector %sel {callee_type = () -> !sol.array<2 x ui256, Memory>, static_call} : !sol.address, () -> (i1, !sol.array<2 x ui256, Memory>)
+      sol.return %outs : !sol.array<2 x ui256, Memory>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+#View = #sol<StateMutability View>
+module {
+  sol.contract @C {
+    // A scalar beside a static array does not spare the reservation the array
+    // is decoded from.
+    // CHECK-LABEL: yul.func @mixedRet : (i256) -> (i256, i256)
+    // CHECK:         %[[BUF:.*]] = yul.mload
+    // CHECK:         yul.static_call
+    // CHECK:         yul.revert
+    // CHECK:         yul.returndatasize
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %{{.*}}
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %{{.*}}
+    // CHECK:         yul.func_call @__sol.abi_decode_tuple.memory.ui256.array$_2_ui256_$_Memory_$(%[[BUF]], %{{.*}})
+    sol.func @mixedRet(%arg0: !sol.address) -> (ui256, !sol.array<2 x ui256, Memory>) attributes {state_mutability = #View} {
+      %sel = sol.constant 1481905832 : ui256
+      %gas = sol.gasleft : ui256
+      %c0 = sol.constant 0 : ui256
+      %status, %a, %b = sol.ext_call "h"() at %arg0 gas %gas value %c0 selector %sel {callee_type = () -> (ui256, !sol.array<2 x ui256, Memory>), static_call} : !sol.address, () -> (i1, ui256, !sol.array<2 x ui256, Memory>)
+      sol.return %a, %b : ui256, !sol.array<2 x ui256, Memory>
     }
   } {kind = #sol<ContractKind Contract>, runtime}
 }

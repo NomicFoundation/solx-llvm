@@ -1305,8 +1305,9 @@ struct EcrecoverOpLowering : public OpConversionPattern<sol::EcrecoverOp> {
     // Since the size of the encoded arguments is known in advance,
     // we ignore the return value of genABIEncoding.
     Value paramsSize = bExt.genI256Const(128);
+    // The precompile reads the input only during the call, so the free pointer
+    // does not move.
     evmB.genABIEncoding(op.getOperandTypes(), adaptor.getOperands(), freePtr);
-    evmB.genFreePtrUpd(freePtr, paramsSize);
 
     // Hashing functions store their result in scratch space (0x00–0x3f).
     Value gas = r.create<mlir::yul::GasOp>(loc);
@@ -1545,8 +1546,7 @@ struct ConcatOpLowering : public OpConversionPattern<sol::ConcatOp> {
     }
     Value dataSize = r.create<yul::SubOp>(loc, currDst, dstStart);
     r.create<yul::MStoreOp>(loc, freePtr, dataSize);
-    Value allocationSize = r.create<yul::SubOp>(loc, currDst, freePtr);
-    evmB.genFreePtrUpd(freePtr, allocationSize);
+    evmB.genFreePtrStore(currDst);
     r.replaceOp(op, freePtr);
 
     return success();
@@ -2721,6 +2721,12 @@ struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
     mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(op), r, loc, literals);
 
+    // An encoding that only the next op hashes is read before anything else
+    // allocates, so it takes no memory of its own.
+    Operation *user = op->hasOneUse() ? *op->user_begin() : nullptr;
+    bool reserve =
+        !isa_and_nonnull<sol::Keccak256Op>(user) || user != op->getNextNode();
+
     Value freePtr = evmB.genFreePtr();
     if (op.getPacked()) {
       Value dataStart =
@@ -2729,8 +2735,8 @@ struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
                                                 adaptor.getIns(), dataStart);
       Value dataSize = r.create<yul::SubOp>(loc, dataEnd, dataStart);
       r.create<yul::MStoreOp>(loc, freePtr, dataSize);
-      Value allocationSize = r.create<yul::SubOp>(loc, dataEnd, freePtr);
-      evmB.genFreePtrUpd(freePtr, allocationSize);
+      if (reserve)
+        evmB.genFreePtrStore(dataEnd);
     } else if (op.getSelector()) {
       assert(adaptor.getSelector() && "selector operand is required");
 
@@ -2744,8 +2750,8 @@ struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
                                            adaptor.getIns(), tupleStart);
       Value dataSize = r.create<yul::SubOp>(loc, tupleEnd, selectorAddr);
       r.create<yul::MStoreOp>(loc, freePtr, dataSize);
-      Value allocationSize = r.create<yul::SubOp>(loc, tupleEnd, freePtr);
-      evmB.genFreePtrUpd(freePtr, allocationSize);
+      if (reserve)
+        evmB.genFreePtrStore(tupleEnd);
     } else {
       Value tupleStart =
           r.create<yul::AddOp>(loc, freePtr, bExt.genI256Const(32));
@@ -2753,8 +2759,8 @@ struct EncodeOpLowering : public OpConversionPattern<sol::EncodeOp> {
                                            adaptor.getIns(), tupleStart);
       Value tupleSize = r.create<yul::SubOp>(loc, tupleEnd, tupleStart);
       r.create<yul::MStoreOp>(loc, freePtr, tupleSize);
-      Value allocationSize = r.create<yul::SubOp>(loc, tupleEnd, freePtr);
-      evmB.genFreePtrUpd(freePtr, allocationSize);
+      if (reserve)
+        evmB.genFreePtrStore(tupleEnd);
     }
     r.replaceOp(op, freePtr);
     return success();
@@ -2949,6 +2955,11 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
                                decodedResults, /*fromMem=*/true,
                                *getTypeConverter());
     } else {
+      // Scalar results are decoded onto the stack right away, so the return
+      // data needs no memory of its own.
+      bool reserve = !llvm::all_of(abiResultTys,
+                                   [](Type ty) { return sol::isScalar(ty); });
+
       // See https://github.com/ethereum/solidity/pull/12684
       Value staticRetSizeGreater =
           bExt.genCmp(yul::CmpPredicate::ugt, staticRetSize, retDataSize);
@@ -2957,12 +2968,14 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
           bExt.createIf(TypeRange{r.getIntegerType(256)}, staticRetSizeGreater);
       // Then block:
       r.setInsertionPointToStart(&ifOp.getThenRegion().front());
-      evmB.genFreePtrUpd(selectorAddr, retDataSize);
+      if (reserve)
+        evmB.genFreePtrUpd(selectorAddr, retDataSize);
       Value tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, retDataSize);
       r.create<yul::YieldOp>(loc, ValueRange{tupleEnd});
       // Else block:
       r.setInsertionPointToStart(&ifOp.getElseRegion().front());
-      evmB.genFreePtrUpd(selectorAddr, staticRetSize);
+      if (reserve)
+        evmB.genFreePtrUpd(selectorAddr, staticRetSize);
       tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, staticRetSize);
       r.create<yul::YieldOp>(loc, ValueRange{tupleEnd});
 
@@ -3022,14 +3035,10 @@ static LogicalResult lowerBareCallLikeOp(OpT op, AdaptorT adaptor,
       opBuilderFunc(loc, adaptor, gas, addr, inpStart, inpSize, zero, r);
 
   Value status = bExt.genCmp(yul::CmpPredicate::ne, rawStatus, zero);
-  Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
-  Value roundedRetDataSize = bExt.genRoundUpToMultiple<32>(retDataSize);
-  Value retData =
-      evmB.genMemAllocForDynArray(retDataSize, roundedRetDataSize, loc);
-  Value retDataStart =
-      evmB.genDataAddrPtr(retData, sol::DataLocation::Memory, loc);
-  r.create<yul::ReturnDataCopyOp>(loc, /*dst=*/retDataStart,
-                                  /*src=*/zero, retDataSize);
+  // Return data nobody reads is not copied, whatever its size.
+  Value retData = op.getRetData().use_empty()
+                      ? bExt.genI256Const(mlir::evm::MemoryLayout::zeroPointer)
+                      : evmB.genReturnDataBytes(loc);
 
   r.replaceOp(op, SmallVector<Value, 2>{status, retData});
   return success();
@@ -3271,12 +3280,13 @@ struct CodeOpLowering
     evm::Builder evmB(getModule(op), r, loc);
 
     auto extCodeSize = r.create<yul::ExtCodeSizeOp>(loc, addr);
-    Value alloc = evmB.genMemAlloc(op.getType(), /*zeroInit=*/false,
-                                   /*initVals=*/{}, extCodeSize, Type{});
+    Value alloc = evmB.genFreePtr();
+    r.create<yul::MStoreOp>(loc, alloc, extCodeSize);
     auto codeAddr = evmB.genDataAddrPtr(alloc, sol::DataLocation::Memory);
     r.create<yul::ExtCodeCopyOp>(loc, addr, /*dstOffset=*/codeAddr,
                                  /*srcOffset=*/bExt.genI256Const(0),
                                  extCodeSize);
+    evmB.genFreePtrStore(r.create<yul::AddOp>(loc, codeAddr, extCodeSize));
     r.replaceOp(op, alloc);
     return success();
   }
@@ -3338,17 +3348,7 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
         OpBuilder::InsertionGuard g(r);
         r.setInsertionPointToStart(&entry);
         evm::Builder evmB(getModule(tryOp), r, argLoc);
-        auto memBytesTy =
-            sol::StringType::get(r.getContext(), sol::DataLocation::Memory);
-        Value retDataSize = r.create<yul::ReturnDataSizeOp>(argLoc);
-        Value buf =
-            evmB.genMemAlloc(memBytesTy, /*zeroInit=*/false,
-                             /*initVals=*/{}, retDataSize, Type{}, argLoc);
-        Value dataPtr =
-            evmB.genDataAddrPtr(buf, sol::DataLocation::Memory, argLoc);
-        r.create<yul::ReturnDataCopyOp>(argLoc, /*dst=*/dataPtr,
-                                        /*src=*/bExt.genI256Const(0, argLoc),
-                                        retDataSize);
+        Value buf = evmB.genReturnDataBytes(argLoc);
         Value repl = getTypeConverter()->materializeSourceConversion(
             r, argLoc, blkArg.getType(), buf);
         blkArg.replaceAllUsesWith(repl);
@@ -3490,7 +3490,7 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
       Value u64Max = bExt.genI256Const(APInt::getLowBitsSet(256, 64));
       Value abiTupleSize =
           r.create<yul::SubOp>(loc, returnDataSize, bExt.genI256Const(4));
-      Value abiTuple = evmB.genMemAlloc(abiTupleSize);
+      Value abiTuple = evmB.genFreePtr();
       r.create<yul::ReturnDataCopyOp>(loc, /*dst=*/abiTuple,
                                       /*src=*/bExt.genI256Const(4),
                                       abiTupleSize);
@@ -3522,6 +3522,9 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
       Block &thenEntry = ifLengthOk.getThenRegion().front();
       r.setInsertionPointToStart(&thenEntry);
       r.create<sol::StoreOp>(loc, bExt.genBool(false), runFallbackFlag);
+      // The copy is reserved only once every guard passed, and only up to the
+      // end of the reason.
+      evmB.genFreePtrUpd(abiTuple, r.create<yul::SubOp>(loc, msgEnd, abiTuple));
       BlockArgument blkArg = thenEntry.getArgument(0);
       auto blkArgRepl = getTypeConverter()->materializeSourceConversion(
           r, loc, blkArg.getType(), errMsg);

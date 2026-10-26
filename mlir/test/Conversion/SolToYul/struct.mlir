@@ -71,6 +71,42 @@ module {
 
 module {
   sol.contract @C {
+    // A non-zeroed struct allocates nothing for its struct and array members,
+    // which take the stored values.
+    // CHECK-LABEL: yul.func @literal_nested : () -> ()
+    // CHECK:         %[[N:.*]] = yul.mload %c64_i256{{[_0-9]*}}
+    // CHECK-NOT:     yul.mload %c64_i256
+    // CHECK:         %[[F:.*]] = yul.add %[[N]], %c0_i256{{[_0-9]*}}
+    // CHECK:         %[[S:.*]] = yul.mload %c64_i256{{[_0-9]*}}
+    // CHECK:         yul.mstore %[[F]], %[[S]]
+    // CHECK:         %[[G:.*]] = yul.add %[[N]], %c32_i256{{[_0-9]*}}
+    // CHECK:         %[[A:.*]] = yul.mload %c64_i256{{[_0-9]*}}
+    // CHECK:         yul.mstore %[[G]], %[[A]]
+    sol.func @literal_nested() {
+      %0 = sol.malloc : () -> !sol.struct<(!sol.struct<(ui256, ui256), Memory>, !sol.array<2 x ui256, Memory>), Memory>
+      %c0_ui64 = sol.constant 0 : ui64
+      %1 = sol.gep %0, %c0_ui64 : !sol.struct<(!sol.struct<(ui256, ui256), Memory>, !sol.array<2 x ui256, Memory>), Memory>, ui64, !sol.ptr<!sol.struct<(ui256, ui256), Memory>, Memory>
+      %2 = sol.malloc : () -> !sol.struct<(ui256, ui256), Memory>
+      %3 = sol.gep %2, %c0_ui64 : !sol.struct<(ui256, ui256), Memory>, ui64, !sol.ptr<ui256, Memory>
+      %c1_ui256 = sol.constant 1 : ui256
+      sol.store %c1_ui256, %3 : ui256, !sol.ptr<ui256, Memory>
+      %c1_ui64 = sol.constant 1 : ui64
+      %4 = sol.gep %2, %c1_ui64 : !sol.struct<(ui256, ui256), Memory>, ui64, !sol.ptr<ui256, Memory>
+      %c2_ui256 = sol.constant 2 : ui256
+      sol.store %c2_ui256, %4 : ui256, !sol.ptr<ui256, Memory>
+      sol.store %2, %1 : !sol.struct<(ui256, ui256), Memory>, !sol.ptr<!sol.struct<(ui256, ui256), Memory>, Memory>
+      %5 = sol.gep %0, %c1_ui64 : !sol.struct<(!sol.struct<(ui256, ui256), Memory>, !sol.array<2 x ui256, Memory>), Memory>, ui64, !sol.ptr<!sol.array<2 x ui256, Memory>, Memory>
+      %6 = sol.array_lit %c1_ui256, %c2_ui256 : (ui256, ui256) -> !sol.array<2 x ui256, Memory>
+      sol.store %6, %5 : !sol.array<2 x ui256, Memory>, !sol.ptr<!sol.array<2 x ui256, Memory>, Memory>
+      sol.return
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
     // CHECK-LABEL: yul.func @cd_dyn_member : (i256) -> i256
     // CHECK:         %[[OFFP:.*]] = yul.add %arg0, %{{.*}}
     // CHECK:         %[[OFF:.*]] = yul.calldataload %[[OFFP]]

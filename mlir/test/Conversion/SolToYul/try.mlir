@@ -46,7 +46,8 @@ module {
     // CHECK:               %[[U64:.*]] = yul.constant 18446744073709551615
     // CHECK:               %[[C4E:.*]] = yul.constant 4{{$}}
     // CHECK:               %[[TSIZE:.*]] = yul.sub %[[RDS]], %[[C4E]]
-    // CHECK:               yul.returndatacopy %[[TUPLE:.*]], %{{.*}}, %[[TSIZE]]
+    // CHECK:               %[[TUPLE:.*]] = yul.mload %c64_i256{{[_0-9]*}}
+    // CHECK:               yul.returndatacopy %[[TUPLE]], %{{.*}}, %[[TSIZE]]
     // CHECK:               %[[OFF:.*]] = yul.mload %[[TUPLE]]
     // CHECK:               %[[OFFSMALL:.*]] = yul.cmp ule, %[[OFF]], %[[U64]]
     // CHECK:               %[[C36:.*]] = yul.constant 36
@@ -63,15 +64,23 @@ module {
     // CHECK:                 %[[LENIN:.*]] = yul.cmp ule, %[[MSGEND]], %[[DATAEND]]
     // CHECK:                 %[[LENOK:.*]] = yul.and %[[LENSMALL]], %[[LENIN]]
     // CHECK:                 yul.if %[[LENOK]] {
+    // CHECK:                   %[[USED:.*]] = yul.sub %[[MSGEND]], %[[TUPLE]]
+    // CHECK:                   %[[FREE:.*]] = yul.add %[[TUPLE]], %{{.*}}
+    // CHECK:                   yul.mstore %c64_i256{{[_0-9]*}}, %[[FREE]]
     // CHECK:                   yul.func_call @useStr(%[[MSG]])
     // CHECK:           %[[FB:.*]] = llvm.load
     // CHECK:           yul.if %[[FB]] {
     // CHECK:             %[[N:.*]] = yul.returndatasize
-    // CHECK:             %[[BUF:.*]] = yul.func_call @__sol.alloc(
-    // CHECK:             yul.mstore %[[BUF]], %[[N]]
-    // CHECK:             %[[DATA:.*]] = yul.add %[[BUF]], %{{.*}}
-    // CHECK:             yul.returndatacopy %[[DATA]], %{{.*}}, %[[N]]
-    // CHECK:             yul.func_call @useStr(%[[BUF]])
+    // CHECK:             %[[EMPTY:.*]] = yul.cmp eq, %[[N]], %{{.*}}
+    // CHECK:             %[[BYTES:.*]] = yul.if %[[EMPTY]] -> i256 {
+    // CHECK:               yul.yield %c96_i256 : i256
+    // CHECK:             } else {
+    // CHECK:               %[[BUF:.*]] = yul.func_call @__sol.alloc(
+    // CHECK:               yul.mstore %[[BUF]], %[[N]]
+    // CHECK:               %[[DATA:.*]] = yul.add %[[BUF]], %{{.*}}
+    // CHECK:               yul.returndatacopy %[[DATA]], %{{.*}}, %[[N]]
+    // CHECK:               yul.yield %[[BUF]] : i256
+    // CHECK:             yul.func_call @useStr(%[[BYTES]])
     // CHECK-NOT:         yul.revert
     // CHECK:         yul.func_return
     sol.func @f(%arg0: !sol.address, %arg1: ui256) {

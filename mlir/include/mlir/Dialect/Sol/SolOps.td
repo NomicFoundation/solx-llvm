@@ -238,6 +238,12 @@ def Sol_AllocaOp : Sol_Op<"alloca"> {
 }
 
 def Sol_MallocOp : Sol_Op<"malloc"> {
+  let summary = "Allocates a memory aggregate";
+  let description = [{
+    With `zero_init`, the aggregate is zeroed and nested aggregates are
+    allocated. Without it, a struct literal stores every member itself, and a
+    string without `size` is the zero pointer.
+  }];
   let arguments = (ins UnitAttr:$zero_init, Optional<Sol_Int>:$size);
   let results = (outs Sol_AggType:$addr);
 
