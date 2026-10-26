@@ -94,6 +94,7 @@ module {
     // CHECK:         %[[IN:.*]] = yul.mload
     // CHECK:         %[[INSZ:.*]] = yul.constant 128{{$}}
     // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.fixedbytes$_32_$.ui8.fixedbytes$_32_$.fixedbytes$_32_$(%[[HASH]], %[[V]], %[[R]], %[[S]], %[[IN]])
+    // CHECK-NOT:     yul.mstore %c64_i256
     // CHECK:         yul.mstore %[[ZERO]], %[[ZERO]]
     // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
     // CHECK:         %[[OK:.*]] = yul.static_call %{{.*}}, %[[C1]], %[[IN]], %[[INSZ]], %[[ZERO]], %[[OUTSZ]]

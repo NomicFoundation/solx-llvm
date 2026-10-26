@@ -1150,7 +1150,16 @@ void evm::Builder::genFreePtrUpd(Value freePtr, Value size,
   Value panicCond = b.create<yul::OrOp>(loc, isTooLarge, overflowed);
   genPanic(mlir::evm::PanicCode::ResourceError, panicCond, loc);
 
-  b.create<yul::MStoreOp>(loc, bExt.genI256Const(64), newFreePtr);
+  genFreePtrStore(newFreePtr, loc);
+}
+
+void evm::Builder::genFreePtrStore(Value freePtr,
+                                   std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  mlir::solgen::BuilderExt bExt(b, loc);
+  b.create<yul::MStoreOp>(
+      loc, bExt.genI256Const(mlir::evm::MemoryLayout::freeMemoryPointer),
+      freePtr);
 }
 
 Value evm::Builder::genMemAlloc(Value size, std::optional<Location> locArg) {
@@ -1201,6 +1210,31 @@ Value evm::Builder::genMemAllocForDynArray(Value sizeVar, Value sizeInBytes,
   auto memPtr = genMemAlloc(dynSizeInBytes, loc);
   b.create<yul::MStoreOp>(loc, memPtr, sizeVar);
   return memPtr;
+}
+
+Value evm::Builder::genReturnDataBytes(std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  mlir::solgen::BuilderExt bExt(b, loc);
+
+  Value zero = bExt.genI256Const(0);
+  Value size = b.create<yul::ReturnDataSizeOp>(loc);
+  Value isEmpty = bExt.genCmp(yul::CmpPredicate::eq, size, zero);
+  auto ifOp = bExt.createIf(b.getIntegerType(256), isEmpty);
+
+  b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+  b.create<yul::YieldOp>(
+      loc, ValueRange{bExt.genI256Const(mlir::evm::MemoryLayout::zeroPointer)});
+
+  b.setInsertionPointToStart(&ifOp.getElseRegion().front());
+  Value bytes =
+      genMemAllocForDynArray(size, bExt.genRoundUpToMultiple<32>(size), loc);
+  b.create<yul::ReturnDataCopyOp>(
+      loc, /*dst=*/genDataAddrPtr(bytes, sol::DataLocation::Memory, loc),
+      /*src=*/zero, size);
+  b.create<yul::YieldOp>(loc, ValueRange{bytes});
+
+  b.setInsertionPointAfter(ifOp);
+  return ifOp.getResult(0);
 }
 
 bool evm::isConstantValue(Value v) {
@@ -1364,6 +1398,13 @@ Value evm::Builder::genMemAllocInline(Type ty, bool zeroInit,
   if (auto structTy = dyn_cast<sol::StructType>(ty)) {
     Value basePtr = genMemAlloc(evm::getMallocSize(ty), loc);
     assert(structTy.getDataLocation() == sol::DataLocation::Memory);
+    // Without zeroInit the caller writes every member, nested ones too.
+    if (!zeroInit) {
+      assert(recDepth == 0 && "non-zeroed struct rows of an array: only a "
+                              "struct literal is allocated without zero_init, "
+                              "and it stores every member itself");
+      return basePtr;
+    }
 
     uint64_t memOffset = 0;
     for (auto memTy : structTy.getMemberTypes()) {
@@ -1375,12 +1416,9 @@ Value evm::Builder::genMemAllocInline(Type ty, bool zeroInit,
         Value initVal = genMemAlloc(memTy, zeroInit, /*initVals=*/{},
                                     /*sizeVar=*/{}, recDepth, loc);
         b.create<yul::MStoreOp>(loc, memPtr, initVal);
-      } else if (zeroInit) {
+      } else {
         // String/bytes fields must point to the zero-bytes sentinel (0x60) so
-        // that dereferencing them yields length=0. When !zeroInit, these slots
-        // are left at 0 (null pointer). This is safe only if the caller writes
-        // every StringType field before any read. A future !zeroInit allocation
-        // that skips a field would silently produce a null pointer dereference.
+        // that dereferencing them yields length=0.
         Value zeroVal =
             isa<sol::StringType>(memTy)
                 ? bExt.genI256Const(mlir::evm::MemoryLayout::zeroPointer)

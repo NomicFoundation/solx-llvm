@@ -9,11 +9,16 @@ module {
     // CHECK:         %[[OK:.*]] = yul.call %arg2, %[[TO]], %arg3, %[[DATA]], %[[LEN]], %[[C0:c0_i256[_0-9]*]], %[[C0]]
     // CHECK:         %[[ST:.*]] = yul.cmp ne, %[[OK]], %[[C0]]
     // CHECK:         %[[RDS:.*]] = yul.returndatasize
-    // CHECK:         %[[RD:.*]] = yul.func_call @__sol.alloc(%{{.*}}) : (i256) -> i256
-    // CHECK:         yul.mstore %[[RD]], %[[RDS]]
-    // CHECK:         %[[RDP:.*]] = yul.add %[[RD]], %{{.*}}
-    // CHECK:         yul.returndatacopy %[[RDP]], %[[C0]], %[[RDS]]
-    // CHECK:         yul.func_return %[[ST]], %[[RD]] : i256, i256
+    // CHECK:         %[[EMPTY:.*]] = yul.cmp eq, %[[RDS]], %[[Z:.*]]
+    // CHECK:         %[[RET:.*]] = yul.if %[[EMPTY]] -> i256 {
+    // CHECK:           yul.yield %c96_i256 : i256
+    // CHECK:         } else {
+    // CHECK:           %[[RD:.*]] = yul.func_call @__sol.alloc(%{{.*}}) : (i256) -> i256
+    // CHECK:           yul.mstore %[[RD]], %[[RDS]]
+    // CHECK:           %[[RDP:.*]] = yul.add %[[RD]], %{{.*}}
+    // CHECK:           yul.returndatacopy %[[RDP]], %[[Z]], %[[RDS]]
+    // CHECK:           yul.yield %[[RD]] : i256
+    // CHECK:         yul.func_return %[[ST]], %[[RET]] : i256, i256
     sol.func @call(%arg0: !sol.address, %arg1: !sol.string<Memory>, %arg2: ui256, %arg3: ui256) -> (i1, !sol.string<Memory>) {
       %status, %ret_data = sol.bare_call %arg0 gas %arg2 value %arg3 input %arg1 : !sol.address, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>
       sol.return %status, %ret_data : i1, !sol.string<Memory>
@@ -49,6 +54,23 @@ module {
     sol.func @staticcall(%arg0: !sol.address, %arg1: !sol.string<Memory>, %arg2: ui256) -> (i1, !sol.string<Memory>) {
       %status, %ret_data = sol.bare_static_call %arg0 gas %arg2 input %arg1 : !sol.address, !sol.string<Memory> -> i1, !sol.string<Memory>
       sol.return %status, %ret_data : i1, !sol.string<Memory>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // Return data nobody reads is not copied.
+    // CHECK-LABEL: yul.func @unread : (i256, i256, i256) -> i256
+    // CHECK:         %[[OK:.*]] = yul.call
+    // CHECK:         %[[ST:.*]] = yul.cmp ne, %[[OK]], %{{.*}}
+    // CHECK-NOT:     yul.returndatasize
+    // CHECK:         yul.func_return %[[ST]] : i256
+    sol.func @unread(%arg0: !sol.address, %arg1: !sol.string<Memory>, %arg2: ui256) -> i1 {
+      %status, %ret_data = sol.bare_call %arg0 value %arg2 input %arg1 : !sol.address, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>
+      sol.return %status : i1
     }
   } {kind = #sol<ContractKind Contract>, runtime}
 }

@@ -34,6 +34,7 @@ module {
     // CHECK:         %[[END:.*]] = yul.add %[[P3]], %[[LD]]
     // CHECK:         %[[LEN:.*]] = yul.sub %[[END]], %[[DATA]]
     // CHECK:         yul.mstore %[[BUF]], %[[LEN]]
+    // CHECK:         yul.mstore %c64_i256{{[_0-9]*}}, %[[END]]
     sol.func @f(%arg0: !sol.string<Memory>, %arg1: !sol.string<CallData>, %arg2: !sol.fixedbytes<16>, %arg3: !sol.string<Storage>) -> !sol.string<Memory> attributes {state_mutability = #NonPayable} {
       %0 = sol.concat %arg0, %arg1, %arg2, %arg3 : !sol.string<Memory>, !sol.string<CallData>, !sol.fixedbytes<16>, !sol.string<Storage> -> <Memory>
       sol.return %0 : !sol.string<Memory>

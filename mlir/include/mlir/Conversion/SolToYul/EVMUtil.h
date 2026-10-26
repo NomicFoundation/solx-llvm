@@ -179,6 +179,11 @@ public:
   void genFreePtrUpd(Value freePtr, Value size,
                      std::optional<Location> locArg = std::nullopt);
 
+  /// Stores \p freePtr as the free pointer, with no rounding and no bounds
+  /// check.
+  void genFreePtrStore(Value freePtr,
+                       std::optional<Location> locArg = std::nullopt);
+
   /// Returns the address of \p size fresh bytes of memory. A constant size
   /// allocates inline, any other through `helpersym::alloc`.
   Value genMemAlloc(Value size, std::optional<Location> locArg = std::nullopt);
@@ -189,6 +194,10 @@ public:
   Value genMemAllocForDynArray(Value sizeVar, Value sizeInBytes,
                                std::optional<Location> locArg = std::nullopt,
                                bool genLengthPanicGuard = false);
+
+  /// Copies the return data of the last call into a new `bytes memory`. Empty
+  /// return data is the zero pointer and allocates nothing.
+  Value genReturnDataBytes(std::optional<Location> locArg = std::nullopt);
 
   /// Generates the memory allocation and initialization code for the
   /// memory-located aggregate type \p ty. Cleans the dirty high bits
