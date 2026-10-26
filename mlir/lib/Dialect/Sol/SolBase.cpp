@@ -19,6 +19,8 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/TargetParser/EVMTargetParser.h"
+#include "llvm/TargetParser/SubtargetFeature.h"
 
 #include "mlir/Dialect/Sol/SolInterfaces.cpp.inc"
 #include "mlir/Dialect/Sol/SolOpsDialect.cpp.inc"
@@ -111,6 +113,13 @@ bool mlir::sol::evmSupportsReturnData(ModuleOp mod) {
 
 bool mlir::sol::evmCanOverchargeGasForCall(ModuleOp mod) {
   return getEvmVersion(mod) >= EvmVersion::TangerineWhistle;
+}
+
+std::string mlir::sol::evmTargetFeatures(ModuleOp mod) {
+  llvm::SubtargetFeatures features;
+  if (getEvmVersion(mod) >= EvmVersion::Osaka)
+    features.AddFeature(llvm::EVM::getFeatureName(llvm::EVM::FeatureOsaka));
+  return features.getString();
 }
 
 Type mlir::sol::getEltType(Type ty, Index structTyIdx) {

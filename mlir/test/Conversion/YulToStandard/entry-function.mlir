@@ -4,8 +4,8 @@
 // marked as the start of the code.
 
 // CHECK-LABEL: module @obj {
-// CHECK-NEXT:    func.func @__entry() attributes {llvm.linkage = #llvm.linkage<external>, passthrough = ["nofree", "null_pointer_is_valid", "evm-entry-function"]}
-// CHECK:         func.func @".unreachable"() attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid"]}
+// CHECK-NEXT:    func.func @__entry() attributes {llvm.linkage = #llvm.linkage<external>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"], "evm-entry-function"]}
+// CHECK:         func.func @".unreachable"() attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"]]}
 module {
   "yul.object"() ({
     %c0 = yul.constant 0

@@ -13,6 +13,10 @@ add_mlir_dialect_library(MLIRSolDialect
   MLIRYulOpsIncGen
   MLIRYulExtraIncGen
   MLIRYulInterfacesIncGen
+  target_parser_gen
+
+  LINK_COMPONENTS
+  TargetParser
 
   LINK_LIBS PUBLIC
   # Bridge ops (sol.ptr_cast, sol.selector, ...) produce !yul.ptr.
