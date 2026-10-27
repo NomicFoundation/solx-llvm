@@ -1258,6 +1258,33 @@ struct Keccak256OpLowering : public OpConversionPattern<sol::Keccak256Op> {
   }
 };
 
+struct Erc7201OpLowering : public OpConversionPattern<sol::Erc7201Op> {
+  using OpConversionPattern<sol::Erc7201Op>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::Erc7201Op op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    Location loc = op.getLoc();
+    mlir::solgen::BuilderExt bExt(r, loc);
+    evm::Builder evmB(getModule(op), r, loc);
+
+    Type ty = op.getId().getType();
+    sol::DataLocation dataLoc = sol::getDataLocation(ty);
+
+    Value dataLen = evmB.genLoad(adaptor.getId(), dataLoc);
+    auto dataSlot = evmB.genDataAddrPtr(adaptor.getId(), ty);
+    Value inner = r.create<yul::Keccak256Op>(loc, dataSlot, dataLen);
+    Value decremented = r.create<yul::SubOp>(loc, inner, bExt.genI256Const(1));
+    // The outer hash input is a single word, so it fits the scratch space.
+    Value zero = bExt.genI256Const(0);
+    r.create<yul::MStoreOp>(loc, zero, decremented);
+    Value outer = r.create<yul::Keccak256Op>(loc, zero, bExt.genI256Const(32));
+    Value mask = r.create<yul::NotOp>(loc, bExt.genI256Const(0xff));
+    r.replaceOpWithNewOp<yul::AndOp>(op, outer, mask);
+
+    return success();
+  }
+};
+
 struct Sha256OpLowering : public OpConversionPattern<sol::Sha256Op> {
   Sha256OpLowering(TypeConverter &tyConv, MLIRContext *ctx,
                    evm::StringLiteralPool &literals)
@@ -4347,7 +4374,8 @@ void evm::populateCheckedArithPats(RewritePatternSet &pats,
 void evm::populateCryptoPats(mlir::RewritePatternSet &pats,
                              mlir::TypeConverter &tyConv,
                              evm::StringLiteralPool &literals) {
-  pats.add<Keccak256OpLowering, EcrecoverOpLowering>(tyConv, pats.getContext());
+  pats.add<Keccak256OpLowering, Erc7201OpLowering, EcrecoverOpLowering>(
+      tyConv, pats.getContext());
   pats.add<Sha256OpLowering, Ripemd160OpLowering>(tyConv, pats.getContext(),
                                                   literals);
 }
