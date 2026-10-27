@@ -212,4 +212,43 @@ sol.contract @C {
     %3 = sol.encode %2 : (!sol.string<Memory>) -> !sol.string<Memory>
     sol.return %1, %3 : !sol.string<Memory>, !sol.string<Memory>
   }
+
+  // The namespace slot of a literal is a constant: the ERC-7201 example.
+  // CHECK-LABEL: sol.func @erc7201Literal(
+  // CHECK-NEXT:    %[[SLOT:.*]] = sol.constant 10958655983261152271848436692291137275443024275653522991983264966744321209600 : ui256
+  // CHECK-NEXT:    sol.return %[[SLOT]] : ui256
+  sol.func @erc7201Literal() -> ui256 {
+    %0 = sol.string_lit "example.main" -> !sol.string<Memory>
+    %1 = "sol.erc7201"(%0) : (!sol.string<Memory>) -> ui256
+    sol.return %1 : ui256
+  }
+
+  // CHECK-LABEL: sol.func @erc7201EmptyLiteral(
+  // CHECK-NEXT:    %[[SLOT:.*]] = sol.constant 30348469548119976384149824193117947667795829812057172845188107037932402691072 : ui256
+  // CHECK-NEXT:    sol.return %[[SLOT]] : ui256
+  sol.func @erc7201EmptyLiteral() -> ui256 {
+    %0 = sol.string_lit "" -> !sol.string<Memory>
+    %1 = "sol.erc7201"(%0) : (!sol.string<Memory>) -> ui256
+    sol.return %1 : ui256
+  }
+
+  // A literal with another use stays for it.
+  // CHECK-LABEL: sol.func @erc7201UsedLiteral(
+  // CHECK-NEXT:    %[[SLOT:.*]] = sol.constant 37439836327923360225337895871394760624280537466773280374265222508165906222592 : ui256
+  // CHECK-NEXT:    %[[LITERAL:.*]] = sol.string_lit "openzeppelin.storage.ERC20" -> !sol.string<Memory>
+  // CHECK-NEXT:    sol.return %[[SLOT]], %[[LITERAL]] : ui256, !sol.string<Memory>
+  sol.func @erc7201UsedLiteral() -> (ui256, !sol.string<Memory>) {
+    %0 = sol.string_lit "openzeppelin.storage.ERC20" -> !sol.string<Memory>
+    %1 = "sol.erc7201"(%0) : (!sol.string<Memory>) -> ui256
+    sol.return %1, %0 : ui256, !sol.string<Memory>
+  }
+
+  // CHECK-LABEL: sol.func @erc7201Argument(
+  // CHECK-SAME:    %[[STRING:.*]]: !sol.string<Memory>
+  // CHECK-NEXT:    %[[SLOT:.*]] = "sol.erc7201"(%[[STRING]]) : (!sol.string<Memory>) -> ui256
+  // CHECK-NEXT:    sol.return %[[SLOT]] : ui256
+  sol.func @erc7201Argument(%arg0: !sol.string<Memory>) -> ui256 {
+    %0 = "sol.erc7201"(%arg0) : (!sol.string<Memory>) -> ui256
+    sol.return %0 : ui256
+  }
 } {kind = #sol<ContractKind Contract>, runtime}

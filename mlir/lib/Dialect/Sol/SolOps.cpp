@@ -165,6 +165,15 @@ bool BytesCastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
 // Keccak256Op
 //===----------------------------------------------------------------------===//
 
+static APInt wordFromDigest(const std::array<uint8_t, 32> &digest) {
+  APInt word(256, 0);
+  for (uint8_t byte : digest) {
+    word <<= 8;
+    word |= byte;
+  }
+  return word;
+}
+
 // The hash of a string literal is known at compile time, so the literal needs
 // no memory and the hash no KECCAK256.
 LogicalResult Keccak256Op::canonicalize(Keccak256Op op,
@@ -173,16 +182,34 @@ LogicalResult Keccak256Op::canonicalize(Keccak256Op op,
   if (!literal)
     return failure();
 
-  APInt hash(256, 0);
-  for (uint8_t byte : llvm::KECCAK::KECCAK_256(literal.getValue())) {
-    hash <<= 8;
-    hash |= byte;
-  }
+  APInt hash = wordFromDigest(llvm::KECCAK::KECCAK_256(literal.getValue()));
   auto wordTy = IntegerType::get(op.getContext(), 256, IntegerType::Unsigned);
   Value word = rewriter.create<ConstantOp>(op.getLoc(), wordTy,
                                            IntegerAttr::get(wordTy, hash));
   rewriter.replaceOpWithNewOp<BytesCastOp>(op, op.getType(), word);
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Erc7201Op
+//===----------------------------------------------------------------------===//
+
+// The slot of a string literal namespace is known at compile time:
+// keccak256(keccak256(id) - 1) & ~0xff.
+OpFoldResult Erc7201Op::fold(FoldAdaptor) {
+  auto literal = getId().getDefiningOp<StringLitOp>();
+  if (!literal)
+    return {};
+
+  APInt decremented =
+      wordFromDigest(llvm::KECCAK::KECCAK_256(literal.getValue())) - 1;
+  std::array<uint8_t, 32> bigEndian;
+  for (unsigned i = 0; i < 32; ++i)
+    bigEndian[i] = decremented.extractBitsAsZExtValue(8, (31 - i) * 8);
+  APInt slot =
+      wordFromDigest(llvm::KECCAK::KECCAK_256(bigEndian)) & ~APInt(256, 0xff);
+
+  return IntegerAttr::get(getType(), slot);
 }
 
 //===----------------------------------------------------------------------===//

@@ -199,6 +199,14 @@ def Sol_Keccak256Op : Sol_Op<"keccak256"> {
   let hasCanonicalizeMethod = 1;
 }
 
+def Sol_Erc7201Op : Sol_Op<"erc7201"> {
+  let summary = "Base slot of an ERC-7201 storage namespace";
+  let arguments = (ins Sol_StringType:$id);
+  let results = (outs UI256:$slot);
+
+  let hasFolder = 1;
+}
+
 def Sol_Sha256Op : Sol_HashPreCompileOp<"sha256">;
 def Sol_Ripemd160Op : Sol_HashPreCompileOp<"ripemd160">;
 

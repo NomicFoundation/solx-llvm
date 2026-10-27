@@ -123,6 +123,7 @@ struct ConvertSolToYulPass
         sol::MulModOp,
         sol::ExpOp,
         sol::Keccak256Op,
+        sol::Erc7201Op,
         sol::Sha256Op,
         sol::Ripemd160Op,
         sol::EcrecoverOp,

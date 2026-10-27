@@ -108,3 +108,32 @@ module {
     }
   } {kind = #Contract, runtime}
 }
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+#Pure = #sol<StateMutability Pure>
+module {
+  sol.contract @C {
+    // The outer hash reads the decremented inner hash from scratch space.
+    // CHECK-LABEL: yul.func @erc7201
+    // CHECK-NEXT:    ^bb0(%[[PTR:.*]]: i256):
+    // CHECK:         %[[LEN:.*]] = yul.mload %[[PTR]]
+    // CHECK:         %[[DATA:.*]] = yul.add %[[PTR]], %{{.*}}
+    // CHECK:         %[[INNER:.*]] = yul.keccak256 %[[DATA]], %[[LEN]]
+    // CHECK:         %[[ONE:.*]] = yul.constant 1{{$}}
+    // CHECK:         %[[DEC:.*]] = yul.sub %[[INNER]], %[[ONE]]
+    // CHECK:         %[[ZERO:.*]] = yul.constant 0{{$}}
+    // CHECK:         yul.mstore %[[ZERO]], %[[DEC]]
+    // CHECK:         %[[C32:.*]] = yul.constant 32{{$}}
+    // CHECK:         %[[OUTER:.*]] = yul.keccak256 %[[ZERO]], %[[C32]]
+    // CHECK:         %[[LOW:.*]] = yul.constant 255{{$}}
+    // CHECK:         %[[MASK:.*]] = yul.not %[[LOW]]
+    // CHECK:         %[[SLOT:.*]] = yul.and %[[OUTER]], %[[MASK]]
+    // CHECK:         yul.func_return %[[SLOT]]
+    sol.func @erc7201(%arg0: !sol.string<Memory>) -> ui256 attributes {state_mutability = #Pure} {
+      %0 = "sol.erc7201"(%arg0) : (!sol.string<Memory>) -> ui256
+      sol.return %0 : ui256
+    }
+  } {kind = #Contract, runtime}
+}
