@@ -53,17 +53,22 @@ let TargetPrefix = "evm" in {
 //     refined through EVM alias analysis..
 
 // Arithmetical operations.
+// The divisor of div, sdiv, mod and smod is noundef, as for LLVM's division
+// instructions. This lets InstCombine turn a division by a known nonzero value
+// into udiv, urem, sdiv or srem without proving the divisor is not poison. The
+// modulus of addmod and mulmod is noundef too, since InstCombine turns them
+// into mod.
 def int_evm_div : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty],
-                            [IntrNoMem, IntrWillReturn]>;
+                            [IntrNoMem, IntrWillReturn, NoUndef<ArgIndex<1>>]>;
 
 def int_evm_sdiv : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty],
-                             [IntrNoMem, IntrWillReturn]>;
+                             [IntrNoMem, IntrWillReturn, NoUndef<ArgIndex<1>>]>;
 
 def int_evm_mod : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty],
-                            [IntrNoMem, IntrWillReturn]>;
+                            [IntrNoMem, IntrWillReturn, NoUndef<ArgIndex<1>>]>;
 
 def int_evm_smod : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty],
-                             [IntrNoMem, IntrWillReturn]>;
+                             [IntrNoMem, IntrWillReturn, NoUndef<ArgIndex<1>>]>;
 
 def int_evm_shl : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty],
                             [IntrNoMem, IntrWillReturn]>;
@@ -76,11 +81,11 @@ def int_evm_sar : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty],
 
 def int_evm_addmod
     : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty, llvm_i256_ty],
-                [IntrNoMem, IntrWillReturn]>;
+                [IntrNoMem, IntrWillReturn, NoUndef<ArgIndex<2>>]>;
 
 def int_evm_mulmod
     : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty, llvm_i256_ty],
-                [IntrNoMem, IntrWillReturn]>;
+                [IntrNoMem, IntrWillReturn, NoUndef<ArgIndex<2>>]>;
 
 def int_evm_exp : Intrinsic<[llvm_i256_ty], [llvm_i256_ty, llvm_i256_ty],
                             [IntrNoMem, IntrWillReturn]>;

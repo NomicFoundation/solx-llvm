@@ -29,6 +29,9 @@
 #include "llvm/Support/AlignOf.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/KnownBits.h"
+// EVM local begin
+#include "llvm/TargetParser/Triple.h"
+// EVM local end
 #include "llvm/Transforms/InstCombine/InstCombiner.h"
 #include <cassert>
 #include <utility>
@@ -2308,6 +2311,25 @@ Instruction *InstCombinerImpl::visitSub(BinaryOperator &I) {
 
     return Changed ? &I : nullptr;
   };
+
+  // EVM local begin
+  // X - (X / Y) * Y --> X % Y, also when the division has other uses, since
+  // one MOD costs less than a MUL and a SUB. This runs before Negator turns
+  // the MUL by a constant into an ADD of the negated multiple.
+  {
+    Triple TT(I.getFunction()->getParent()->getTargetTriple());
+    Value *Y;
+    Instruction *Div;
+    if (TT.isEVM() &&
+        match(Op1, m_OneUse(m_c_Mul(
+                       m_CombineAnd(m_IDiv(m_Specific(Op0), m_Value(Y)),
+                                    m_Instruction(Div)),
+                       m_Deferred(Y)))))
+      return Div->getOpcode() == Instruction::UDiv
+                 ? BinaryOperator::CreateURem(Op0, Y)
+                 : BinaryOperator::CreateSRem(Op0, Y);
+  }
+  // EVM local end
 
   // First, let's try to interpret `sub a, b` as `add a, (sub 0, b)`,
   // and let's try to sink `(sub 0, b)` into `b` itself. But only if this isn't

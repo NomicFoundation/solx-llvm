@@ -20,6 +20,9 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+// EVM local begin
+#include "llvm/IR/Module.h"
+// EVM local end
 #include "llvm/IR/PatternMatch.h"
 #include "llvm/Support/DebugCounter.h"
 #include "llvm/Transforms/Utils/BypassSlowDivision.h"
@@ -422,6 +425,12 @@ static bool optimizeDivRem(Function &F, const TargetTransformInfo &TTI,
 
 PreservedAnalyses DivRemPairsPass::run(Function &F,
                                        FunctionAnalysisManager &FAM) {
+  // EVM local begin
+  // EVM has no instruction that gives both the quotient and the remainder, so
+  // moving a pair together only adds work to paths that need one of them.
+  if (F.getParent()->getTargetTriple().isEVM())
+    return PreservedAnalyses::all();
+  // EVM local end
   TargetTransformInfo &TTI = FAM.getResult<TargetIRAnalysis>(F);
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(F);
   if (!optimizeDivRem(F, TTI, DT))
