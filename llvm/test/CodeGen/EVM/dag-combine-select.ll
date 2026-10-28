@@ -200,8 +200,11 @@ define i256 @select_sub_swapped(i1 %cond, i256 %A, i256 %B) {
 ; not commutative - normal select expansion
 define i256 @select_sub_2(i1 %cond, i256 %A, i256 %B) {
   ; CHECK-LABEL: name: select_sub_2
-  ; CHECK-NOT:   MUL
-  ; CHECK:       JUMPI
+  ; CHECK-NOT:   JUMPI
+  ; CHECK:       [[DIFF:%[0-9]+]]:gpr = XOR
+  ; CHECK-NEXT:  [[MUL:%[0-9]+]]:gpr = MUL killed [[DIFF]]
+  ; CHECK-NEXT:  [[RES:%[0-9]+]]:gpr = XOR {{.*}}, killed [[MUL]]
+  ; CHECK-NEXT:  RET killed [[RES]]
   %c = sub i256 %A, %B
   %res = select i1 %cond, i256 %c, i256 %B
   ret i256 %res
@@ -210,8 +213,11 @@ define i256 @select_sub_2(i1 %cond, i256 %A, i256 %B) {
 ; negative - select(and) expands normally
 define i256 @select_and(i1 %cond, i256 %A, i256 %B) {
   ; CHECK-LABEL: name: select_and
-  ; CHECK-NOT:   MUL
-  ; CHECK:       JUMPI
+  ; CHECK-NOT:   JUMPI
+  ; CHECK:       [[DIFF:%[0-9]+]]:gpr = XOR
+  ; CHECK-NEXT:  [[MUL:%[0-9]+]]:gpr = MUL killed [[DIFF]]
+  ; CHECK-NEXT:  [[RES:%[0-9]+]]:gpr = XOR {{.*}}, killed [[MUL]]
+  ; CHECK-NEXT:  RET killed [[RES]]
   %c = and i256 %A, %B
   %res = select i1 %cond, i256 %c, i256 %B
   ret i256 %res
@@ -220,8 +226,11 @@ define i256 @select_and(i1 %cond, i256 %A, i256 %B) {
 ; negative - select(and) expands normally
 define i256 @select_and_2(i1 %cond, i256 %A, i256 %B) {
   ; CHECK-LABEL: name: select_and_2
-  ; CHECK-NOT:   MUL
-  ; CHECK:       JUMPI
+  ; CHECK-NOT:   JUMPI
+  ; CHECK:       [[DIFF:%[0-9]+]]:gpr = XOR
+  ; CHECK-NEXT:  [[MUL:%[0-9]+]]:gpr = MUL killed [[DIFF]]
+  ; CHECK-NEXT:  [[RES:%[0-9]+]]:gpr = XOR {{.*}}, killed [[MUL]]
+  ; CHECK-NEXT:  RET killed [[RES]]
   %c = and i256 %A, %B
   %res = select i1 %cond, i256 %A, i256 %c
   ret i256 %res
@@ -255,8 +264,11 @@ define i256 @select_shl_swapped(i1 %cond, i256 %A, i256 %B) {
 ; not commutative - normal select expansion
 define i256 @select_shl_2(i1 %cond, i256 %A, i256 %B) {
   ; CHECK-LABEL: name: select_shl_2
-  ; CHECK-NOT:   MUL
-  ; CHECK:       JUMPI
+  ; CHECK-NOT:   JUMPI
+  ; CHECK:       [[DIFF:%[0-9]+]]:gpr = XOR
+  ; CHECK-NEXT:  [[MUL:%[0-9]+]]:gpr = MUL killed [[DIFF]]
+  ; CHECK-NEXT:  [[RES:%[0-9]+]]:gpr = XOR {{.*}}, killed [[MUL]]
+  ; CHECK-NEXT:  RET killed [[RES]]
   %c = shl i256 %A, %B
   %res = select i1 %cond, i256 %c, i256 %B
   ret i256 %res
@@ -290,8 +302,11 @@ define i256 @select_ashr_swapped(i1 %cond, i256 %A, i256 %B) {
 ; not commutative - normal select expansion
 define i256 @select_ashr_2(i1 %cond, i256 %A, i256 %B) {
   ; CHECK-LABEL: name: select_ashr_2
-  ; CHECK-NOT:   MUL
-  ; CHECK:       JUMPI
+  ; CHECK-NOT:   JUMPI
+  ; CHECK:       [[DIFF:%[0-9]+]]:gpr = XOR
+  ; CHECK-NEXT:  [[MUL:%[0-9]+]]:gpr = MUL killed [[DIFF]]
+  ; CHECK-NEXT:  [[RES:%[0-9]+]]:gpr = XOR {{.*}}, killed [[MUL]]
+  ; CHECK-NEXT:  RET killed [[RES]]
   %c = ashr i256 %A, %B
   %res = select i1 %cond, i256 %c, i256 %B
   ret i256 %res
@@ -325,8 +340,11 @@ define i256 @select_lshr_swapped(i1 %cond, i256 %A, i256 %B) {
 ; not commutative - normal select expansion
 define i256 @select_lshr_2(i1 %cond, i256 %A, i256 %B) {
   ; CHECK-LABEL: name: select_lshr_2
-  ; CHECK-NOT:   MUL
-  ; CHECK:       JUMPI
+  ; CHECK-NOT:   JUMPI
+  ; CHECK:       [[DIFF:%[0-9]+]]:gpr = XOR
+  ; CHECK-NEXT:  [[MUL:%[0-9]+]]:gpr = MUL killed [[DIFF]]
+  ; CHECK-NEXT:  [[RES:%[0-9]+]]:gpr = XOR {{.*}}, killed [[MUL]]
+  ; CHECK-NEXT:  RET killed [[RES]]
   %c = lshr i256 %A, %B
   %res = select i1 %cond, i256 %c, i256 %B
   ret i256 %res

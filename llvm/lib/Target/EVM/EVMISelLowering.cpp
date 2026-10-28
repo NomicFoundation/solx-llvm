@@ -78,6 +78,7 @@ EVMTargetLowering::EVMTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::UMUL_LOHI, MVT::i256, Custom);
   setOperationAction(ISD::BSWAP, MVT::i256, Custom);
   setOperationAction(ISD::CTPOP, MVT::i256, Custom);
+  setOperationAction(ISD::USUBSAT, MVT::i256, Custom);
 
   // Custom lowering of extended loads.
   for (const MVT VT : MVT::integer_valuetypes()) {
@@ -158,7 +159,21 @@ SDValue EVMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return LowerCTPOP(Op, DAG);
   case ISD::BSWAP:
     return LowerBSWAP(Op, DAG);
+  case ISD::USUBSAT:
+    return LowerUSUBSAT(Op, DAG);
   }
+}
+
+SDValue EVMTargetLowering::LowerUSUBSAT(SDValue Op, SelectionDAG &DAG) const {
+  // usub.sat(x, y) -> (x > y) * (x - y)
+  // The difference is 0 at x == y, so x > y serves where x >= y would need an
+  // ISZERO.
+  SDLoc DL(Op);
+  EVT VT = Op.getValueType();
+  SDValue X = DAG.getFreeze(Op.getOperand(0));
+  SDValue Y = DAG.getFreeze(Op.getOperand(1));
+  return DAG.getNode(ISD::MUL, DL, VT, DAG.getSetCC(DL, VT, X, Y, ISD::SETUGT),
+                     DAG.getNode(ISD::SUB, DL, VT, X, Y));
 }
 
 SDValue EVMTargetLowering::LowerBSWAP(SDValue BSWAP, SelectionDAG &DAG) const {
@@ -720,71 +735,9 @@ EVMTargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   switch (MI.getOpcode()) {
   default:
     llvm_unreachable("Unexpected instr type to insert");
-  case EVM::SELECT:
-    return emitSelect(MI, BB);
   case EVM::CALL_RESULTS:
     return LowerCallResults(MI, DL, BB, TII);
   }
-}
-
-MachineBasicBlock *EVMTargetLowering::emitSelect(MachineInstr &MI,
-                                                 MachineBasicBlock *BB) const {
-  const TargetInstrInfo *TII = BB->getParent()->getSubtarget().getInstrInfo();
-  const DebugLoc &DL = MI.getDebugLoc();
-  // To "insert" a SELECT instruction, we actually have to insert the
-  // diamond control-flow pattern.  The incoming instruction knows the
-  // destination vreg to set, the condition code register to branch on and the
-  // true/false values to select between.
-  const BasicBlock *LLVM_BB = BB->getBasicBlock();
-  const MachineFunction::iterator It = ++BB->getIterator();
-
-  //  ThisMBB:
-  //  ...
-  //   TrueVal = ...
-  //   setcc $cond, $2, $1
-  //   JUMPI SinkMBB, $cond
-  //   fallthrough --> FHMBB
-  MachineBasicBlock *ThisMBB = BB;
-  MachineFunction *F = BB->getParent();
-  MachineBasicBlock *FHMBB = F->CreateMachineBasicBlock(LLVM_BB);
-  MachineBasicBlock *SinkMBB = F->CreateMachineBasicBlock(LLVM_BB);
-  F->insert(It, FHMBB);
-  F->insert(It, SinkMBB);
-
-  // Transfer the remainder of BB and its successor edges to SinkMBB.
-  SinkMBB->splice(SinkMBB->begin(), BB,
-                  std::next(MachineBasicBlock::iterator(MI)), BB->end());
-  SinkMBB->transferSuccessorsAndUpdatePHIs(BB);
-
-  // Next, add the true and fallthrough blocks as its successors.
-  BB->addSuccessor(FHMBB);
-  BB->addSuccessor(SinkMBB);
-
-  BuildMI(BB, DL, TII->get(EVM::JUMPI))
-      .addMBB(SinkMBB)
-      .addReg(MI.getOperand(1).getReg());
-
-  //  FHMBB:
-  //   %FalseValue = ...
-  //   # fallthrough to SinkMBB
-  BB = FHMBB;
-
-  // Update machine-CFG edges
-  BB->addSuccessor(SinkMBB);
-
-  //  SinkMBB:
-  //   %Result = phi [ %TrueValue, ThisMBB ], [ %FalseValue, FHMBB ]
-  //  ...
-  BB = SinkMBB;
-
-  BuildMI(*BB, BB->begin(), DL, TII->get(EVM::PHI), MI.getOperand(0).getReg())
-      .addReg(MI.getOperand(2).getReg())
-      .addMBB(ThisMBB)
-      .addReg(MI.getOperand(3).getReg())
-      .addMBB(FHMBB);
-
-  MI.eraseFromParent(); // The pseudo instruction is gone now.
-  return BB;
 }
 
 // Fold
@@ -842,7 +795,8 @@ static SDValue tryFoldSelectIntoOp(SDNode *N, SelectionDAG &DAG, SDValue TrueV,
 
 SDValue EVMTargetLowering::combineSELECT(SDNode *N,
                                          DAGCombinerInfo &DCI) const {
-  // Perform combines only after DAG legalisation.
+  // Perform combines only after DAG legalisation. SELECT stays legal for the
+  // legalizer, and every one is replaced here, so no instruction selects it.
   if (!DCI.isAfterLegalizeDAG())
     return SDValue();
 
@@ -939,7 +893,15 @@ SDValue EVMTargetLowering::combineSELECT(SDNode *N,
   if (SDValue V = tryFoldSelectIntoOp(N, DAG, TrueV, FalseV, /*Swapped=*/false))
     return V;
   // NOLINTNEXTLINE(readability-suspicious-call-argument)
-  return tryFoldSelectIntoOp(N, DAG, FalseV, TrueV, /*Swapped=*/true);
+  if (SDValue V = tryFoldSelectIntoOp(N, DAG, FalseV, TrueV, /*Swapped=*/true))
+    return V;
+
+  // fold (Cond ? X : Y) -> (Y* ^ ((X* ^ Y*) * Cond))
+  // The arithmetic costs less gas and code than branching around a select.
+  SDValue Y = freeze(FalseV);
+  SDValue Diff = DAG.getNode(ISD::XOR, DL, VT, freeze(TrueV), Y);
+  return DAG.getNode(ISD::XOR, DL, VT, Y,
+                     DAG.getNode(ISD::MUL, DL, VT, Diff, CondV));
 }
 
 // Fold
