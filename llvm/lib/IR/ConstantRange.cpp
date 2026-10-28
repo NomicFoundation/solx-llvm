@@ -28,6 +28,9 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+// EVM local begin
+#include "llvm/IR/IntrinsicsEVM.h"
+// EVM local end
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/Compiler.h"
@@ -1022,6 +1025,20 @@ bool ConstantRange::isIntrinsicSupported(Intrinsic::ID IntrinsicID) {
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::ctpop:
+  // EVM local begin
+  case Intrinsic::evm_div:
+  case Intrinsic::evm_mod:
+  case Intrinsic::evm_sdiv:
+  case Intrinsic::evm_smod:
+  case Intrinsic::evm_addmod:
+  case Intrinsic::evm_mulmod:
+  case Intrinsic::evm_exp:
+  case Intrinsic::evm_shl:
+  case Intrinsic::evm_shr:
+  case Intrinsic::evm_sar:
+  case Intrinsic::evm_byte:
+  case Intrinsic::evm_signextend:
+    // EVM local end
     return true;
   default:
     return false;
@@ -1067,6 +1084,116 @@ ConstantRange ConstantRange::intrinsic(Intrinsic::ID IntrinsicID,
   }
   case Intrinsic::ctpop:
     return Ops[0].ctpop();
+  // EVM local begin
+  case Intrinsic::evm_div:
+  case Intrinsic::evm_mod: {
+    // A division by zero gives 0, where the LLVM one is undefined.
+    ConstantRange Result = IntrinsicID == Intrinsic::evm_div
+                               ? Ops[0].udiv(Ops[1])
+                               : Ops[0].urem(Ops[1]);
+    APInt Zero = APInt::getZero(Ops[1].getBitWidth());
+    if (Ops[1].contains(Zero))
+      Result = Result.unionWith(ConstantRange(Zero));
+    return Result;
+  }
+  case Intrinsic::evm_sdiv:
+  case Intrinsic::evm_smod: {
+    // A division by zero gives 0, and the minimum divided by -1 gives the
+    // minimum, with a remainder of 0, where the LLVM ones are undefined.
+    unsigned BitWidth = Ops[1].getBitWidth();
+    APInt Zero = APInt::getZero(BitWidth);
+    APInt SignedMin = APInt::getSignedMinValue(BitWidth);
+    bool IsDiv = IntrinsicID == Intrinsic::evm_sdiv;
+    ConstantRange Result = IsDiv ? Ops[0].sdiv(Ops[1]) : Ops[0].srem(Ops[1]);
+    if (Ops[1].contains(Zero))
+      Result = Result.unionWith(ConstantRange(Zero));
+    if (Ops[0].contains(SignedMin) &&
+        Ops[1].contains(APInt::getAllOnes(BitWidth)))
+      Result = Result.unionWith(ConstantRange(IsDiv ? SignedMin : Zero));
+    return Result;
+  }
+  case Intrinsic::evm_addmod:
+  case Intrinsic::evm_mulmod: {
+    // The result is below the modulus, and 0 for a modulus of 0.
+    unsigned BitWidth = Ops[2].getBitWidth();
+    if (Ops[2].isEmptySet())
+      return getEmpty(BitWidth);
+    APInt Zero = APInt::getZero(BitWidth);
+    APInt MaxMod = Ops[2].getUnsignedMax();
+    if (MaxMod.isZero())
+      return ConstantRange(Zero);
+    return getNonEmpty(Zero, MaxMod);
+  }
+  case Intrinsic::evm_exp: {
+    // Unless the power wraps, it grows with the base, and with the exponent
+    // from a base of 1. A base of 0 gives 1 for an exponent of 0, else 0.
+    unsigned BitWidth = Ops[0].getBitWidth();
+    if (Ops[0].isEmptySet() || Ops[1].isEmptySet())
+      return getEmpty(BitWidth);
+    APInt BaseMin = Ops[0].getUnsignedMin();
+    APInt BaseMax = Ops[0].getUnsignedMax();
+    APInt ExpMin = Ops[1].getUnsignedMin();
+    APInt ExpMax = Ops[1].getUnsignedMax();
+    // Base ** Exp, or nothing if it wraps.
+    auto Pow = [&](const APInt &Base,
+                   const APInt &Exp) -> std::optional<APInt> {
+      APInt Power(BitWidth, 1);
+      if (Base.ule(1))
+        return Exp.isZero() ? Power : Base;
+      if (Exp.uge(BitWidth))
+        return std::nullopt;
+      for (uint64_t I = 0, E = Exp.getZExtValue(); I != E; ++I) {
+        bool Overflow = false;
+        Power = Power.umul_ov(Base, Overflow);
+        if (Overflow)
+          return std::nullopt;
+      }
+      return Power;
+    };
+    std::optional<APInt> Max = Pow(BaseMax, ExpMax);
+    if (!Max)
+      return getFull(BitWidth);
+    // A base of 0 or 1 gives at most 1, the power of 0 ** 0.
+    if (BaseMax.ule(1) && ExpMin.isZero())
+      Max = APInt(BitWidth, 1);
+    APInt Min = BaseMin.isZero() ? (ExpMax.isZero() ? APInt(BitWidth, 1)
+                                                    : APInt::getZero(BitWidth))
+                                 : *Pow(BaseMin, ExpMin);
+    return getNonEmpty(std::move(Min), *Max + 1);
+  }
+  case Intrinsic::evm_shl: {
+    // A shift by the word size or more gives 0, which the LLVM shl leaves
+    // poison, so only the shifts below it go through shl.
+    unsigned BitWidth = Ops[1].getBitWidth();
+    ConstantRange InWord = Ops[0].intersectWith(
+        ConstantRange(APInt::getZero(BitWidth), APInt(BitWidth, BitWidth)));
+    ConstantRange Result = Ops[1].shl(InWord);
+    if (Ops[0].getUnsignedMax().uge(BitWidth))
+      Result = Result.unionWith(ConstantRange(APInt::getZero(BitWidth)));
+    return Result;
+  }
+  // A shift by the word size or more shifts every bit out, as APInt does.
+  case Intrinsic::evm_shr:
+    return Ops[1].lshr(Ops[0]);
+  case Intrinsic::evm_sar:
+    return Ops[1].ashr(Ops[0]);
+  case Intrinsic::evm_byte: {
+    unsigned BitWidth = Ops[1].getBitWidth();
+    if (Ops[0].getUnsignedMin().uge(BitWidth / 8))
+      return ConstantRange(APInt::getZero(BitWidth));
+    return ConstantRange(APInt::getZero(BitWidth), APInt(BitWidth, 256));
+  }
+  case Intrinsic::evm_signextend: {
+    unsigned BitWidth = Ops[1].getBitWidth();
+    const APInt *NumByte = Ops[0].getSingleElement();
+    if (!NumByte)
+      return getFull(BitWidth);
+    if (NumByte->uge(BitWidth / 8 - 1))
+      return Ops[1];
+    unsigned ExtendedBits = (NumByte->getZExtValue() + 1) * 8;
+    return Ops[1].truncate(ExtendedBits).signExtend(BitWidth);
+  }
+  // EVM local end
   default:
     assert(!isIntrinsicSupported(IntrinsicID) && "Shouldn't be supported");
     llvm_unreachable("Unsupported intrinsic");
