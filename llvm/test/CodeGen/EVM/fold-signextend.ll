@@ -50,4 +50,116 @@ define i256 @test_var_ne(i256 %b1, i256 %b2, i256 %x) {
   ret i256 %signext2
 }
 
+define i256 @test_sign_bits(i256 %x) {
+; CHECK-LABEL: define i256 @test_sign_bits(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[ASHR:%.*]] = ashr i256 [[X]], 128
+; CHECK-NEXT:    ret i256 [[ASHR]]
+;
+  %ashr = ashr i256 %x, 128
+  %signext = call i256 @llvm.evm.signextend(i256 15, i256 %ashr)
+  ret i256 %signext
+}
+
+define i256 @test_sign_bits_narrower(i256 %x) {
+; CHECK-LABEL: define i256 @test_sign_bits_narrower(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[SIGNEXT1:%.*]] = call i256 @llvm.evm.signextend(i256 10, i256 [[X]])
+; CHECK-NEXT:    ret i256 [[SIGNEXT1]]
+;
+  %signext1 = call i256 @llvm.evm.signextend(i256 10, i256 %x)
+  %signext2 = call i256 @llvm.evm.signextend(i256 15, i256 %signext1)
+  ret i256 %signext2
+}
+
+define i256 @test_sign_bits_short(i256 %x) {
+; CHECK-LABEL: define i256 @test_sign_bits_short(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[ASHR:%.*]] = ashr i256 [[X]], 127
+; CHECK-NEXT:    [[SIGNEXT:%.*]] = call i256 @llvm.evm.signextend(i256 15, i256 [[ASHR]])
+; CHECK-NEXT:    ret i256 [[SIGNEXT]]
+;
+  %ashr = ashr i256 %x, 127
+  %signext = call i256 @llvm.evm.signextend(i256 15, i256 %ashr)
+  ret i256 %signext
+}
+
+define i256 @test_top_byte(i256 %x) {
+; CHECK-LABEL: define i256 @test_top_byte(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    ret i256 [[X]]
+;
+  %signext = call i256 @llvm.evm.signextend(i256 31, i256 %x)
+  ret i256 %signext
+}
+
+define i256 @test_lshr(i256 %x) {
+; CHECK-LABEL: define i256 @test_lshr(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[SIGNEXT:%.*]] = ashr i256 [[X]], 128
+; CHECK-NEXT:    ret i256 [[SIGNEXT]]
+;
+  %lshr = lshr i256 %x, 128
+  %signext = call i256 @llvm.evm.signextend(i256 15, i256 %lshr)
+  ret i256 %signext
+}
+
+define i256 @test_lshr_ne(i256 %x) {
+; CHECK-LABEL: define i256 @test_lshr_ne(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[LSHR:%.*]] = lshr i256 [[X]], 127
+; CHECK-NEXT:    [[SIGNEXT:%.*]] = call i256 @llvm.evm.signextend(i256 15, i256 [[LSHR]])
+; CHECK-NEXT:    ret i256 [[SIGNEXT]]
+;
+  %lshr = lshr i256 %x, 127
+  %signext = call i256 @llvm.evm.signextend(i256 15, i256 %lshr)
+  ret i256 %signext
+}
+
+define i256 @test_demanded_and(i256 %x) {
+; CHECK-LABEL: define i256 @test_demanded_and(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[AND:%.*]] = and i256 [[X]], 340282366920938463463374607431768211455
+; CHECK-NEXT:    ret i256 [[AND]]
+;
+  %signext = call i256 @llvm.evm.signextend(i256 15, i256 %x)
+  %and = and i256 %signext, 340282366920938463463374607431768211455
+  ret i256 %and
+}
+
+define i256 @test_demanded_and_wide(i256 %x) {
+; CHECK-LABEL: define i256 @test_demanded_and_wide(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[SIGNEXT:%.*]] = call i256 @llvm.evm.signextend(i256 15, i256 [[X]])
+; CHECK-NEXT:    [[AND:%.*]] = and i256 [[SIGNEXT]], 680564733841876926926749214863536422911
+; CHECK-NEXT:    ret i256 [[AND]]
+;
+  %signext = call i256 @llvm.evm.signextend(i256 15, i256 %x)
+  %and = and i256 %signext, 680564733841876926926749214863536422911
+  ret i256 %and
+}
+
+define i256 @test_demanded_shl(i256 %x) {
+; CHECK-LABEL: define i256 @test_demanded_shl(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[SHL:%.*]] = shl i256 [[X]], 128
+; CHECK-NEXT:    ret i256 [[SHL]]
+;
+  %signext = call i256 @llvm.evm.signextend(i256 15, i256 %x)
+  %shl = shl i256 %signext, 128
+  ret i256 %shl
+}
+
+define i256 @test_demanded_shl_short(i256 %x) {
+; CHECK-LABEL: define i256 @test_demanded_shl_short(
+; CHECK-SAME: i256 [[X:%.*]]) {
+; CHECK-NEXT:    [[SIGNEXT:%.*]] = call i256 @llvm.evm.signextend(i256 15, i256 [[X]])
+; CHECK-NEXT:    [[SHL:%.*]] = shl nsw i256 [[SIGNEXT]], 127
+; CHECK-NEXT:    ret i256 [[SHL]]
+;
+  %signext = call i256 @llvm.evm.signextend(i256 15, i256 %x)
+  %shl = shl i256 %signext, 127
+  ret i256 %shl
+}
+
 declare i256 @llvm.evm.signextend(i256, i256)

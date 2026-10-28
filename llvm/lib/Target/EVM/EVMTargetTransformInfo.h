@@ -44,6 +44,10 @@ public:
 
   std::optional<Instruction *>
   instCombineIntrinsic(InstCombiner &IC, IntrinsicInst &II) const override;
+  std::optional<Value *>
+  simplifyDemandedUseBitsIntrinsic(InstCombiner &IC, IntrinsicInst &II,
+                                   APInt DemandedMask, KnownBits &Known,
+                                   bool &KnownBitsComputed) const override;
 
   bool allowsMisalignedMemoryAccesses(LLVMContext &Context, unsigned BitWidth,
                                       unsigned AddressSpace = 0,
@@ -53,6 +57,13 @@ public:
   }
 
   unsigned getAssumedAddrSpace(const Value *V) const override;
+
+  // DIV and MOD are separate instructions, and a remainder rewritten as
+  // x - (x / y) * y costs a MUL and a SUB in place of one MOD. Returning true
+  // keeps DivRemPairs from that rewrite.
+  bool hasDivRemOp(Type *DataType, bool IsSigned) const override {
+    return true;
+  }
 
   unsigned getNumberOfRegisters(unsigned ClassID) const override {
     return ClassID == Vector ? 0 : 1;
