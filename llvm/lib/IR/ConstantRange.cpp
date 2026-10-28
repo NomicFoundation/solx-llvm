@@ -28,6 +28,9 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+// EVM local begin
+#include "llvm/IR/IntrinsicsEVM.h"
+// EVM local end
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/Compiler.h"
@@ -1022,6 +1025,14 @@ bool ConstantRange::isIntrinsicSupported(Intrinsic::ID IntrinsicID) {
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::ctpop:
+  // EVM local begin
+  case Intrinsic::evm_div:
+  case Intrinsic::evm_mod:
+  case Intrinsic::evm_shr:
+  case Intrinsic::evm_sar:
+  case Intrinsic::evm_byte:
+  case Intrinsic::evm_signextend:
+    // EVM local end
     return true;
   default:
     return false;
@@ -1067,6 +1078,40 @@ ConstantRange ConstantRange::intrinsic(Intrinsic::ID IntrinsicID,
   }
   case Intrinsic::ctpop:
     return Ops[0].ctpop();
+  // EVM local begin
+  case Intrinsic::evm_div:
+  case Intrinsic::evm_mod: {
+    // A division by zero gives 0, where the LLVM one is undefined.
+    ConstantRange Result = IntrinsicID == Intrinsic::evm_div
+                               ? Ops[0].udiv(Ops[1])
+                               : Ops[0].urem(Ops[1]);
+    APInt Zero = APInt::getZero(Ops[1].getBitWidth());
+    if (Ops[1].contains(Zero))
+      Result = Result.unionWith(ConstantRange(Zero));
+    return Result;
+  }
+  // A shift by the word size or more shifts every bit out, as APInt does.
+  case Intrinsic::evm_shr:
+    return Ops[1].lshr(Ops[0]);
+  case Intrinsic::evm_sar:
+    return Ops[1].ashr(Ops[0]);
+  case Intrinsic::evm_byte: {
+    unsigned BitWidth = Ops[1].getBitWidth();
+    if (Ops[0].getUnsignedMin().uge(BitWidth / 8))
+      return ConstantRange(APInt::getZero(BitWidth));
+    return ConstantRange(APInt::getZero(BitWidth), APInt(BitWidth, 256));
+  }
+  case Intrinsic::evm_signextend: {
+    unsigned BitWidth = Ops[1].getBitWidth();
+    const APInt *NumByte = Ops[0].getSingleElement();
+    if (!NumByte)
+      return getFull(BitWidth);
+    if (NumByte->uge(BitWidth / 8 - 1))
+      return Ops[1];
+    unsigned ExtendedBits = (NumByte->getZExtValue() + 1) * 8;
+    return Ops[1].truncate(ExtendedBits).signExtend(BitWidth);
+  }
+  // EVM local end
   default:
     assert(!isIntrinsicSupported(IntrinsicID) && "Shouldn't be supported");
     llvm_unreachable("Unsupported intrinsic");

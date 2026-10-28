@@ -1664,6 +1664,13 @@ bool llvm::canConstantFoldCallTo(const CallBase *Call, const Function *F) {
   case Intrinsic::evm_byte:
   case Intrinsic::evm_exp:
   case Intrinsic::evm_signextend:
+  case Intrinsic::evm_div:
+  case Intrinsic::evm_sdiv:
+  case Intrinsic::evm_mod:
+  case Intrinsic::evm_smod:
+  case Intrinsic::evm_shl:
+  case Intrinsic::evm_shr:
+  case Intrinsic::evm_sar:
   // EVM local end
   case Intrinsic::wasm_alltrue:
   case Intrinsic::wasm_anytrue:
@@ -2992,6 +2999,67 @@ static Constant *ConstantFoldByteCall(Type *Ty, const APInt &ByteIdx,
     return ConstantInt::get(Ty, 0);
   return ConstantInt::get(Ty, Val.shl(ByteIdx * 8).lshr(BitWidth - 8));
 }
+
+/// Division and remainder operations.
+/// Dividend: the value being divided.
+/// Divisor: the value to divide by.
+static Constant *ConstantFoldDivRemCall(Intrinsic::ID IntrinsicID, Type *Ty,
+                                        const APInt &Dividend,
+                                        const APInt &Divisor) {
+  // Division by zero gives 0, where it is undefined in LLVM.
+  if (Divisor.isZero())
+    return Constant::getNullValue(Ty);
+
+  // The minimum divided by -1 gives the minimum, and its remainder is 0,
+  // where both are undefined in LLVM.
+  if (Dividend.isMinSignedValue() && Divisor.isAllOnes()) {
+    if (IntrinsicID == Intrinsic::evm_sdiv)
+      return ConstantInt::get(Ty, Dividend);
+    if (IntrinsicID == Intrinsic::evm_smod)
+      return Constant::getNullValue(Ty);
+  }
+
+  switch (IntrinsicID) {
+  case Intrinsic::evm_div:
+    return ConstantInt::get(Ty, Dividend.udiv(Divisor));
+  case Intrinsic::evm_sdiv:
+    return ConstantInt::get(Ty, Dividend.sdiv(Divisor));
+  case Intrinsic::evm_mod:
+    return ConstantInt::get(Ty, Dividend.urem(Divisor));
+  case Intrinsic::evm_smod:
+    return ConstantInt::get(Ty, Dividend.srem(Divisor));
+  default:
+    llvm_unreachable("Not a division or remainder intrinsic");
+  }
+}
+
+/// Shift operations.
+/// Shift: the number of bits to shift by.
+/// Val: the value being shifted.
+static Constant *ConstantFoldShiftCall(Intrinsic::ID IntrinsicID, Type *Ty,
+                                       const APInt &Shift, const APInt &Val) {
+  unsigned BitWidth = Ty->getIntegerBitWidth();
+
+  // A shift by the word size or more shifts every bit out, where it is poison
+  // in LLVM. An arithmetic shift leaves only the sign bits.
+  if (Shift.uge(BitWidth)) {
+    if (IntrinsicID == Intrinsic::evm_sar && Val.isNegative())
+      return Constant::getAllOnesValue(Ty);
+    return Constant::getNullValue(Ty);
+  }
+
+  unsigned ShiftAmt = Shift.getZExtValue();
+  switch (IntrinsicID) {
+  case Intrinsic::evm_shl:
+    return ConstantInt::get(Ty, Val.shl(ShiftAmt));
+  case Intrinsic::evm_shr:
+    return ConstantInt::get(Ty, Val.lshr(ShiftAmt));
+  case Intrinsic::evm_sar:
+    return ConstantInt::get(Ty, Val.ashr(ShiftAmt));
+  default:
+    llvm_unreachable("Not a shift intrinsic");
+  }
+}
 // EVM local end
 
 static Constant *ConstantFoldLibCall2(StringRef Name, Type *Ty,
@@ -3073,7 +3141,14 @@ static Constant *ConstantFoldIntrinsicCall2(Intrinsic::ID IntrinsicID, Type *Ty,
 
     if (IntrinsicID == Intrinsic::evm_signextend ||
         IntrinsicID == Intrinsic::evm_exp ||
-        IntrinsicID == Intrinsic::evm_byte) {
+        IntrinsicID == Intrinsic::evm_byte ||
+        IntrinsicID == Intrinsic::evm_div ||
+        IntrinsicID == Intrinsic::evm_sdiv ||
+        IntrinsicID == Intrinsic::evm_mod ||
+        IntrinsicID == Intrinsic::evm_smod ||
+        IntrinsicID == Intrinsic::evm_shl ||
+        IntrinsicID == Intrinsic::evm_shr ||
+        IntrinsicID == Intrinsic::evm_sar) {
       if (isa<PoisonValue>(Operands[0]) || isa<PoisonValue>(Operands[1]) ||
           !C0 || !C1)
         return PoisonValue::get(Ty);
@@ -3086,6 +3161,15 @@ static Constant *ConstantFoldIntrinsicCall2(Intrinsic::ID IntrinsicID, Type *Ty,
         return ConstantFoldExpCall(Ty, *C0, *C1);
       if (IntrinsicID == Intrinsic::evm_byte)
         return ConstantFoldByteCall(Ty, *C0, *C1);
+      if (IntrinsicID == Intrinsic::evm_div ||
+          IntrinsicID == Intrinsic::evm_sdiv ||
+          IntrinsicID == Intrinsic::evm_mod ||
+          IntrinsicID == Intrinsic::evm_smod)
+        return ConstantFoldDivRemCall(IntrinsicID, Ty, *C0, *C1);
+      if (IntrinsicID == Intrinsic::evm_shl ||
+          IntrinsicID == Intrinsic::evm_shr ||
+          IntrinsicID == Intrinsic::evm_sar)
+        return ConstantFoldShiftCall(IntrinsicID, Ty, *C0, *C1);
     }
   }
   // EVM local end

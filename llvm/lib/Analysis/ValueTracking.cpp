@@ -58,6 +58,9 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
+// EVM local begin
+#include "llvm/IR/IntrinsicsEVM.h"
+// EVM local end
 #include "llvm/IR/IntrinsicsRISCV.h"
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/LLVMContext.h"
@@ -2036,6 +2039,69 @@ static void computeKnownBitsFromOperator(const Operator *I,
         Known = getVScaleRange(II->getFunction(), BitWidth).toKnownBits();
         break;
       }
+      // EVM local begin
+      case Intrinsic::evm_address:
+      case Intrinsic::evm_caller:
+      case Intrinsic::evm_origin:
+      case Intrinsic::evm_coinbase:
+        // An account address is 160 bits wide.
+        Known.Zero.setBitsFrom(160);
+        break;
+      case Intrinsic::evm_byte:
+        Known.Zero.setBitsFrom(8);
+        break;
+      case Intrinsic::evm_shl: {
+        // Shifting left only adds zeros at the bottom, and shifting every bit
+        // out gives 0.
+        KnownBits KnownShift(BitWidth);
+        computeKnownBits(I->getOperand(0), DemandedElts, KnownShift, Q,
+                         Depth + 1);
+        computeKnownBits(I->getOperand(1), DemandedElts, Known2, Q, Depth + 1);
+        uint64_t MinShift = KnownShift.getMinValue().getLimitedValue(BitWidth);
+        Known.Zero.setLowBits(std::min<uint64_t>(
+            BitWidth, Known2.countMinTrailingZeros() + MinShift));
+        break;
+      }
+      case Intrinsic::evm_sar:
+        // Shifting right copies the sign bit, and shifting by 256 or more
+        // gives only sign bits.
+        computeKnownBits(I->getOperand(1), DemandedElts, Known2, Q, Depth + 1);
+        Known.Zero.setHighBits(Known2.countMinLeadingZeros());
+        Known.One.setHighBits(Known2.countMinLeadingOnes());
+        break;
+      case Intrinsic::evm_div:
+      case Intrinsic::evm_shr: {
+        // The result is 0 or at most the dividend or the shifted value.
+        unsigned OpNo = II->getIntrinsicID() == Intrinsic::evm_div ? 0 : 1;
+        computeKnownBits(I->getOperand(OpNo), DemandedElts, Known2, Q,
+                         Depth + 1);
+        Known.Zero.setHighBits(Known2.countMinLeadingZeros());
+        break;
+      }
+      case Intrinsic::evm_mod: {
+        // The result is 0 or at most the value and below the modulus.
+        KnownBits KnownMod(BitWidth);
+        computeKnownBits(I->getOperand(0), DemandedElts, Known2, Q, Depth + 1);
+        computeKnownBits(I->getOperand(1), DemandedElts, KnownMod, Q,
+                         Depth + 1);
+        Known.Zero.setHighBits(std::max(Known2.countMinLeadingZeros(),
+                                        KnownMod.countMinLeadingZeros()));
+        break;
+      }
+      case Intrinsic::evm_signextend: {
+        const APInt *NumByte = nullptr;
+        if (!match(II->getArgOperand(0), m_APInt(NumByte)))
+          break;
+        computeKnownBits(I->getOperand(1), DemandedElts, Known2, Q, Depth + 1);
+        if (NumByte->uge(BitWidth / 8 - 1)) {
+          Known = Known2;
+          break;
+        }
+        unsigned ExtendedBits = (NumByte->getZExtValue() + 1) * 8;
+        Known = Known2.trunc(ExtendedBits).sext(BitWidth);
+        break;
+      }
+        // EVM local end
       }
     }
     break;
@@ -4336,6 +4402,42 @@ static unsigned ComputeNumSignBitsImpl(const Value *V,
         switch (II->getIntrinsicID()) {
         default:
           break;
+        // EVM local begin
+        case Intrinsic::evm_signextend: {
+          const APInt *NumByte = nullptr;
+          if (!match(II->getArgOperand(0), m_APInt(NumByte)))
+            break;
+          // Extending from the top byte or above leaves the value as it is.
+          if (NumByte->uge(TyBits / 8 - 1))
+            return ComputeNumSignBits(II->getArgOperand(1), DemandedElts, Q,
+                                      Depth + 1);
+          // Otherwise the result is a sign-extended (8 * b + 8)-bit value.
+          return TyBits - (NumByte->getZExtValue() + 1) * 8 + 1;
+        }
+        case Intrinsic::evm_sar: {
+          // Each shift adds a copy of the sign bit, and shifting by 256 or
+          // more gives only sign bits.
+          Tmp = ComputeNumSignBits(II->getArgOperand(1), DemandedElts, Q,
+                                   Depth + 1);
+          uint64_t MinShift =
+              computeKnownBits(II->getArgOperand(0), DemandedElts, Q, Depth + 1)
+                  .getMinValue()
+                  .getLimitedValue(TyBits);
+          return std::min<uint64_t>(TyBits, Tmp + MinShift);
+        }
+        case Intrinsic::evm_sdiv:
+          // The quotient is at most as large in magnitude as the dividend.
+          // Negating the dividend, as x / -1 does, can lose one sign bit. A
+          // zero divisor gives 0.
+          Tmp = ComputeNumSignBits(II->getArgOperand(0), DemandedElts, Q,
+                                   Depth + 1);
+          return Tmp == 1 ? 1 : Tmp - 1;
+        case Intrinsic::evm_smod:
+          // The remainder has the sign of the dividend and is at most as large
+          // in magnitude, and a zero divisor gives 0.
+          return ComputeNumSignBits(II->getArgOperand(0), DemandedElts, Q,
+                                    Depth + 1);
+        // EVM local end
         case Intrinsic::abs:
           Tmp =
               ComputeNumSignBits(U->getOperand(0), DemandedElts, Q, Depth + 1);
@@ -9916,6 +10018,17 @@ static ConstantRange getRangeForIntrinsic(const IntrinsicInst &II,
     if (!II.getParent() || !II.getFunction())
       break;
     return getVScaleRange(II.getFunction(), Width);
+  // EVM local begin
+  case Intrinsic::evm_signextend:
+    // The result is a sign-extended (8 * b + 8)-bit value.
+    if (match(II.getArgOperand(0), m_APInt(C)) && C->ult(Width / 8 - 1)) {
+      unsigned ExtendedBits = (C->getZExtValue() + 1) * 8;
+      return ConstantRange::getNonEmpty(
+          APInt::getSignedMinValue(ExtendedBits).sext(Width),
+          APInt::getSignedMaxValue(ExtendedBits).sext(Width) + 1);
+    }
+    break;
+  // EVM local end
   default:
     break;
   }
