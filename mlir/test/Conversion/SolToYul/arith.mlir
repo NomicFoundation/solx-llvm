@@ -288,3 +288,58 @@ module {
     }
   } {kind = #sol<ContractKind Contract>, runtime}
 }
+
+// -----
+
+module {
+  sol.contract @C {
+    // Checked exponentiation of a constant base: one bound on the exponent,
+    // the largest whose power fits the type.
+    // CHECK-LABEL: yul.func @cexp_const_ui256 : (i256) -> i256
+    // CHECK-NOT:     yul.while
+    // CHECK:         %[[BOUND:.*]] = yul.constant 77{{$}}
+    // CHECK:         %[[OV:.*]] = yul.cmp ugt, %[[E:.*]], %[[BOUND]]
+    // CHECK:         yul.if %[[OV]] {
+    // CHECK:           yul.constant 17{{$}}
+    // CHECK:         %[[R:.*]] = yul.exp %{{.*}}, %[[E]]
+    // CHECK:         yul.func_return %[[R]]
+    sol.func @cexp_const_ui256(%b: ui256) -> ui256 {
+      %base = sol.constant 10 : ui256
+      %0 = sol.cexp %base, %b : ui256, ui256 -> ui256
+      sol.return %0 : ui256
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // CHECK-LABEL: yul.func @cexp_const_si8 : (i256) -> i256
+    // CHECK:         %[[BOUND:.*]] = yul.constant 4{{$}}
+    // CHECK:         yul.cmp ugt, %{{.*}}, %[[BOUND]]
+    // CHECK:         yul.exp
+    sol.func @cexp_const_si8(%b: ui256) -> si8 {
+      %base = sol.constant -3 : si8
+      %0 = sol.cexp %base, %b : si8, ui256 -> si8
+      sol.return %0 : si8
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // A base of -1 never overflows.
+    // CHECK-LABEL: yul.func @cexp_const_minus_one : (i256) -> i256
+    // CHECK-NOT:     yul.if
+    // CHECK:         %[[R:.*]] = yul.exp
+    // CHECK:         yul.func_return %[[R]]
+    sol.func @cexp_const_minus_one(%b: ui256) -> si256 {
+      %base = sol.constant -1 : si256
+      %0 = sol.cexp %base, %b : si256, ui256 -> si256
+      sol.return %0 : si256
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}

@@ -21,6 +21,7 @@
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Types.h"
@@ -873,8 +874,54 @@ struct CExpOpLowering
     return ifExpEqZero.getResult(0);
   }
 
+  // Below is the exponentiation of a constant base, whose largest exponent
+  // that does not overflow is computed at compile time.
+  //
+  //   function checked_exp_constant_base(exponent) -> power {
+  //     if gt(exponent, bound) { panic_error_0x11() }
+  //     power := exp(base, exponent)
+  //   }
+  //
+  // A base of 0, 1 or -1 never overflows and has no check.
+
+  Value expConstantBase(sol::CExpOp op, ConversionPatternRewriter &r,
+                        const APInt &constantBase, Value base,
+                        Value exp) const {
+    Location loc = op.getLoc();
+    mlir::solgen::BuilderExt bExt(r, loc);
+    evm::Builder evmB(getModule(op), r, loc);
+
+    bool isSigned = cast<IntegerType>(op.getType()).isSigned();
+    if (!constantBase.isZero() && !constantBase.isOne() &&
+        !(isSigned && constantBase.isAllOnes())) {
+      // Every other base grows in magnitude with each power, so the powers
+      // that fit the type are exactly those up to the first overflow.
+      APInt power(constantBase.getBitWidth(), 1);
+      unsigned bound = 0;
+      bool overflow = false;
+      while (true) {
+        power = isSigned ? power.smul_ov(constantBase, overflow)
+                         : power.umul_ov(constantBase, overflow);
+        if (overflow)
+          break;
+        ++bound;
+      }
+      Value panicCond = bExt.genCmp(yul::CmpPredicate::ugt, exp,
+                                    bExt.genI256Const(bound, loc));
+      evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
+    }
+
+    return r.create<yul::ExpOp>(loc, base, exp);
+  }
+
   LogicalResult rewriteCleaned(sol::CExpOp op, ConversionPatternRewriter &r,
                                Value base, Value exp) const {
+    APInt constantBase;
+    if (matchPattern(op.getLhs(), m_ConstantInt(&constantBase))) {
+      r.replaceOp(op, expConstantBase(op, r, constantBase, base, exp));
+      return success();
+    }
+
     auto ty = cast<IntegerType>(op.getType());
     Value res = ty.isSigned() ? expSigned(op, r, base, exp)
                               : expUnsigned(op, r, base, exp);
