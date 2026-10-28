@@ -980,13 +980,68 @@ static SDValue combineSETCCOfRange(SDNode *N, SelectionDAG &DAG) {
                       DAG.getConstant(NewC, DL, VT), NewCC);
 }
 
+// Fold
+//   (X + 2^(k-1)) u< 2^k  ->  signextend(k / 8 - 1, X) == X
+// with k a multiple of 8, and likewise u<=, u>, u>= and the negated
+// constants. Both test whether X is a sign-extended k-bit value, which
+// SIGNEXTEND checks for any byte width.
+static SDValue combineSETCCOfSignedTruncation(SDNode *N, SelectionDAG &DAG) {
+  SDValue Add = N->getOperand(0);
+  if (Add.getOpcode() != ISD::ADD)
+    return SDValue();
+  auto *AddNode = dyn_cast<ConstantSDNode>(Add.getOperand(1));
+  if (!AddNode)
+    return SDValue();
+
+  ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(2))->get();
+  APInt Bound = N->getConstantOperandAPInt(1);
+  APInt Half = AddNode->getAPIntValue();
+  ISD::CondCode NewCC;
+  if (CC == ISD::SETULT || CC == ISD::SETULE)
+    NewCC = ISD::SETEQ;
+  else if (CC == ISD::SETUGT || CC == ISD::SETUGE)
+    NewCC = ISD::SETNE;
+  else
+    return SDValue();
+  // X u<= C and X u> C are X u< C + 1 and X u>= C + 1.
+  if (CC == ISD::SETULE || CC == ISD::SETUGT)
+    Bound += 1;
+
+  // (X - 2^(k-1)) u>= -2^k is the same test as (X + 2^(k-1)) u< 2^k.
+  if (!Bound.isPowerOf2() || !Half.isPowerOf2()) {
+    Bound.negate();
+    Half.negate();
+    NewCC = NewCC == ISD::SETEQ ? ISD::SETNE : ISD::SETEQ;
+  }
+  if (!Bound.isPowerOf2() || !Half.isPowerOf2() ||
+      Bound.logBase2() != Half.logBase2() + 1 || Bound.logBase2() % 8 != 0)
+    return SDValue();
+
+  SDLoc DL(N);
+  SDValue X = Add.getOperand(0);
+  EVT VT = X.getValueType();
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  SDValue Extended = DAG.getNode(
+      ISD::INTRINSIC_WO_CHAIN, DL, VT,
+      DAG.getTargetConstant(Intrinsic::evm_signextend, DL,
+                            TLI.getPointerTy(DAG.getDataLayout())),
+      DAG.getConstant(Bound.logBase2() / 8 - 1, DL, VT), X);
+  return DAG.getSetCC(DL, N->getValueType(0), Extended, X, NewCC);
+}
+
 SDValue EVMTargetLowering::combineSETCC(SDNode *N,
                                         DAGCombinerInfo &DCI) const {
+  auto *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
+  if (!C)
+    return SDValue();
+
+  if (SDValue V = combineSETCCOfSignedTruncation(N, DCI.DAG))
+    return V;
+
   // A compare against an immediate wider than 64 bits costs a long PUSH or
   // the instructions that build it, more than a shift of the other operand
   // and a short immediate.
-  auto *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
-  if (!C || C->getAPIntValue().getSignificantBits() <= 64)
+  if (C->getAPIntValue().getSignificantBits() <= 64)
     return SDValue();
 
   if (SDValue V = combineSETCCOfMask(N, DCI.DAG))
