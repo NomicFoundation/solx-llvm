@@ -94,7 +94,7 @@ EVMTargetLowering::EVMTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
 
   // Custom DAGCombine patterns.
-  setTargetDAGCombine(ISD::SELECT);
+  setTargetDAGCombine({ISD::SELECT, ISD::SETCC});
 
   setJumpIsExpensive(true);
   setMaximumJumpTableSize(0);
@@ -942,6 +942,96 @@ SDValue EVMTargetLowering::combineSELECT(SDNode *N,
   return tryFoldSelectIntoOp(N, DAG, FalseV, TrueV, /*Swapped=*/true);
 }
 
+// Fold
+//   (X & -2^k) ==/!= C  ->  (X >> k) ==/!= (C >> k)
+// with C a multiple of 2^k. When C >> k is still wide, an arithmetic shift of
+// both sides compares the same bits and may leave a short immediate.
+static SDValue combineSETCCOfMask(SDNode *N, SelectionDAG &DAG) {
+  ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(2))->get();
+  SDValue And = N->getOperand(0);
+  if (!ISD::isIntEqualitySetCC(CC) || And.getOpcode() != ISD::AND ||
+      !And.hasOneUse())
+    return SDValue();
+  auto *MaskNode = dyn_cast<ConstantSDNode>(And.getOperand(1));
+  if (!MaskNode)
+    return SDValue();
+  const APInt &Mask = MaskNode->getAPIntValue();
+  const APInt &C = N->getConstantOperandAPInt(1);
+  if (!Mask.isNegatedPowerOf2() || !C.isSubsetOf(Mask))
+    return SDValue();
+
+  unsigned Shift = Mask.countr_zero();
+  bool IsArithmetic = C.lshr(Shift).getSignificantBits() > 64 &&
+                      C.ashr(Shift).getSignificantBits() <= 64;
+  SDLoc DL(N);
+  EVT VT = And.getValueType();
+  SDValue Shifted =
+      DAG.getNode(IsArithmetic ? ISD::SRA : ISD::SRL, DL, VT,
+                  And.getOperand(0), DAG.getShiftAmountConstant(Shift, VT, DL));
+  APInt NewC = IsArithmetic ? C.ashr(Shift) : C.lshr(Shift);
+  return DAG.getSetCC(DL, N->getValueType(0), Shifted,
+                      DAG.getConstant(NewC, DL, VT), CC);
+}
+
+// Fold
+//   X u< 2^k   ->  (X >> k) == 0
+//   X u>= 2^k  ->  (X >> k) != 0
+// and likewise X u<= 2^k - 1 and X u> 2^k - 1. When X is Y + A with A a
+// multiple of 2^k, X u< 2^k tests whether Y is in [-A, -A + 2^k), which is
+// (Y >> k) == (-A >> k) when the range does not wrap.
+static SDValue combineSETCCOfRange(SDNode *N, SelectionDAG &DAG) {
+  ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(2))->get();
+  const APInt &C = N->getConstantOperandAPInt(1);
+  APInt Bound;
+  if (CC == ISD::SETULT || CC == ISD::SETUGE)
+    Bound = C;
+  else if (CC == ISD::SETULE || CC == ISD::SETUGT)
+    Bound = C + 1;
+  else
+    return SDValue();
+  if (!Bound.isPowerOf2())
+    return SDValue();
+
+  unsigned Shift = Bound.logBase2();
+  SDValue X = N->getOperand(0);
+  APInt NewC = APInt::getZero(C.getBitWidth());
+  if (X.getOpcode() == ISD::ADD && X.hasOneUse()) {
+    if (auto *AddNode = dyn_cast<ConstantSDNode>(X.getOperand(1))) {
+      const APInt &A = AddNode->getAPIntValue();
+      APInt Lower = -A;
+      bool Overflow = false;
+      (void)Lower.uadd_ov(Bound, Overflow);
+      if (A.countr_zero() >= Shift && !Overflow) {
+        X = X.getOperand(0);
+        NewC = Lower.lshr(Shift);
+      }
+    }
+  }
+
+  SDLoc DL(N);
+  EVT VT = X.getValueType();
+  SDValue Shifted = DAG.getNode(ISD::SRL, DL, VT, X,
+                                DAG.getShiftAmountConstant(Shift, VT, DL));
+  ISD::CondCode NewCC =
+      CC == ISD::SETULT || CC == ISD::SETULE ? ISD::SETEQ : ISD::SETNE;
+  return DAG.getSetCC(DL, N->getValueType(0), Shifted,
+                      DAG.getConstant(NewC, DL, VT), NewCC);
+}
+
+SDValue EVMTargetLowering::combineSETCC(SDNode *N,
+                                        DAGCombinerInfo &DCI) const {
+  // A compare against an immediate wider than 64 bits costs a long PUSH or
+  // the instructions that build it, more than a shift of the other operand
+  // and a short immediate.
+  auto *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
+  if (!C || C->getAPIntValue().getSignificantBits() <= 64)
+    return SDValue();
+
+  if (SDValue V = combineSETCCOfMask(N, DCI.DAG))
+    return V;
+  return combineSETCCOfRange(N, DCI.DAG);
+}
+
 SDValue EVMTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
   switch (N->getOpcode()) {
@@ -949,6 +1039,8 @@ SDValue EVMTargetLowering::PerformDAGCombine(SDNode *N,
     break;
   case ISD::SELECT:
     return combineSELECT(N, DCI);
+  case ISD::SETCC:
+    return combineSETCC(N, DCI);
   }
 
   return SDValue();
