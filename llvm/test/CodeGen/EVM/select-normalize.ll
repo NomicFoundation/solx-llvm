@@ -8,24 +8,18 @@ define i256 @select_and(i256 %a0, i256 %a1, i256 %a2, i256 %a3, i256 %a4, i256 %
 ; CHECK-LABEL: select_and:
 ; CHECK:       ; %bb.0:
 ; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    SWAP3
-; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    SWAP3
+; CHECK-NEXT:    DUP6
+; CHECK-NEXT:    SWAP4
 ; CHECK-NEXT:    LT
 ; CHECK-NEXT:    SWAP2
 ; CHECK-NEXT:    LT
 ; CHECK-NEXT:    AND
-; CHECK-NEXT:    ISZERO
-; CHECK-NEXT:    PUSH4 @.BB0_2
-; CHECK-NEXT:    JUMPI
-; CHECK-NEXT:  ; %bb.1:
 ; CHECK-NEXT:    SWAP2
-; CHECK-NEXT:    SWAP1
-; CHECK-NEXT:    POP
-; CHECK-NEXT:    JUMP
-; CHECK-NEXT:  .BB0_2:
-; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    POP
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
 ; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    JUMP
   %cmp1 = icmp ult i256 %a0, %a1
@@ -39,24 +33,18 @@ define i256 @select_or(i256 %a0, i256 %a1, i256 %a2, i256 %a3, i256 %a4, i256 %a
 ; CHECK-LABEL: select_or:
 ; CHECK:       ; %bb.0:
 ; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    SWAP3
-; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    SWAP3
+; CHECK-NEXT:    DUP6
+; CHECK-NEXT:    SWAP4
 ; CHECK-NEXT:    LT
 ; CHECK-NEXT:    SWAP2
 ; CHECK-NEXT:    LT
 ; CHECK-NEXT:    OR
-; CHECK-NEXT:    ISZERO
-; CHECK-NEXT:    PUSH4 @.BB1_2
-; CHECK-NEXT:    JUMPI
-; CHECK-NEXT:  ; %bb.1:
 ; CHECK-NEXT:    SWAP2
-; CHECK-NEXT:    SWAP1
-; CHECK-NEXT:    POP
-; CHECK-NEXT:    JUMP
-; CHECK-NEXT:  .BB1_2:
-; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    POP
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
 ; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    JUMP
   %cmp1 = icmp ult i256 %a0, %a1
@@ -71,20 +59,15 @@ define i256 @select_select_to_and(i1 %cond1, i1 %cond2, i256 %a, i256 %b) {
 ; CHECK:       ; %bb.0:
 ; CHECK-NEXT:    JUMPDEST
 ; CHECK-NEXT:    PUSH1 0x1
-; CHECK-NEXT:    SWAP2
-; CHECK-NEXT:    AND
-; CHECK-NEXT:    AND
-; CHECK-NEXT:    ISZERO
-; CHECK-NEXT:    PUSH4 @.BB2_2
-; CHECK-NEXT:    JUMPI
-; CHECK-NEXT:  ; %bb.1:
-; CHECK-NEXT:    SWAP2
 ; CHECK-NEXT:    SWAP1
-; CHECK-NEXT:    POP
-; CHECK-NEXT:    JUMP
-; CHECK-NEXT:  .BB2_2:
-; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    POP
+; CHECK-NEXT:    DUP5
+; CHECK-NEXT:    SWAP3
+; CHECK-NEXT:    AND
+; CHECK-NEXT:    AND
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
 ; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    JUMP
   %select1 = select i1 %cond1, i256 %a, i256 %b
@@ -97,20 +80,15 @@ define i256 @select_select_to_or(i1 %cond1, i1 %cond2, i256 %a, i256 %b) {
 ; CHECK:       ; %bb.0:
 ; CHECK-NEXT:    JUMPDEST
 ; CHECK-NEXT:    PUSH1 0x1
-; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    DUP5
+; CHECK-NEXT:    SWAP3
 ; CHECK-NEXT:    OR
 ; CHECK-NEXT:    AND
-; CHECK-NEXT:    ISZERO
-; CHECK-NEXT:    PUSH4 @.BB3_2
-; CHECK-NEXT:    JUMPI
-; CHECK-NEXT:  ; %bb.1:
 ; CHECK-NEXT:    SWAP2
-; CHECK-NEXT:    SWAP1
-; CHECK-NEXT:    POP
-; CHECK-NEXT:    JUMP
-; CHECK-NEXT:  .BB3_2:
-; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    POP
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
 ; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    JUMP
   %select1 = select i1 %cond1, i256 %a, i256 %b

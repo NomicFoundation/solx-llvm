@@ -142,6 +142,8 @@ private:
 
   SDValue LowerBSWAP(SDValue BSWAP, SelectionDAG &DAG) const;
 
+  SDValue LowerUSUBSAT(SDValue Op, SelectionDAG &DAG) const;
+
   SDValue LowerCTPOP(SDValue CTPOP, SelectionDAG &DAG) const;
 
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
@@ -178,8 +180,6 @@ private:
   MachineBasicBlock *
   EmitInstrWithCustomInserter(MachineInstr &MI,
                               MachineBasicBlock *BB) const override;
-
-  MachineBasicBlock *emitSelect(MachineInstr &MI, MachineBasicBlock *BB) const;
 };
 
 } // end namespace llvm

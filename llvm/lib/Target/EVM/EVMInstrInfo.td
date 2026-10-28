@@ -181,16 +181,6 @@ def truncstorei8_heap : PatFrag<(ops node:$val, node:$ptr),
 
 
 //===----------------------------------------------------------------------===//
-// Pseudo instructions.
-//===----------------------------------------------------------------------===//
-
-let usesCustomInserter = 1 in
-def SELECT
-  : EVMPseudo<(outs GPR:$dst), (ins GPR:$cond, GPR:$lhs, GPR:$rhs),
-              [(set GPR:$dst, (select GPR:$cond, GPR:$lhs, GPR:$rhs))]>;
-
-
-//===----------------------------------------------------------------------===//
 // Additional instructions.
 //===----------------------------------------------------------------------===//
 

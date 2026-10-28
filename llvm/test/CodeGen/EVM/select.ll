@@ -9,19 +9,14 @@ define i256 @select(i256 %v1, i256 %v2, i256 %v3, i256 %v4) {
 ; CHECK:       ; %bb.0:
 ; CHECK-NEXT:    JUMPDEST
 ; CHECK-NEXT:    SWAP2
-; CHECK-NEXT:    SWAP1
-; CHECK-NEXT:    SWAP3
+; CHECK-NEXT:    DUP2
+; CHECK-NEXT:    SWAP4
 ; CHECK-NEXT:    EQ
-; CHECK-NEXT:    PUSH4 @.BB0_2
-; CHECK-NEXT:    JUMPI
-; CHECK-NEXT:  ; %bb.1:
+; CHECK-NEXT:    ISZERO
 ; CHECK-NEXT:    SWAP2
-; CHECK-NEXT:    SWAP1
-; CHECK-NEXT:    POP
-; CHECK-NEXT:    JUMP
-; CHECK-NEXT:  .BB0_2:
-; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    POP
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
 ; CHECK-NEXT:    SWAP1
 ; CHECK-NEXT:    JUMP
 
@@ -29,3 +24,98 @@ define i256 @select(i256 %v1, i256 %v2, i256 %v3, i256 %v4) {
   %2 = select i1 %1, i256 %v1, i256 %v2
   ret i256 %2
 }
+
+define i256 @umin(i256 %x, i256 %y) {
+; CHECK-LABEL: umin:
+; CHECK:       ; %bb.0:
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    DUP2
+; CHECK-NEXT:    DUP1
+; CHECK-NEXT:    DUP3
+; CHECK-NEXT:    LT
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    JUMP
+  %r = call i256 @llvm.umin.i256(i256 %x, i256 %y)
+  ret i256 %r
+}
+
+define i256 @umax(i256 %x, i256 %y) {
+; CHECK-LABEL: umax:
+; CHECK:       ; %bb.0:
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    DUP2
+; CHECK-NEXT:    DUP1
+; CHECK-NEXT:    DUP3
+; CHECK-NEXT:    GT
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    JUMP
+  %r = call i256 @llvm.umax.i256(i256 %x, i256 %y)
+  ret i256 %r
+}
+
+define i256 @smin(i256 %x, i256 %y) {
+; CHECK-LABEL: smin:
+; CHECK:       ; %bb.0:
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    DUP2
+; CHECK-NEXT:    DUP1
+; CHECK-NEXT:    DUP3
+; CHECK-NEXT:    SLT
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    JUMP
+  %r = call i256 @llvm.smin.i256(i256 %x, i256 %y)
+  ret i256 %r
+}
+
+define i256 @smax(i256 %x, i256 %y) {
+; CHECK-LABEL: smax:
+; CHECK:       ; %bb.0:
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    DUP2
+; CHECK-NEXT:    DUP1
+; CHECK-NEXT:    DUP3
+; CHECK-NEXT:    SGT
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    XOR
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    JUMP
+  %r = call i256 @llvm.smax.i256(i256 %x, i256 %y)
+  ret i256 %r
+}
+
+define i256 @usub_sat(i256 %x, i256 %y) {
+; CHECK-LABEL: usub_sat:
+; CHECK:       ; %bb.0:
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    DUP1
+; CHECK-NEXT:    DUP3
+; CHECK-NEXT:    SUB
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    GT
+; CHECK-NEXT:    MUL
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    JUMP
+  %r = call i256 @llvm.usub.sat.i256(i256 %x, i256 %y)
+  ret i256 %r
+}
+
+declare i256 @llvm.umin.i256(i256, i256)
+declare i256 @llvm.umax.i256(i256, i256)
+declare i256 @llvm.smin.i256(i256, i256)
+declare i256 @llvm.smax.i256(i256, i256)
+declare i256 @llvm.usub.sat.i256(i256, i256)
