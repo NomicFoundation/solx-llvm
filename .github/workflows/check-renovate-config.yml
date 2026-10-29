@@ -20,7 +20,7 @@ concurrency:
 jobs:
   check-renovate-config:
     name: Check Renovate config
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     env:
@@ -35,7 +35,7 @@ jobs:
       # (engines: node ^24.11).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: 26
 
       - name: Renovate schema check
         run: npx --yes --package "renovate@${RENOVATE_VERSION}" -- renovate-config-validator renovate.json

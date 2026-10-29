@@ -47,7 +47,7 @@ concurrency:
 jobs:
 
   target-machine:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       default: ${{ steps.default.outputs.machine }}
     steps:
@@ -63,7 +63,7 @@ jobs:
 
   prepare-test-matrix:
     needs: target-machine
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       matrix-formatting: ${{ steps.prepare.outputs.matrix-formatting }}
       matrix-tests: ${{ steps.prepare.outputs.matrix-tests }}
@@ -107,7 +107,7 @@ jobs:
 
   check-formatting:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: read
@@ -172,7 +172,7 @@ jobs:
             --changed-files ${{ steps.changed-files.outputs.all_changed_files }}
 
   regression-tests:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Backstop: a thrashed VM hangs its job indefinitely — the starved
     # runner agent can't even act on cancellation. Sized for a cold
     # ccache-less build with MLIR enabled, which approaches the limit.
