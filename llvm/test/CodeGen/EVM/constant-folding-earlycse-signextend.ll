@@ -26,7 +26,8 @@ define i256 @test_signextend2() {
 
 define i256 @test_signextend3() {
 ; CHECK-LABEL: define i256 @test_signextend3() {
-; CHECK-NEXT:    ret i256 poison
+; CHECK-NEXT:    [[RES:%.*]] = call i256 @llvm.evm.signextend(i256 undef, i256 32767)
+; CHECK-NEXT:    ret i256 [[RES]]
 ;
 
   %res = call i256 @llvm.evm.signextend(i256 undef, i256 32767)
@@ -35,7 +36,8 @@ define i256 @test_signextend3() {
 
 define i256 @test_signextend4() {
 ; CHECK-LABEL: define i256 @test_signextend4() {
-; CHECK-NEXT:    ret i256 poison
+; CHECK-NEXT:    [[RES:%.*]] = call i256 @llvm.evm.signextend(i256 1, i256 undef)
+; CHECK-NEXT:    ret i256 [[RES]]
 ;
 
   %res = call i256 @llvm.evm.signextend(i256 1, i256 undef)
@@ -44,7 +46,8 @@ define i256 @test_signextend4() {
 
 define i256 @test_signextend5() {
 ; CHECK-LABEL: define i256 @test_signextend5() {
-; CHECK-NEXT:    ret i256 poison
+; CHECK-NEXT:    [[RES:%.*]] = call i256 @llvm.evm.signextend(i256 32, i256 undef)
+; CHECK-NEXT:    ret i256 [[RES]]
 ;
 
   %res = call i256 @llvm.evm.signextend(i256 32, i256 undef)
@@ -318,5 +321,14 @@ define i256 @test_signextend35() {
 ;
 
   %res = call i256 @llvm.evm.signextend(i256 0, i256 33023)
+  ret i256 %res
+}
+
+define i256 @test_signextend36() {
+; CHECK-LABEL: define i256 @test_signextend36() {
+; CHECK-NEXT:    ret i256 poison
+;
+
+  %res = call i256 @llvm.evm.signextend(i256 1, i256 poison)
   ret i256 %res
 }

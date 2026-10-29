@@ -3074,9 +3074,12 @@ static Constant *ConstantFoldIntrinsicCall2(Intrinsic::ID IntrinsicID, Type *Ty,
     if (IntrinsicID == Intrinsic::evm_signextend ||
         IntrinsicID == Intrinsic::evm_exp ||
         IntrinsicID == Intrinsic::evm_byte) {
-      if (isa<PoisonValue>(Operands[0]) || isa<PoisonValue>(Operands[1]) ||
-          !C0 || !C1)
+      if (isa<PoisonValue>(Operands[0]) || isa<PoisonValue>(Operands[1]))
         return PoisonValue::get(Ty);
+      // An undef operand stands for any value, which the result may depend
+      // on, so poison would not refine it.
+      if (!C0 || !C1)
+        return nullptr;
 
       assert(Ty->getIntegerBitWidth() == 256);
 
@@ -3818,8 +3821,12 @@ static Constant *ConstantFoldScalarCall3(StringRef Name,
       return nullptr;
 
     if (isa<PoisonValue>(Operands[0]) || isa<PoisonValue>(Operands[1]) ||
-        isa<PoisonValue>(Operands[2]) || !C0 || !C1 || !C2)
+        isa<PoisonValue>(Operands[2]))
       return PoisonValue::get(Ty);
+    // An undef operand stands for any value, which the result may depend on,
+    // so poison would not refine it.
+    if (!C0 || !C1 || !C2)
+      return nullptr;
 
     assert(Ty->getIntegerBitWidth() == 256);
 

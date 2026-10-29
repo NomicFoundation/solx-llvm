@@ -8,7 +8,8 @@ declare i256 @llvm.evm.byte(i256, i256)
 
 define i256 @test_byte1() {
 ; CHECK-LABEL: define i256 @test_byte1() {
-; CHECK-NEXT:    ret i256 poison
+; CHECK-NEXT:    [[RES:%.*]] = call i256 @llvm.evm.byte(i256 undef, i256 1)
+; CHECK-NEXT:    ret i256 [[RES]]
 ;
 
   %res = call i256 @llvm.evm.byte(i256 undef, i256 1)
@@ -17,7 +18,8 @@ define i256 @test_byte1() {
 
 define i256 @test_byte2() {
 ; CHECK-LABEL: define i256 @test_byte2() {
-; CHECK-NEXT:    ret i256 poison
+; CHECK-NEXT:    [[RES:%.*]] = call i256 @llvm.evm.byte(i256 1, i256 undef)
+; CHECK-NEXT:    ret i256 [[RES]]
 ;
 
   %res = call i256 @llvm.evm.byte(i256 1, i256 undef)
@@ -390,5 +392,14 @@ define i256 @test_byte43() {
 ;
 
   %res = call i256 @llvm.evm.byte(i256 43422033463993573283839119378257965444976244249615211514796594002967423614976, i256 455867356320691211509944977504407603390036387149619137164185182714736811808)
+  ret i256 %res
+}
+
+define i256 @test_byte44() {
+; CHECK-LABEL: define i256 @test_byte44() {
+; CHECK-NEXT:    ret i256 poison
+;
+
+  %res = call i256 @llvm.evm.byte(i256 1, i256 poison)
   ret i256 %res
 }

@@ -27,7 +27,8 @@ define i256 @test_addmod2() {
 
 define i256 @test_addmod3() {
 ; CHECK-LABEL: define i256 @test_addmod3() {
-; CHECK-NEXT:    ret i256 poison
+; CHECK-NEXT:    [[RES:%.*]] = call i256 @llvm.evm.addmod(i256 48, i256 undef, i256 5)
+; CHECK-NEXT:    ret i256 [[RES]]
 ;
 
   %res = call i256 @llvm.evm.addmod(i256 48, i256 undef, i256 5)
@@ -36,7 +37,8 @@ define i256 @test_addmod3() {
 
 define i256 @test_addmod4() {
 ; CHECK-LABEL: define i256 @test_addmod4() {
-; CHECK-NEXT:    ret i256 poison
+; CHECK-NEXT:    [[RES:%.*]] = call i256 @llvm.evm.addmod(i256 undef, i256 48, i256 5)
+; CHECK-NEXT:    ret i256 [[RES]]
 ;
 
   %res = call i256 @llvm.evm.addmod(i256 undef, i256 48, i256 5)
@@ -45,9 +47,19 @@ define i256 @test_addmod4() {
 
 define i256 @test_addmod5() {
 ; CHECK-LABEL: define i256 @test_addmod5() {
-; CHECK-NEXT:    ret i256 poison
+; CHECK-NEXT:    [[RES:%.*]] = call i256 @llvm.evm.addmod(i256 48, i256 1, i256 undef)
+; CHECK-NEXT:    ret i256 [[RES]]
 ;
 
   %res = call i256 @llvm.evm.addmod(i256 48, i256 1, i256 undef)
+  ret i256 %res
+}
+
+define i256 @test_addmod6() {
+; CHECK-LABEL: define i256 @test_addmod6() {
+; CHECK-NEXT:    ret i256 poison
+;
+
+  %res = call i256 @llvm.evm.addmod(i256 48, i256 poison, i256 5)
   ret i256 %res
 }
