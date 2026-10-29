@@ -32,6 +32,9 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+// EVM local begin
+#include "llvm/IR/Module.h"
+// EVM local end
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/PatternMatch.h"
@@ -753,6 +756,12 @@ static bool processCallSite(CallBase &CB, LazyValueInfo *LVI) {
   return true;
 }
 
+// EVM local begin
+static bool isEVM(const Instruction *I) {
+  return I->getModule()->getTargetTriple().isEVM();
+}
+// EVM local end
+
 enum class Domain { NonNegative, NonPositive, Unknown };
 
 static Domain getDomain(const ConstantRange &CR) {
@@ -769,6 +778,12 @@ static bool narrowSDivOrSRem(BinaryOperator *Instr, const ConstantRange &LCR,
                              const ConstantRange &RCR) {
   assert(Instr->getOpcode() == Instruction::SDiv ||
          Instr->getOpcode() == Instruction::SRem);
+
+  // EVM local begin
+  // On EVM a narrower division costs the same and needs sign extensions back.
+  if (isEVM(Instr))
+    return false;
+  // EVM local end
 
   // Find the smallest power of two bitwidth that's sufficient to hold Instr's
   // operands.
@@ -866,6 +881,11 @@ static bool expandUDivOrURem(BinaryOperator *Instr, const ConstantRange &XCR,
     else
       ExpandedOp = ConstantInt::get(Instr->getType(), 1);
   } else if (IsRem) {
+    // EVM local begin
+    // On EVM one MOD costs less than the compare, subtraction and select.
+    if (isEVM(Instr))
+      return false;
+    // EVM local end
     // NOTE: this transformation introduces two uses of X,
     //       but it may be undef so we must freeze it first.
     Value *FrozenX = X;
@@ -896,6 +916,12 @@ static bool narrowUDivOrURem(BinaryOperator *Instr, const ConstantRange &XCR,
                              const ConstantRange &YCR) {
   assert(Instr->getOpcode() == Instruction::UDiv ||
          Instr->getOpcode() == Instruction::URem);
+
+  // EVM local begin
+  // On EVM a narrower division costs the same and needs masks back.
+  if (isEVM(Instr))
+    return false;
+  // EVM local end
 
   // Find the smallest power of two bitwidth that's sufficient to hold Instr's
   // operands.
@@ -969,6 +995,11 @@ static bool processSRem(BinaryOperator *SDI, const ConstantRange &LCR,
   for (Operand &Op : Ops) {
     if (Op.D == Domain::NonNegative)
       continue;
+    // EVM local begin
+    // On EVM SMOD costs the same as MOD, so negating an operand only adds code.
+    if (isEVM(SDI))
+      return false;
+    // EVM local end
     auto *BO = BinaryOperator::CreateNeg(Op.V, Op.V->getName() + ".nonneg",
                                          SDI->getIterator());
     BO->setDebugLoc(SDI->getDebugLoc());
@@ -1030,6 +1061,11 @@ static bool processSDiv(BinaryOperator *SDI, const ConstantRange &LCR,
   for (Operand &Op : Ops) {
     if (Op.D == Domain::NonNegative)
       continue;
+    // EVM local begin
+    // On EVM SDIV costs the same as DIV, so negating an operand only adds code.
+    if (isEVM(SDI))
+      return false;
+    // EVM local end
     auto *BO = BinaryOperator::CreateNeg(Op.V, Op.V->getName() + ".nonneg",
                                          SDI->getIterator());
     BO->setDebugLoc(SDI->getDebugLoc());
