@@ -5,6 +5,8 @@
 #NonPayable = #sol<StateMutability NonPayable>
 module {
   // CHECK-LABEL: yul.object @C_1 {
+  // CHECK-LABEL:   yul.func @C_1 : () -> ()
+  // CHECK-NEXT:      yul.func_return
   // CHECK:         %[[FMP:.*]] = yul.memoryguard 128
   // CHECK:         %[[C64:.*]] = yul.constant 64{{$}}
   // CHECK:         yul.mstore %[[C64]], %[[FMP]]
@@ -18,8 +20,6 @@ module {
   // CHECK:         %[[SIZE:.*]] = yul.datasize {obj = @C_1_deployed}
   // CHECK:         yul.codecopy %[[MEM]], %[[OFF]], %[[SIZE]]
   // CHECK:         yul.return %[[MEM]], %[[SIZE]]
-  // CHECK-LABEL:   yul.func @C_1 : () -> ()
-  // CHECK-NEXT:      yul.func_return
   sol.contract @C_1 {
     sol.func @C_1() attributes {kind = #Constructor, orig_fn_type = () -> (), state_mutability = #NonPayable} {
       sol.return

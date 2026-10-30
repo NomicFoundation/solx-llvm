@@ -655,6 +655,15 @@ public:
       llvm::StringRef symbol, mlir::ValueRange args,
       llvm::function_ref<void(mlir::ValueRange, mlir::Location)> genBody,
       std::optional<mlir::Location> locArg = std::nullopt);
+  /// Calls the never-returning helper named \p symbol with \p args, creating
+  /// it on first request with the types of \p args as its argument types, and
+  /// follows the call with a `yul.unreachable`. \p genBody emits the body,
+  /// ending in its halting op, from the entry-block arguments and the body
+  /// location.
+  void genHaltingHelperCall(
+      llvm::StringRef symbol, mlir::ValueRange args,
+      llvm::function_ref<void(mlir::ValueRange, mlir::Location)> genBody,
+      std::optional<mlir::Location> locArg = std::nullopt);
   /// Same for a helper with the single result type \p resTy. \p genBody
   /// returns the value the helper returns, and the call's result is returned.
   mlir::Value genHelperCall(

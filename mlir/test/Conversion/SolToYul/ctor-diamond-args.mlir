@@ -9,15 +9,6 @@
 #Payable = #sol<StateMutability Payable>
 
 // CHECK-LABEL: yul.object @D {
-// CHECK-NOT:     yul.callvalue
-// CHECK:         %[[SIZE:.*]] = yul.datasize {obj = @D}
-// CHECK:         %[[CODE:.*]] = yul.codesize
-// CHECK:         %[[ARGSZ:.*]] = yul.sub %[[CODE]], %[[SIZE]]
-// CHECK:         %[[BUF:.*]] = yul.func_call @__sol.alloc(%[[ARGSZ]])
-// CHECK:         yul.codecopy %[[BUF]], %[[SIZE]], %[[ARGSZ]]
-// CHECK:         %[[END:.*]] = yul.add %[[BUF]], %[[ARGSZ]]
-// CHECK:         %[[ARGS:.*]]:2 = yul.func_call @__sol.abi_decode_tuple.memory.ui256.ui256(%[[BUF]], %[[END]]) : (i256, i256) -> (i256, i256)
-// CHECK:         yul.func_call @D(%[[ARGS]]#0, %[[ARGS]]#1) : (i256, i256) -> ()
 // CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.memory.ui256.ui256 : (i256, i256) -> (i256, i256)
 // CHECK:           %[[TSIZE:.*]] = yul.sub %arg1, %arg0
 // CHECK:           yul.cmp slt, %[[TSIZE]], %{{.*}}
@@ -32,6 +23,15 @@
 // CHECK:           yul.func_call @g(%arg0, %arg1)
 // CHECK-LABEL:   yul.func @D : (i256, i256) -> ()
 // CHECK:           yul.func_call @f(%arg1, %arg0)
+// CHECK-NOT:     yul.callvalue
+// CHECK:         %[[SIZE:.*]] = yul.datasize {obj = @D}
+// CHECK:         %[[CODE:.*]] = yul.codesize
+// CHECK:         %[[ARGSZ:.*]] = yul.sub %[[CODE]], %[[SIZE]]
+// CHECK:         %[[BUF:.*]] = yul.func_call @__sol.alloc(%[[ARGSZ]])
+// CHECK:         yul.codecopy %[[BUF]], %[[SIZE]], %[[ARGSZ]]
+// CHECK:         %[[END:.*]] = yul.add %[[BUF]], %[[ARGSZ]]
+// CHECK:         %[[ARGS:.*]]:2 = yul.func_call @__sol.abi_decode_tuple.memory.ui256.ui256(%[[BUF]], %[[END]]) : (i256, i256) -> (i256, i256)
+// CHECK:         yul.func_call @D(%[[ARGS]]#0, %[[ARGS]]#1) : (i256, i256) -> ()
 
 module {
   sol.contract @D {

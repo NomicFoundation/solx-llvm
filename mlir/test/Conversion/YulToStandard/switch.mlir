@@ -64,7 +64,7 @@ module {
 
 // -----
 
-// The default region yields undef after the revert.
+// The default region ends in the revert and yields nothing.
 // CHECK-LABEL: func.func @switch_result
 // CHECK-SAME:      (%[[V:.*]]: i256, %[[X:.*]]: i256) -> i256
 // CHECK:         cf.switch %[[V]] : i256, [
@@ -76,9 +76,8 @@ module {
 // CHECK-NEXT:    cf.br ^[[JOIN:bb[0-9]+]](%[[SUM]] : i256)
 // CHECK:       ^[[DEFAULT]]:
 // CHECK:         name = "evm.revert"
-// CHECK:         %[[UNDEF:.*]] = llvm.mlir.undef : i256
-// CHECK-NEXT:    cf.br ^[[JOIN]](%[[UNDEF]] : i256)
-// CHECK:       ^[[JOIN]](%[[R:.*]]: i256):
+// CHECK-NEXT:    llvm.unreachable
+// CHECK-NEXT:  ^[[JOIN]](%[[R:.*]]: i256):  // pred: ^[[CASE]]
 // CHECK-NEXT:    return %[[R]] : i256
 
 yul.func @switch_result : (i256, i256) -> i256 {
@@ -91,8 +90,6 @@ yul.func @switch_result : (i256, i256) -> i256 {
   default {
     %c0 = yul.constant 0
     yul.revert %c0, %c0
-    %1 = llvm.mlir.undef : i256
-    yul.yield %1 : i256
   }
   yul.func_return %0 : i256
 }

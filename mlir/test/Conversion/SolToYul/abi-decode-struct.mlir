@@ -3,14 +3,6 @@
 // Big's head is 6 words (fixedArr inline); its memory copy is 5 words. The
 // decoders are outlined per parameter tuple and take the calldata head's
 // start and end.
-// CHECK:         case 1543776000 {
-// CHECK:           %[[NS:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_Memory_$_$_array$_2_ui256_$_Memory_$_$_array$_dyn_ui256_$_Memory_$_$_$_Memory_$_$_ui256_$_$_Memory_$(%{{.*}}, %{{.*}}) : (i256, i256) -> i256
-// CHECK:           yul.func_call @mem_nested(%[[NS]]) : (i256) -> ()
-
-// CHECK:         case 2433354261 {
-// CHECK:           %[[HEAD:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_CallData_$_$_array$_2_ui256_$_CallData_$_$_array$_dyn_ui256_$_CallData_$_$_$_CallData_$_$_ui256_$_$_CallData_$(%{{.*}}, %{{.*}}) : (i256, i256) -> i256
-// CHECK:           yul.func_call @cd_nested(%[[HEAD]]) : (i256) -> i256
-
 // CHECK-LABEL: yul.func @__sol.abi_decode_tuple.calldata.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_CallData_$_$_array$_2_ui256_$_CallData_$_$_array$_dyn_ui256_$_CallData_$_$_$_CallData_$_$_ui256_$_$_CallData_$ : (i256, i256) -> i256
 // CHECK-NEXT:  ^bb0(%[[START:.*]]: i256, %[[END:.*]]: i256):
 // CHECK:         %[[OFF:.*]] = yul.calldataload %[[START]]
@@ -42,6 +34,14 @@
 // CHECK:         %[[P2:.*]] = yul.add %[[S]], %[[C64]]
 // CHECK:         %[[V2:.*]] = yul.calldataload %[[P2]]
 // CHECK:         yul.func_return %[[V2]]
+
+// CHECK:         case 1543776000 {
+// CHECK:           %[[NS:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_Memory_$_$_array$_2_ui256_$_Memory_$_$_array$_dyn_ui256_$_Memory_$_$_$_Memory_$_$_ui256_$_$_Memory_$(%{{.*}}, %{{.*}}) : (i256, i256) -> i256
+// CHECK:           yul.func_call @mem_nested(%[[NS]]) : (i256) -> ()
+
+// CHECK:         case 2433354261 {
+// CHECK:           %[[HEAD:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.struct$_$_ui256_$_struct$_$_ui256_$_ui256_$_string$_CallData_$_$_array$_2_ui256_$_CallData_$_$_array$_dyn_ui256_$_CallData_$_$_$_CallData_$_$_ui256_$_$_CallData_$(%{{.*}}, %{{.*}}) : (i256, i256) -> i256
+// CHECK:           yul.func_call @cd_nested(%[[HEAD]]) : (i256) -> i256
 
 #Contract = #sol<ContractKind Contract>
 #Pure = #sol<StateMutability Pure>

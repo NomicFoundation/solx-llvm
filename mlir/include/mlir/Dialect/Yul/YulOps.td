@@ -484,14 +484,14 @@ def Yul_DelegateCallOp : Yul_Op<"delegate_call", [MemoryEffects<[
   }];
 }
 
-def Yul_ReturnOp : Yul_Op<"return", [MemoryEffects<[
+def Yul_ReturnOp : Yul_Op<"return", [Terminator, MemoryEffects<[
     MemRead<Yul_MemoryResource>, MemWrite<Yul_ExternalResource>]>]> {
   let summary = "Represents the `return` call in yul";
   let arguments = (ins I256:$addr, I256:$size);
   let assemblyFormat = "$addr `,` $size attr-dict";
 }
 
-def Yul_RevertOp : Yul_Op<"revert", [MemoryEffects<[
+def Yul_RevertOp : Yul_Op<"revert", [Terminator, MemoryEffects<[
     MemRead<Yul_MemoryResource>, MemWrite<Yul_ExternalResource>]>]> {
   let summary = "Represents the `revert` call in yul";
   // TODO: Support revert strings.
@@ -499,17 +499,22 @@ def Yul_RevertOp : Yul_Op<"revert", [MemoryEffects<[
   let assemblyFormat = "$addr `,` $size attr-dict";
 }
 
-def Yul_StopOp : Yul_Op<"stop"> {
+def Yul_StopOp : Yul_Op<"stop", [Terminator]> {
   let summary = "Represents the `stop` call in yul";
   let assemblyFormat = "attr-dict";
 }
 
-def Yul_InvalidOp : Yul_Op<"invalid"> {
+def Yul_InvalidOp : Yul_Op<"invalid", [Terminator]> {
   let summary = "Represents the `invalid` call in yul";
   let assemblyFormat = "attr-dict";
 }
 
-def Yul_SelfDestructOp : Yul_Op<"selfdestruct"> {
+def Yul_UnreachableOp : Yul_Op<"unreachable", [Terminator]> {
+  let summary = "Ends a block after a call that never returns";
+  let assemblyFormat = "attr-dict";
+}
+
+def Yul_SelfDestructOp : Yul_Op<"selfdestruct", [Terminator]> {
   let summary = "Represents the `selfdestruct` call in yul";
   let arguments = (ins I256:$addr);
   let assemblyFormat = "$addr attr-dict";

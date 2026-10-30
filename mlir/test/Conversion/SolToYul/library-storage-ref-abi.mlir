@@ -3,11 +3,6 @@
 // Storage references cross the library ABI as bare slot numbers.
 
 // CHECK-LABEL: yul.object @L_deployed {
-// CHECK:         case 3865590979 {
-// CHECK:           %[[C4:.*]] = yul.constant 4
-// CHECK:           %[[R:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.i256(%[[C4]], %{{.*}}) : (i256, i256) -> i256
-// CHECK:           yul.func_call @f(%[[R]]) : (i256) -> i256
-
 // CHECK-LABEL: yul.func @__sol.abi_decode_tuple.calldata.i256 : (i256, i256) -> i256
 // CHECK-NEXT:  ^bb0(%[[HEAD:.*]]: i256, %{{.*}}: i256):
 // CHECK:         %[[WORD:.*]] = yul.calldataload %[[HEAD]]
@@ -23,6 +18,11 @@
 // CHECK-NEXT:  ^bb0(%[[RV:.*]]: i256):
 // CHECK:         yul.func_call @__sol.index_storage_array.array$_dyn_ui256_$_Storage_$(%[[RV]], %{{.*}})
 // CHECK:         yul.sload
+
+// CHECK:         case 3865590979 {
+// CHECK:           %[[C4:.*]] = yul.constant 4
+// CHECK:           %[[R:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.i256(%[[C4]], %{{.*}}) : (i256, i256) -> i256
+// CHECK:           yul.func_call @f(%[[R]]) : (i256) -> i256
 
 #Library = #sol<ContractKind Library>
 #View = #sol<StateMutability View>
