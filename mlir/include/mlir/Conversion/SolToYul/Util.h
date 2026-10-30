@@ -83,6 +83,14 @@ public:
     return genConst(llvm::APInt(256, val, /*isSigned=*/true), locArg);
   }
 
+  /// Generates `val`, a value of `ty`, extended to 256 bits by the signedness
+  /// of `ty`.
+  Value genI256Const(llvm::APInt const &val, IntegerType ty,
+                     std::optional<Location> locArg = std::nullopt) {
+    assert(val.getBitWidth() <= 256 && "Expected constant width <= 256");
+    return genConst(ty.isSigned() ? val.sext(256) : val.zext(256), locArg);
+  }
+
   /// Generates an i256 constant with the selector in the high 32 bits.
   Value genI256Selector(StringRef signature,
                         std::optional<Location> locArg = std::nullopt) {

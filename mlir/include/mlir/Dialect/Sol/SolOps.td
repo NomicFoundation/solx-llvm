@@ -27,19 +27,6 @@ include "mlir/IR/SymbolInterfaces.td"
 // specific ops) should verify that their types (ssa argument types and
 // TypeAttr) are high level ((un)signed int types, sol dialect types etc.).
 
-// FIXME: Remove this! We're already running reconcile-unrealized-casts, so we
-// should start using builtin.unrealized_conversion_cast
-def Sol_ConvCastOp : Sol_Op<"conv_cast", [Pure]> {
-  let summary = "No-op cast that casts to the remapped value in conversion";
-
-  let arguments = (ins AnyType:$inp);
-  let results = (outs AnyType:$out);
-
-  let assemblyFormat = "$inp attr-dict `:` type($inp) `->` type($out)";
-
-  let hasFolder = 1;
-}
-
 def Sol_ConstantOp : Op<Sol_Dialect, "constant",
     [ConstantLike, Pure,
      DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>,
