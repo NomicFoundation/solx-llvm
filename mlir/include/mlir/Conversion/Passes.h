@@ -67,7 +67,6 @@
 #include "mlir/Conversion/ShapeToStandard/ShapeToStandard.h"
 // EVM local begin
 #include "mlir/Conversion/SolToYul/SolToYul.h"
-#include "mlir/Conversion/YulToStandard/YulToStandard.h"
 // EVM local end
 #include "mlir/Conversion/TensorToLinalg/TensorToLinalgPass.h"
 #include "mlir/Conversion/TensorToSPIRV/TensorToSPIRVPass.h"
