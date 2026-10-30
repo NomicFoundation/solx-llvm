@@ -7,6 +7,9 @@
 // CHECK:         func.func @f() attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid"]}
 module attributes {sol.evm_version = #sol<EvmVersion Cancun>} {
   yul.object @Cancun {
+    yul.func @__entry : () -> () {
+      yul.stop
+    }
     yul.func @f : () -> () {
       yul.func_return
     }
@@ -20,6 +23,9 @@ module attributes {sol.evm_version = #sol<EvmVersion Cancun>} {
 // CHECK:         func.func @f() attributes {llvm.linkage = #llvm.linkage<private>, passthrough = ["nofree", "null_pointer_is_valid", ["target-features", "+osaka"]]}
 module attributes {sol.evm_version = #sol<EvmVersion Osaka>} {
   yul.object @Osaka {
+    yul.func @__entry : () -> () {
+      yul.stop
+    }
     yul.func @f : () -> () {
       yul.func_return
     }

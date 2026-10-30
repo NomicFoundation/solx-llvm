@@ -13,10 +13,13 @@
 #include "mlir/Dialect/CommonFolders.h"
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
+#include "mlir/Dialect/Yul/Folders.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
@@ -34,6 +37,107 @@ using namespace mlir::sol;
 //===----------------------------------------------------------------------===//
 
 OpFoldResult ConvCastOp::fold(FoldAdaptor adaptor) { return adaptor.getInp(); }
+
+//===----------------------------------------------------------------------===//
+// CDivOp
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+/// cdiv x, C -> div x, C    (C != 0, and C != -1 if signed)
+struct UncheckedDivByConstant : public OpRewritePattern<CDivOp> {
+  using OpRewritePattern<CDivOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CDivOp op, PatternRewriter &r) const override {
+    APInt divisor;
+    bool isSigned = cast<IntegerType>(op.getType()).isSigned();
+    if (!matchPattern(op.getRhs(), m_ConstantInt(&divisor)) ||
+        divisor.isZero() || (isSigned && divisor.isAllOnes()))
+      return failure();
+    r.replaceOpWithNewOp<DivOp>(op, op.getLhs(), op.getRhs());
+    return success();
+  }
+};
+
+} // namespace
+
+void CDivOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                         MLIRContext *context) {
+  results.add<UncheckedDivByConstant>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// Arithmetic folders
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+bool isSignedOp(Operation *op) {
+  return cast<IntegerType>(op->getResult(0).getType()).isSigned();
+}
+
+/// A checked op whose `compute` sets `overflow` stays, to panic.
+template <typename Fn>
+Attribute foldChecked(ArrayRef<Attribute> operands, Fn compute) {
+  return yul::foldBinary(
+      operands, [&](const APInt &a, const APInt &b) -> std::optional<APInt> {
+        bool overflow = false;
+        APInt result = compute(a, b, overflow);
+        if (overflow)
+          return std::nullopt;
+        return result;
+      });
+}
+
+} // namespace
+
+OpFoldResult CAddOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  bool isSigned = isSignedOp(*this);
+  return foldChecked(adaptor.getOperands(), [&](const APInt &a, const APInt &b,
+                                                bool &overflow) {
+    return isSigned ? a.sadd_ov(b, overflow) : a.uadd_ov(b, overflow);
+  });
+}
+
+OpFoldResult CSubOp::fold(FoldAdaptor adaptor) {
+  if (getLhs() == getRhs())
+    return IntegerAttr::get(getType(), 0);
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getLhs();
+  bool isSigned = isSignedOp(*this);
+  return foldChecked(adaptor.getOperands(), [&](const APInt &a, const APInt &b,
+                                                bool &overflow) {
+    return isSigned ? a.ssub_ov(b, overflow) : a.usub_ov(b, overflow);
+  });
+}
+
+OpFoldResult CMulOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_Zero()))
+    return getRhs();
+  if (matchPattern(adaptor.getRhs(), m_One()))
+    return getLhs();
+  bool isSigned = isSignedOp(*this);
+  return foldChecked(adaptor.getOperands(), [&](const APInt &a, const APInt &b,
+                                                bool &overflow) {
+    return isSigned ? a.smul_ov(b, overflow) : a.umul_ov(b, overflow);
+  });
+}
+
+OpFoldResult CDivOp::fold(FoldAdaptor adaptor) {
+  if (matchPattern(adaptor.getRhs(), m_One()))
+    return getLhs();
+  bool isSigned = isSignedOp(*this);
+  return foldChecked(adaptor.getOperands(),
+                     [&](const APInt &a, const APInt &b, bool &overflow) {
+                       if (b.isZero()) {
+                         overflow = true;
+                         return b;
+                       }
+                       return isSigned ? a.sdiv_ov(b, overflow) : a.udiv(b);
+                     });
+}
 
 //===----------------------------------------------------------------------===//
 // ConstantOp

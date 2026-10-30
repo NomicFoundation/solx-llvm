@@ -30,10 +30,12 @@ yul.object @Test {
   ^bb0(%a: i256, %b: i256):
     yul.func_return %a, %b : i256, i256
   }
-  %c0 = yul.constant 0
-  %0 = yul.calldataload %c0
-  yul.func_call @no_ret() : () -> ()
-  %1 = yul.func_call @ret(%0) : (i256) -> i256
-  %2:2 = yul.func_call @ret2(%0, %1) : (i256, i256) -> (i256, i256)
-  yul.return %2#0, %2#1
+  yul.func @__entry : () -> () {
+    %c0 = yul.constant 0
+    %0 = yul.calldataload %c0
+    yul.func_call @no_ret() : () -> ()
+    %1 = yul.func_call @ret(%0) : (i256) -> i256
+    %2:2 = yul.func_call @ret2(%0, %1) : (i256, i256) -> (i256, i256)
+    yul.return %2#0, %2#1
+  }
 }

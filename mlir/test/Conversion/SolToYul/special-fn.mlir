@@ -18,9 +18,6 @@ module {
 // -----
 
 // CHECK-LABEL: yul.object @C_13_deployed {
-// CHECK-LABEL:   yul.func @_12 : () -> ()
-// CHECK-LABEL:   yul.func @_8 : () -> ()
-// CHECK-LABEL:   yul.func @f_4 : () -> ()
 // CHECK:         yul.switch
 // CHECK:         case 638722032 {
 // CHECK:           yul.func_call @f_4() : () -> ()
@@ -35,6 +32,9 @@ module {
 // CHECK:           yul.revert
 // CHECK:         yul.func_call @_12() : () -> ()
 // CHECK-NEXT:    yul.stop
+// CHECK-LABEL:   yul.func @_12 : () -> ()
+// CHECK-LABEL:   yul.func @_8 : () -> ()
+// CHECK-LABEL:   yul.func @f_4 : () -> ()
 #Contract = #sol<ContractKind Contract>
 #Fallback = #sol<FunctionKind Fallback>
 #NonPayable = #sol<StateMutability NonPayable>
@@ -59,8 +59,6 @@ module {
 // A (bytes) -> bytes fallback takes the whole calldata and returns its memory
 // result as the returndata.
 // CHECK-LABEL: yul.object @A_deployed {
-// CHECK-LABEL:   yul.func @receive : () -> ()
-// CHECK-LABEL:   yul.func @fallback : (!llvm.struct<(i256, i256)>) -> i256
 // CHECK-NOT:     yul.switch
 // CHECK:         %[[SIZE:.*]] = yul.calldatasize
 // CHECK:         %[[Z:.*]] = yul.constant 0
@@ -77,6 +75,8 @@ module {
 // CHECK:         %[[DATA:.*]] = yul.add %[[OUT]],
 // CHECK:         %[[LEN:.*]] = yul.mload %[[OUT]]
 // CHECK:         yul.return %[[DATA]], %[[LEN]]
+// CHECK-LABEL:   yul.func @receive : () -> ()
+// CHECK-LABEL:   yul.func @fallback : (!llvm.struct<(i256, i256)>) -> i256
 #Contract = #sol<ContractKind Contract>
 #Fallback = #sol<FunctionKind Fallback>
 #NonPayable = #sol<StateMutability NonPayable>

@@ -34,6 +34,25 @@ using namespace mlir;
 
 namespace {
 
+// Returns true if `val` is the cleaned form of a `ty` value.
+bool isCleanConstant(Type ty, const APInt &val) {
+  if (auto intTy = dyn_cast<IntegerType>(ty)) {
+    unsigned width = intTy.getWidth();
+    if (intTy.isSigned())
+      return val.trunc(width).sext(256) == val;
+    return val.getActiveBits() <= width;
+  }
+  if (auto enumTy = dyn_cast<sol::EnumType>(ty))
+    return val.ule(enumTy.getMax());
+  if (sol::isAddressLikeType(ty))
+    return val.getActiveBits() <= 160;
+  if (sol::isBytesLikeType(ty))
+    return val.countTrailingZeros() >= 256 - 8 * sol::getNumBytes(ty);
+  if (isa<sol::FuncRefType>(ty))
+    return val.getActiveBits() <= 64;
+  return true;
+}
+
 // Returns the minimum inline head that must be readable after following a
 // calldata offset to a struct value. This is the sum of the member head sizes,
 // which differs from getCallDataHeadSize(), as the outer head contributes one
@@ -1013,6 +1032,11 @@ Value evm::Builder::genCleanup(Type ty, Value val,
                                bool shouldRevert) {
   Location loc = locArg ? *locArg : defLoc;
   mlir::solgen::BuilderExt bExt(b, loc);
+
+  APInt constVal;
+  if (matchPattern(val, m_ConstantInt(&constVal)) &&
+      isCleanConstant(ty, constVal))
+    return val;
 
   if (auto intTy = dyn_cast<IntegerType>(ty)) {
     if (intTy.getWidth() == 256)
@@ -4477,6 +4501,17 @@ void evm::Builder::genPanic(PanicCode code, Value cond,
   b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genPanic(code, loc);
   b.setInsertionPointAfter(ifOp);
+}
+
+void evm::Builder::genDivisionByZeroPanic(Value divisor,
+                                          std::optional<Location> locArg) {
+  if (matchPattern(divisor, m_NonZero()))
+    return;
+  Location loc = locArg ? *locArg : defLoc;
+  mlir::solgen::BuilderExt bExt(b, loc);
+  genPanic(PanicCode::DivisionByZero,
+           bExt.genCmp(yul::CmpPredicate::eq, divisor, bExt.genI256Const(0)),
+           loc);
 }
 
 void evm::Builder::genForwardingRevert(std::optional<Location> locArg) {

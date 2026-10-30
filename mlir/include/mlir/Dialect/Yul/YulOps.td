@@ -41,6 +41,9 @@ def Yul_FuncOp : Yul_Op<"func", [AutomaticAllocationScope,
   let hasVerifier = 1;
 
   let extraClassDeclaration = [{
+    static constexpr ::llvm::StringLiteral entryName = "__entry";
+    bool isEntry() { return getSymName() == entryName; }
+
     //===------------------------------------------------------------------===//
     // CallableOpInterface
     //===------------------------------------------------------------------===//
@@ -122,7 +125,7 @@ def Yul_FuncReturnOp : Yul_Op<"func_return", [Pure, Terminator]> {
 }
 
 def Yul_ConstantOp : Yul_Op<"constant", [
-  Pure,
+  ConstantLike, Pure,
   DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
 ]> {
   let summary = "Represents a Yul word constant";
@@ -130,16 +133,19 @@ def Yul_ConstantOp : Yul_Op<"constant", [
   let results = (outs I256:$out);
 
   let assemblyFormat = "$value attr-dict";
+  let hasFolder = 1;
 }
 
-class Yul_BinOp<string mnemonic> :
-    Yul_Op<mnemonic, [Pure, AllTypesMatch<["lhs", "rhs", "out"]>]> {
+class Yul_BinOp<string mnemonic, list<Trait> traits = []> :
+    Yul_Op<mnemonic, !listconcat(traits,
+                                 [Pure, AllTypesMatch<["lhs", "rhs", "out"]>])> {
   let arguments = (ins I256:$lhs, I256:$rhs);
   let results = (outs I256:$out);
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
-def Yul_AddOp : Yul_BinOp<"add"> {
+def Yul_AddOp : Yul_BinOp<"add", [Commutative]> {
   let summary = "Represents the `add` call in yul";
 }
 
@@ -147,19 +153,19 @@ def Yul_SubOp : Yul_BinOp<"sub"> {
   let summary = "Represents the `sub` call in yul";
 }
 
-def Yul_MulOp : Yul_BinOp<"mul"> {
+def Yul_MulOp : Yul_BinOp<"mul", [Commutative]> {
   let summary = "Represents the `mul` call in yul";
 }
 
-def Yul_AndOp : Yul_BinOp<"and"> {
+def Yul_AndOp : Yul_BinOp<"and", [Commutative]> {
   let summary = "Represents the `and` call in yul";
 }
 
-def Yul_OrOp : Yul_BinOp<"or"> {
+def Yul_OrOp : Yul_BinOp<"or", [Commutative]> {
   let summary = "Represents the `or` call in yul";
 }
 
-def Yul_XOrOp : Yul_BinOp<"xor"> {
+def Yul_XOrOp : Yul_BinOp<"xor", [Commutative]> {
   let summary = "Represents the `xor` call in yul";
 }
 
@@ -168,6 +174,7 @@ def Yul_NotOp : Yul_Op<"not", [Pure, AllTypesMatch<["value", "out"]>]> {
   let arguments = (ins I256:$value);
   let results = (outs I256:$out);
   let assemblyFormat = "$value attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_CmpOp : Yul_Op<"cmp", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
@@ -177,6 +184,7 @@ def Yul_CmpOp : Yul_Op<"cmp", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
   let results = (outs I256:$out);
 
   let assemblyFormat = "$predicate `,` $lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
 class Yul_ArithBinOp<string mnemonic> :
@@ -184,6 +192,7 @@ class Yul_ArithBinOp<string mnemonic> :
   let arguments = (ins I256:$lhs, I256:$rhs);
   let results = (outs I256:$out);
   let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_ArithShlOp : Yul_ArithBinOp<"arith_shl"> {
@@ -221,6 +230,7 @@ def Yul_ArithSelectOp : Yul_Op<"arith_select", [Pure,
   let results = (outs I256:$out);
   let assemblyFormat =
       "$condition `,` $trueValue `,` $falseValue attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_BreakOp : Yul_Op<"break", [Terminator]> {
@@ -379,9 +389,12 @@ def Yul_ObjectOp
     : Yul_Op<"object", [Symbol, SymbolTable, SingleBlock, NoTerminator,
                         IsolatedFromAbove, HasParent<"ModuleOp">]> {
   let summary = "Represents an `object` in yul";
+  let description = [{
+    The entry code is in the `__entry` function.
+  }];
 
   let arguments = (ins SymbolNameAttr:$sym_name);
-  let regions = (region AnyRegion:$body);
+  let regions = (region SizedRegion<1>:$bodyRegion);
 
   let builders = [
     OpBuilder<(ins CArg<"StringRef", "{}">:$name),[{
@@ -393,10 +406,10 @@ def Yul_ObjectOp
   let skipDefaultBuilders = 1;
 
   let extraClassDeclaration = [{
-    Block *getEntryBlock() { return &getBody().front(); }
+    FuncOp getEntryFn() { return lookupSymbol<FuncOp>(FuncOp::entryName); }
   }];
 
-  let assemblyFormat = "$sym_name $body attr-dict";
+  let assemblyFormat = "$sym_name $bodyRegion attr-dict";
   let hasVerifier = 1;
 }
 
@@ -539,11 +552,12 @@ def Yul_MStore8Op : Yul_Op<"mstore8", [MemoryEffects<[MemWrite<Yul_MemoryResourc
   let assemblyFormat = "$addr `,` $val attr-dict";
 }
 
-def Yul_ByteOp : Yul_Op<"byte"> {
+def Yul_ByteOp : Yul_Op<"byte", [Pure]> {
   let summary = "Represents the `byte` call in yul";
   let arguments = (ins I256:$idx, I256:$val);
   let results = (outs I256:$out);
   let assemblyFormat = "$idx `,` $val attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_MCopyOp : Yul_Op<"mcopy", [MemoryEffects<[MemRead<Yul_MemoryResource>,
@@ -762,8 +776,7 @@ def Yul_GasLimitOp : Yul_Op<"gaslimit"> {
   let assemblyFormat = "attr-dict";
 }
 
-// TODO: Is this `ConstantLike`? Adding it causes "expected ConstantLike op to
-// be foldable" assert fail (probably due to the missing let hasFolder = 1).
+// Not ConstantLike: its lowering records the size in a module flag.
 def Yul_MemGuardOp : Yul_Op<"memoryguard", [Pure]> {
   let summary = "Represents the `memoryguard` call in yul";
   let arguments = (ins I256Attr:$size);
@@ -784,6 +797,7 @@ def Yul_DivOp : Yul_Op<"div", [Pure]> {
   let arguments = (ins I256:$dividend, I256:$divisor);
   let results = (outs I256:$out);
   let assemblyFormat = "$dividend `,` $divisor attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_SDivOp : Yul_Op<"sdiv", [Pure]> {
@@ -791,6 +805,7 @@ def Yul_SDivOp : Yul_Op<"sdiv", [Pure]> {
   let arguments = (ins I256:$dividend, I256:$divisor);
   let results = (outs I256:$out);
   let assemblyFormat = "$dividend `,` $divisor attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_ModOp : Yul_Op<"mod", [Pure]> {
@@ -798,6 +813,7 @@ def Yul_ModOp : Yul_Op<"mod", [Pure]> {
   let arguments = (ins I256:$value, I256:$mod);
   let results = (outs I256:$out);
   let assemblyFormat = "$value `,` $mod attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_SModOp : Yul_Op<"smod", [Pure]> {
@@ -805,6 +821,7 @@ def Yul_SModOp : Yul_Op<"smod", [Pure]> {
   let arguments = (ins I256:$value, I256:$mod);
   let results = (outs I256:$out);
   let assemblyFormat = "$value `,` $mod attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_ShlOp : Yul_Op<"shl", [Pure]> {
@@ -812,6 +829,7 @@ def Yul_ShlOp : Yul_Op<"shl", [Pure]> {
   let arguments = (ins I256:$shift, I256:$val);
   let results = (outs I256:$out);
   let assemblyFormat = "$shift `,` $val attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_ShrOp : Yul_Op<"shr", [Pure]> {
@@ -819,6 +837,7 @@ def Yul_ShrOp : Yul_Op<"shr", [Pure]> {
   let arguments = (ins I256:$shift, I256:$val);
   let results = (outs I256:$out);
   let assemblyFormat = "$shift `,` $val attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_SarOp : Yul_Op<"sar", [Pure]> {
@@ -826,6 +845,7 @@ def Yul_SarOp : Yul_Op<"sar", [Pure]> {
   let arguments = (ins I256:$shift, I256:$val);
   let results = (outs I256:$out);
   let assemblyFormat = "$shift `,` $val attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_ClzOp : Yul_Op<"clz", [Pure]> {
@@ -833,6 +853,7 @@ def Yul_ClzOp : Yul_Op<"clz", [Pure]> {
   let arguments = (ins I256:$val);
   let results = (outs I256:$out);
   let assemblyFormat = "$val attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_ExpOp : Yul_Op<"exp", [Pure]> {
@@ -840,6 +861,7 @@ def Yul_ExpOp : Yul_Op<"exp", [Pure]> {
   let arguments = (ins I256:$base, I256:$exp);
   let results = (outs I256:$out);
   let assemblyFormat = "$base `,` $exp attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_AddModOp : Yul_Op<"addmod", [Pure]> {
@@ -847,6 +869,7 @@ def Yul_AddModOp : Yul_Op<"addmod", [Pure]> {
   let arguments = (ins I256:$x, I256:$y, I256:$mod);
   let results = (outs I256:$out);
   let assemblyFormat = "$x `,` $y `,` $mod attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_MulModOp : Yul_Op<"mulmod", [Pure]> {
@@ -854,6 +877,7 @@ def Yul_MulModOp : Yul_Op<"mulmod", [Pure]> {
   let arguments = (ins I256:$x, I256:$y, I256:$mod);
   let results = (outs I256:$out);
   let assemblyFormat = "$x `,` $y `,` $mod attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_LogOp : Yul_Op<"log", [MemoryEffects<[
@@ -869,6 +893,7 @@ def Yul_SignExtendOp : Yul_Op<"signextend", [Pure]> {
   let arguments = (ins I256:$idx, I256:$val);
   let results = (outs I256:$out);
   let assemblyFormat = "$idx `,` $val attr-dict";
+  let hasFolder = 1;
 }
 
 def Yul_SetImmutableOp : Yul_Op<"setimmutable"> {

@@ -490,14 +490,11 @@ struct DivOrModOpLowering
   LogicalResult rewriteCleaned(SolOp op, ConversionPatternRewriter &r,
                                Value lhs, Value rhs) const {
     Location loc = op.getLoc();
-    mlir::solgen::BuilderExt bExt(r, loc);
     evm::Builder evmB(getModule(op), r, loc);
 
     auto ty = cast<IntegerType>(op.getType());
 
-    auto zero = bExt.genI256Const(0, loc);
-    auto rhsEqZero = bExt.genCmp(yul::CmpPredicate::eq, rhs, zero);
-    evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, rhsEqZero);
+    evmB.genDivisionByZeroPanic(rhs, loc);
 
     if (ty.isSigned())
       r.replaceOpWithNewOp<ArithSignedOp>(op, lhs, rhs);
@@ -937,12 +934,9 @@ static Value getCryptoHashLowering(OpT op, uint32_t preCompieAddr,
 template <typename ModOpT>
 static Value genYulModOp(ModuleOp module, ConversionPatternRewriter &r,
                          Location loc, Value x, Value y, Value mod) {
-  mlir::solgen::BuilderExt bExt(r, loc);
   evm::Builder evmB(module, r, loc);
 
-  auto zero = bExt.genI256Const(0);
-  auto modEqZero = bExt.genCmp(yul::CmpPredicate::eq, mod, zero);
-  evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, modEqZero);
+  evmB.genDivisionByZeroPanic(mod, loc);
   return r.create<ModOpT>(loc, x, y, mod);
 }
 
@@ -1215,9 +1209,7 @@ struct CDivOpLowering
     evm::Builder evmB(getModule(op), r, loc);
 
     auto ty = cast<IntegerType>(op.getType());
-    auto zero = bExt.genI256Const(0, loc);
-    auto rhsEqZero = bExt.genCmp(yul::CmpPredicate::eq, rhs, zero);
-    evmB.genPanic(mlir::evm::PanicCode::DivisionByZero, rhsEqZero);
+    evmB.genDivisionByZeroPanic(rhs, loc);
 
     if (ty.isSigned()) {
       // (Copied from the yul codegen)
@@ -2970,9 +2962,9 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
     // The allocation `selectorAddr` will be reused for the return data.
 
     // Generate the decoding of the results.
-    Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
     std::vector<Value> decodedResults;
     if (isRetSizeDynamic) {
+      Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
       r.create<yul::ReturnDataCopyOp>(loc, selectorAddr,
                                       /*src=*/bExt.genI256Const(0),
                                       retDataSize);
@@ -2982,32 +2974,24 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
                                decodedResults, /*fromMem=*/true,
                                *getTypeConverter());
     } else {
+      // See https://github.com/ethereum/solidity/pull/12684: the tuple is the
+      // return data up to the static size, so return data shorter than that
+      // fails the tuple's size check, and the tuple is otherwise exactly the
+      // static size.
+      if (staticRetSizeVal) {
+        Value retDataSize = r.create<yul::ReturnDataSizeOp>(loc);
+        Value tooShort =
+            bExt.genCmp(yul::CmpPredicate::ult, retDataSize, staticRetSize);
+        evmB.genDebugRevertWithMsg(tooShort,
+                                   "ABI decoding: tuple data too short");
+      }
       // Scalar results are decoded onto the stack right away, so the return
       // data needs no memory of its own.
-      bool reserve = !llvm::all_of(abiResultTys,
-                                   [](Type ty) { return sol::isScalar(ty); });
-
-      // See https://github.com/ethereum/solidity/pull/12684
-      Value staticRetSizeGreater =
-          bExt.genCmp(yul::CmpPredicate::ugt, staticRetSize, retDataSize);
-
-      auto ifOp =
-          bExt.createIf(TypeRange{r.getIntegerType(256)}, staticRetSizeGreater);
-      // Then block:
-      r.setInsertionPointToStart(&ifOp.getThenRegion().front());
-      if (reserve)
-        evmB.genFreePtrUpd(selectorAddr, retDataSize);
-      Value tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, retDataSize);
-      r.create<yul::YieldOp>(loc, ValueRange{tupleEnd});
-      // Else block:
-      r.setInsertionPointToStart(&ifOp.getElseRegion().front());
-      if (reserve)
+      if (!llvm::all_of(abiResultTys,
+                        [](Type ty) { return sol::isScalar(ty); }))
         evmB.genFreePtrUpd(selectorAddr, staticRetSize);
-      tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, staticRetSize);
-      r.create<yul::YieldOp>(loc, ValueRange{tupleEnd});
-
-      r.setInsertionPointAfter(ifOp);
-      evmB.genABITupleDecoding(abiResultTys, selectorAddr, ifOp.getResult(0),
+      Value tupleEnd = r.create<yul::AddOp>(loc, selectorAddr, staticRetSize);
+      evmB.genABITupleDecoding(abiResultTys, selectorAddr, tupleEnd,
                                decodedResults,
                                /*fromMem=*/true, *getTypeConverter());
     }
@@ -4314,20 +4298,25 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
       }
     }
 
-    r.setInsertionPointToStart(obj.getEntryBlock());
+    ModuleOp mod = getModule(op);
+    StringRef entryName = yul::FuncOp::entryName;
+    r.setInsertionPointToStart(obj.getBody());
+    auto entryFn = r.create<yul::FuncOp>(
+        evm::fuseArtificialSubprogram(mod, entryName, mod.getLoc()), entryName,
+        r.getFunctionType({}, {}));
+    r.createBlock(&entryFn.getBody());
     if (op.getRuntime())
       genRuntimeCode(op, fns, r, loc);
     else
       genCreationCode(op, fns.ctor, runtimeObjName, r, loc);
 
-    // The functions and the string literal globals precede the code, which
-    // ends in a halting terminator, the last one first, which keeps the layout
-    // of the object and so its bytecode.
-    Operation *code = &obj.getEntryBlock()->front();
+    // The functions and the string literal globals follow the entry function,
+    // the last one first, which keeps the layout of the object and so its
+    // bytecode.
     for (Operation &i :
          llvm::make_early_inc_range(llvm::reverse(*op.getBody()))) {
       if (isa<FunctionOpInterface, LLVM::GlobalOp>(i))
-        r.moveOpBefore(&i, code);
+        r.moveOpBefore(&i, obj.getBody(), obj.getBody()->end());
       else if (!isa<sol::StateVarOp, sol::ImmutableOp>(i))
         llvm_unreachable("NYI");
     }

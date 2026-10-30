@@ -7,6 +7,9 @@
 // validated against the uint8 mask. The dispatcher decodes the tuple through
 // a helper per argument list, which decodes the array through a helper per
 // type.
+// CHECK:         case 2364674588 {
+// CHECK:           %[[MEM:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_ui8_$_Memory_$(
+// CHECK:           yul.func_call @decode(%[[MEM]])
 // CHECK-LABEL:   yul.func @__sol.abi_decode.calldata.memory.array$_dyn_ui8_$_Memory_$ : (i256, i256) -> i256
 // CHECK:           %[[LEN:.*]] = yul.calldataload %arg0
 // CHECK:           %[[P:.*]] = yul.func_call @__sol.alloc
@@ -24,9 +27,6 @@
 // CHECK:           %[[TAIL:.*]] = yul.add %arg0, %[[OFF]]
 // CHECK:           %[[R:.*]] = yul.func_call @__sol.abi_decode.calldata.memory.array$_dyn_ui8_$_Memory_$(%[[TAIL]], %arg1)
 // CHECK:           yul.func_return %[[R]]
-// CHECK:         case 2364674588 {
-// CHECK:           %[[MEM:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_ui8_$_Memory_$(
-// CHECK:           yul.func_call @decode(%[[MEM]])
 module {
   sol.contract @C {
     sol.func @decode(%arg0: !sol.array<? x ui8, Memory>) attributes {orig_fn_type = (!sol.array<? x ui8, Memory>) -> (), selector = -1930292708 : i32, state_mutability = #NonPayable} {
@@ -43,6 +43,9 @@ module {
 // A dynamic calldata array is not copied: its length word must be in bounds,
 // the length fit in 64 bits and the elements fit in calldata; the argument is
 // the {data, length} pair.
+// CHECK:         case 286331153 {
+// CHECK:           %[[FP:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_ui256_$_CallData_$(
+// CHECK:           yul.func_call @cdyn(%[[FP]])
 // CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.array$_dyn_ui256_$_CallData_$ : (i256, i256) -> !llvm.struct<(i256, i256)>
 // CHECK-NEXT:    ^bb0(%[[HEAD:.*]]: i256, %[[END:.*]]: i256):
 // CHECK:           %[[OFF:.*]] = yul.calldataload %[[HEAD]]
@@ -64,9 +67,6 @@ module {
 // CHECK:           %[[FP0:.*]] = llvm.insertvalue %[[DATA]], %{{.*}}[0]
 // CHECK:           %[[FP:.*]] = llvm.insertvalue %[[LEN]], %[[FP0]][1]
 // CHECK:           yul.func_return %[[FP]]
-// CHECK:         case 286331153 {
-// CHECK:           %[[FP:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_dyn_ui256_$_CallData_$(
-// CHECK:           yul.func_call @cdyn(%[[FP]])
 module {
   sol.contract @C {
     sol.func @cdyn(%arg0: !sol.array<? x ui256, CallData>) attributes {orig_fn_type = (!sol.array<? x ui256, CallData>) -> (), selector = 286331153 : i32, state_mutability = #NonPayable} {
@@ -82,6 +82,10 @@ module {
 
 // A static calldata array only needs its whole span in calldata; the argument
 // is its head address.
+// CHECK:         case 572662306 {
+// CHECK:           %[[C4:.*]] = yul.constant 4{{$}}
+// CHECK:           %[[A:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_2_ui256_$_CallData_$(%[[C4]], %{{.*}})
+// CHECK:           yul.func_call @cfix(%[[A]])
 // CHECK-LABEL:   yul.func @__sol.abi_decode_tuple.calldata.array$_2_ui256_$_CallData_$ : (i256, i256) -> i256
 // CHECK-NEXT:    ^bb0(%[[HEAD:.*]]: i256, %[[END:.*]]: i256):
 // CHECK:           yul.sub %[[END]], %[[HEAD]]
@@ -90,10 +94,6 @@ module {
 // CHECK:           yul.if %[[BADSPAN]] {
 // CHECK-NOT:       yul.calldataload
 // CHECK:           yul.func_return %[[HEAD]]
-// CHECK:         case 572662306 {
-// CHECK:           %[[C4:.*]] = yul.constant 4{{$}}
-// CHECK:           %[[A:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.array$_2_ui256_$_CallData_$(%[[C4]], %{{.*}})
-// CHECK:           yul.func_call @cfix(%[[A]])
 module {
   sol.contract @C {
     sol.func @cfix(%arg0: !sol.array<2 x ui256, CallData>) attributes {orig_fn_type = (!sol.array<2 x ui256, CallData>) -> (), selector = 572662306 : i32, state_mutability = #NonPayable} {

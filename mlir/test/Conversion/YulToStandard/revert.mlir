@@ -10,9 +10,11 @@
 
 module {
   yul.object @Test {
-    %c0_i256 = yul.constant 0
-    %c1_i256 = yul.constant 1
-    yul.revert %c0_i256, %c1_i256
+    yul.func @__entry : () -> () {
+      %c0_i256 = yul.constant 0
+      %c1_i256 = yul.constant 1
+      yul.revert %c0_i256, %c1_i256
+    }
   }
 }
 
