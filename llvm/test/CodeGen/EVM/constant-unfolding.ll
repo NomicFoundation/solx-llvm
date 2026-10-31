@@ -42,7 +42,8 @@ define void @test3() #1 {
 ; CHECK-LABEL: test3:
 ; CHECK:       ; %bb.0: ; %entry
 ; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    PUSH3 0xFFFFFF
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    NOT
 ; CHECK-NEXT:    PUSH1 0xE8
 ; CHECK-NEXT:    SHL
 ; CHECK-NEXT:    PUSH0
@@ -57,7 +58,8 @@ define void @test4() #1 {
 ; CHECK-LABEL: test4:
 ; CHECK:       ; %bb.0: ; %entry
 ; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    PUSH4 0xFFFFFFFF
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    NOT
 ; CHECK-NEXT:    PUSH1 0xE0
 ; CHECK-NEXT:    SHL
 ; CHECK-NEXT:    PUSH0
