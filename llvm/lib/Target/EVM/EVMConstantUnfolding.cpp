@@ -29,7 +29,11 @@
 #include "EVMSubtarget.h"
 #include "MCTargetDesc/EVMMCTargetDesc.h"
 #include "TargetInfo/EVMTargetInfo.h"
+#include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/CallGraph.h"
+#include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
+#include "llvm/CodeGen/MachineBranchProbabilityInfo.h"
 #include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/MachineModuleInfo.h"
@@ -47,12 +51,16 @@ using namespace llvm;
 STATISTIC(StatNumOfUnfoldings, "Number of unfolded constants");
 STATISTIC(StatCodeSizeReduction, "Total size reduction across all functions");
 
-// The initial values of the following options were determined experimentally
-// to allow constant unfolding in non-OptForSize mode without noticeably
-// impacting performance.
+// The values of the following options were determined experimentally to allow
+// constant unfolding in non-OptForSize mode without noticeably impacting
+// performance. The size reduction threshold is flat between 1.05 and 1.4 over
+// the OpenZeppelin, uniswap-v4-core, ENS, Aave v3 and Graph Horizon projects,
+// the size falls monotonically as the threshold approaches 1 and the selection
+// below already guarantees a ratio above it, so 1.05 keeps a small margin
+// without giving up bytes.
 static cl::opt<float>
     SizeReductionThreshold("evm-const-unfolding-size-reduction-threshold",
-                           cl::Hidden, cl::init(2.5),
+                           cl::Hidden, cl::init(1.05),
                            cl::desc("Minimum original-to-unfolded size ratio"
                                     "required for constant unfolding when"
                                     "optimizing for speed"));
@@ -61,6 +69,25 @@ static cl::opt<unsigned> InstrNumLimitUnfoldInto(
     "evm-const-unfolding-inst-num-limit", cl::Hidden, cl::init(4),
     cl::desc("Maximum number of instructions an original"
              "instruction can be unfolded into"));
+
+// How heavily the gas of a recomputed constant counts against its bytes when
+// optimizing for speed, and how fast that grows with loop nesting. A constant
+// outside any loop runs about as often as its function, so its bytes dominate;
+// one inside a loop pays its gas on every iteration. The weight at loop depth
+// d is GasWeight * LoopGasFactor^d, so 0.19, 0.57 and 1.71 at depths 0, 1 and
+// 2. The crossover is what these values are chosen around: an all-ones mask
+// unfolds to PUSH0 NOT PUSHn SHR, 5 bytes and 11 gas against 9 bytes and 3
+// gas, which wins only while the weight is below 0.5. Depth 0 is therefore
+// unfolded and depth 1 and deeper are not.
+constexpr float GasWeight = 0.19F;
+constexpr float LoopGasFactor = 3.0F;
+
+// A function that takes part in a call graph cycle runs its body once per
+// level of recursion, which MachineLoopInfo cannot see: it reports only the
+// natural loops inside one function, so every block of a recursive function
+// reports depth 0. Count such a function as this many levels of nesting so
+// that its constants are priced like a loop body.
+constexpr unsigned RecursionDepthBonus = 2;
 
 static cl::opt<unsigned>
     LoopDepthLimit("evm-const-loop-depth-limit", cl::Hidden, cl::init(2),
@@ -176,13 +203,14 @@ public:
   unsigned getCodeSizeReduction() const { return OverallCodeReductionSize; }
 
   bool tryToUnfoldConstant(MachineInstr &MI, bool OptForSize,
+                           unsigned QuantizedWeight,
                            const TargetInstrInfo *TII);
 
 private:
   LLVMContext *Context{};
 
-  // The 'second' field can be set to 0 or 1, indicating whether to
-  // optimize for performance or size.
+  // The 'second' field is -1 when optimizing for size, and otherwise the
+  // quantized gas weight the constant is scored with.
   using TransformationKey = std::pair<APInt, int>;
   DenseMap<TransformationKey, std::unique_ptr<TransformationCandidate>>
       TransformationCache;
@@ -191,6 +219,7 @@ private:
 
   const TransformationCandidate *
   findOptimalTransformation(const APInt &Imm, bool OptForSize,
+                            unsigned QuantizedWeight,
                             const TargetInstrInfo *TII);
 
   void reduceCodeSizeOn(unsigned Size) {
@@ -231,19 +260,42 @@ ModulePass *llvm::createEVMConstantUnfolding() {
   return new EVMConstantUnfolding();
 }
 
+// Returns how heavily gas counts against bytes at \p LoopDepth.
+static float gasWeightAt(unsigned LoopDepth) {
+  float Weight = GasWeight;
+  for (unsigned I = 0; I < LoopDepth; ++I)
+    Weight *= LoopGasFactor;
+
+  return Weight;
+}
+
+// The gas weight is quantized to sixteenths so the transformation cache stays
+// small; a weight of 1.0 is the key 16.
+static constexpr unsigned WeightScale = 16;
+
+static unsigned quantizeWeight(float Weight) {
+  return static_cast<unsigned>(
+      std::lround(std::min(Weight, 64.0f) * WeightScale));
+}
+
+static float weightOf(unsigned Quantized) {
+  return static_cast<float>(Quantized) / WeightScale;
+}
+
 static bool isBetterCandidate(const TransformationCandidate &A,
-                              const TransformationCandidate &B,
-                              bool OptForSize) {
-  static constexpr unsigned Weight = 2;
+                              const TransformationCandidate &B, bool OptForSize,
+                              unsigned QuantizedWeight) {
+  static constexpr unsigned SizeWeight = 2;
   const StackCostModel &CostA = A.getCost();
   const StackCostModel &CostB = B.getCost();
-  unsigned ScoreA = 0;
-  unsigned ScoreB = 0;
+  float ScoreA = 0;
+  float ScoreB = 0;
 
   if (OptForSize) {
-    ScoreA = (CostA.getByteSize() * Weight) + CostA.getGas();
-    ScoreB = (CostB.getByteSize() * Weight) + CostB.getGas();
+    ScoreA = (CostA.getByteSize() * SizeWeight) + CostA.getGas();
+    ScoreB = (CostB.getByteSize() * SizeWeight) + CostB.getGas();
   } else {
+    const float Weight = weightOf(QuantizedWeight);
     ScoreA = CostA.getByteSize() + (Weight * CostA.getGas());
     ScoreB = CostB.getByteSize() + (Weight * CostB.getGas());
   }
@@ -255,8 +307,10 @@ static bool isBetterCandidate(const TransformationCandidate &A,
 
 const TransformationCandidate *
 ConstantUnfolder::findOptimalTransformation(const APInt &Imm, bool OptForSize,
+                                            unsigned QuantizedWeight,
                                             const TargetInstrInfo *TII) {
-  if (auto It = TransformationCache.find({Imm, OptForSize});
+  const int Key = OptForSize ? -1 : static_cast<int>(QuantizedWeight);
+  if (auto It = TransformationCache.find({Imm, Key});
       It != TransformationCache.end()) {
     LLVM_DEBUG(
         { dbgs() << "      Retrieving transformation from the cache\n"; });
@@ -433,10 +487,11 @@ ConstantUnfolder::findOptimalTransformation(const APInt &Imm, bool OptForSize,
   }
 
   // Find optimal transformation.
-  auto *OptIt = std::min_element(Transformations.begin(), Transformations.end(),
-                                 [OptForSize](const auto &A, const auto &B) {
-                                   return isBetterCandidate(*A, *B, OptForSize);
-                                 });
+  auto *OptIt = std::min_element(
+      Transformations.begin(), Transformations.end(),
+      [OptForSize, QuantizedWeight](const auto &A, const auto &B) {
+        return isBetterCandidate(*A, *B, OptForSize, QuantizedWeight);
+      });
 
 #ifndef NDEBUG
   LLVM_DEBUG({ dbgs() << "      Available transformations:\n"; });
@@ -452,7 +507,7 @@ ConstantUnfolder::findOptimalTransformation(const APInt &Imm, bool OptForSize,
 
   const TransformationCandidate *Tr = OptIt->get();
   [[maybe_unused]] auto Res =
-      TransformationCache.try_emplace({Imm, OptForSize}, std::move(*OptIt));
+      TransformationCache.try_emplace({Imm, Key}, std::move(*OptIt));
   assert(Res.second);
 
   return Tr;
@@ -476,6 +531,7 @@ static bool isProfitableToTranform(const APInt &Imm, const StackCostModel &Cost,
 }
 
 bool ConstantUnfolder::tryToUnfoldConstant(MachineInstr &MI, bool OptForSize,
+                                           unsigned QuantizedWeight,
                                            const TargetInstrInfo *TII) {
   const APInt Imm = MI.getOperand(0).getCImm()->getValue().zext(256);
   unsigned OrigSize = (alignTo(Imm.getActiveBits(), 8) / 8) + 1;
@@ -496,7 +552,7 @@ bool ConstantUnfolder::tryToUnfoldConstant(MachineInstr &MI, bool OptForSize,
   }
 
   const TransformationCandidate *OptTransformation =
-      findOptimalTransformation(Imm, OptForSize, TII);
+      findOptimalTransformation(Imm, OptForSize, QuantizedWeight, TII);
 
   const StackCostModel &OptCost = OptTransformation->getCost();
   LLVM_DEBUG({
@@ -554,7 +610,9 @@ static bool shouldSkip(const MachineInstr &MI) {
 // 1 - top level loop, etc.).
 class LoopDepthInstrCache {
 public:
-  LoopDepthInstrCache(MachineFunction &MF, const MachineLoopInfo &MLI) {
+  LoopDepthInstrCache(MachineFunction &MF, const MachineLoopInfo &MLI,
+                      const MachineBlockFrequencyInfo &MBFI,
+                      unsigned RecursionBonus) {
     unsigned MaxLoopDepth = 0;
     for (auto *ML : MLI.getLoopsInPreorder())
       MaxLoopDepth = std::max(MaxLoopDepth, ML->getLoopDepth());
@@ -569,6 +627,17 @@ public:
         assert(Depth < InstrsPerLoopDepth.size());
         InstrsPerLoopDepth[Depth].push_back(&MI);
       }
+
+      // Nesting sets the weight; a block reached less than once per call then
+      // discounts it, which is what tells a revert block apart from ordinary
+      // straight-line code at the same depth. The clamp keeps this a discount:
+      // a hot block is priced by its nesting, never by its frequency.
+      float Weight = gasWeightAt(MLI.getLoopDepth(&MBB) + RecursionBonus);
+      if (MBFI.getEntryFreq() != BlockFrequency(0))
+        Weight *= std::min(
+            1.0F,
+            static_cast<float>(MBFI.getBlockFreqRelativeToEntryBlock(&MBB)));
+      QuantizedWeight[&MBB] = quantizeWeight(Weight);
     }
 
     LLVM_DEBUG({
@@ -601,15 +670,22 @@ public:
 
   DenseSet<const MachineInstr *> &getVisited() { return Visited; }
 
+  unsigned getQuantizedWeight(const MachineInstr &MI) const {
+    auto It = QuantizedWeight.find(MI.getParent());
+    return It == QuantizedWeight.end() ? quantizeWeight(GasWeight) : It->second;
+  }
+
 private:
   InstrsPerLoopDepthTy InstrsPerLoopDepth;
+  DenseMap<const MachineBasicBlock *, unsigned> QuantizedWeight;
   DenseSet<const MachineInstr *> Visited;
 };
 
 static bool processInstructions(ConstantUnfolder &Unfolder,
                                 const SmallVector<MachineInstr *> &Instrs,
-                                DenseSet<const MachineInstr *> &Visited,
-                                bool OptForSize, const TargetInstrInfo *TII) {
+                                LoopDepthInstrCache &Cache, bool OptForSize,
+                                const TargetInstrInfo *TII) {
+  DenseSet<const MachineInstr *> &Visited = Cache.getVisited();
   bool Changed = false;
   for (MachineInstr *MI : Instrs) {
     if (Visited.count(MI))
@@ -617,7 +693,8 @@ static bool processInstructions(ConstantUnfolder &Unfolder,
 
     LLVM_DEBUG({ dbgs() << "     Checking " << *MI; });
 
-    if (Unfolder.tryToUnfoldConstant(*MI, OptForSize, TII)) {
+    if (Unfolder.tryToUnfoldConstant(*MI, OptForSize,
+                                     Cache.getQuantizedWeight(*MI), TII)) {
       Visited.insert(MI);
       Changed = true;
     }
@@ -626,9 +703,27 @@ static bool processInstructions(ConstantUnfolder &Unfolder,
   return Changed;
 }
 
+/// Returns the functions that take part in a call graph cycle, directly or
+/// through other functions. Mirrors how the inlining policy finds them.
+static DenseSet<const Function *> collectRecursiveFunctions(Module &M) {
+  DenseSet<const Function *> Recursive;
+  CallGraph CG(M);
+  for (auto SCCI = scc_begin(&CG); !SCCI.isAtEnd(); ++SCCI) {
+    const std::vector<CallGraphNode *> &SCC = *SCCI;
+    if (SCC.size() == 1 && !SCCI.hasCycle())
+      continue;
+    for (const CallGraphNode *Node : SCC)
+      if (const Function *F = Node->getFunction(); F && !F->isDeclaration())
+        Recursive.insert(F);
+  }
+
+  return Recursive;
+}
+
 static bool runImpl(Module &M, MachineModuleInfo &MMI) {
   bool Changed = false;
   ConstantUnfolder Unfolder(&M.getContext());
+  const DenseSet<const Function *> Recursive = collectRecursiveFunctions(M);
 
   // Metadata size is included into the bytecode size.
   const unsigned ModuleCodeSize =
@@ -654,8 +749,16 @@ static bool runImpl(Module &M, MachineModuleInfo &MMI) {
     OwnedMLI->analyze(*MDT);
     const MachineLoopInfo *MLI = OwnedMLI.get();
 
+    MachineBranchProbabilityInfo MBPI;
+    MachineBlockFrequencyInfo MBFI;
+    MBFI.calculate(*MF, MBPI, *MLI);
+
+    // A recursive function has no MachineLoop, so charge its body the
+    // recursion bonus on top of whatever nesting it does have.
+    const unsigned Bonus = Recursive.contains(&F) ? RecursionDepthBonus : 0;
+
     InstrCacheMap.emplace_back(
-        MF, std::make_unique<LoopDepthInstrCache>(*MF, *MLI));
+        MF, std::make_unique<LoopDepthInstrCache>(*MF, *MLI, MBFI, Bonus));
   }
 
   LLVM_DEBUG({
@@ -672,7 +775,7 @@ static bool runImpl(Module &M, MachineModuleInfo &MMI) {
     bool OptForSize = MF->getFunction().hasOptSize();
     const EVMInstrInfo *TII = MF->getSubtarget<EVMSubtarget>().getInstrInfo();
     Changed |= processInstructions(Unfolder, Cache->getAllInstructions(),
-                                   Cache->getVisited(), OptForSize, TII);
+                                   *Cache, OptForSize, TII);
   }
 
   unsigned CodeSizeReduction = Unfolder.getCodeSizeReduction();
@@ -709,8 +812,8 @@ static bool runImpl(Module &M, MachineModuleInfo &MMI) {
 
       const EVMInstrInfo *TII = MF->getSubtarget<EVMSubtarget>().getInstrInfo();
       Changed |=
-          processInstructions(Unfolder, InstrsPerLoopDepth[LoopDepth],
-                              Cache->getVisited(), /*OptForSize=*/true, TII);
+          processInstructions(Unfolder, InstrsPerLoopDepth[LoopDepth], *Cache,
+                              /*OptForSize=*/true, TII);
 
       CodeSizeReduction = Unfolder.getCodeSizeReduction();
       if (ModuleCodeSize < CodeSizeLimit + CodeSizeReduction) {
