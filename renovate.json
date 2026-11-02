@@ -34,6 +34,11 @@
       "groupName": "github-actions"
     },
     {
+      "description": "node: `node-version` in check-renovate-config.yml has to stay within renovate's engines.node range (^24.11 today), or the extraction dry-run exits with \"Unsupported node environment\". Raise the cap once renovate accepts a newer major.",
+      "matchDepNames": ["node"],
+      "allowedVersions": "<25"
+    },
+    {
       "description": "solx-ci-runner is a private GHCR image pinned by digest in the workflow's container:. It's rebuilt and re-pinned in NomicFoundation/solx, not here; Renovate can't read the private package anyway.",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ghcr.io/nomicfoundation/solx-ci-runner"],
