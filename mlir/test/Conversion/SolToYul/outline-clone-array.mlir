@@ -2,9 +2,9 @@
 
 // An allocating array copy into memory that needs a loop is outlined once
 // per type as `__sol.clone_array.<src>.memory.<ty>`: every storage source,
-// and a calldata source whose elements are not 32-byte words, which is
-// passed as one fat-pointer struct. A calldata array of words is a single
-// calldatacopy and stays inline.
+// and a calldata source whose elements are not one bulk copy. A calldata
+// array of scalars, narrow or word-sized, is a single calldatacopy and stays
+// inline.
 
 #Contract = #sol<ContractKind Contract>
 #Default = #sol<RevertStrings Default>
@@ -37,7 +37,7 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 }
 
 // CHECK-LABEL: yul.object @C_deployed
-// CHECK-DAG:     yul.func @__sol.clone_array.calldata.memory.array$_dyn_ui8_$_CallData_$ : (!llvm.struct<(i256, i256)>) -> i256
+// CHECK-NOT:     yul.func @__sol.clone_array.calldata
 // CHECK-DAG:     yul.func @__sol.clone_array.storage.memory.array$_dyn_ui256_$_Storage_$ : (i256) -> i256
 // CHECK-DAG:     yul.func @__sol.clone_array.storage.memory.array$_dyn_ui8_$_Storage_$ : (i256) -> i256
 // CHECK-LABEL:   yul.func @cdw
@@ -45,7 +45,9 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK:           yul.calldatacopy
 // CHECK-NOT:       yul.func_call @__sol.clone_array
 // CHECK-LABEL:   yul.func @cdn
-// CHECK:           yul.func_call @__sol.clone_array.calldata.memory.array$_dyn_ui8_$_CallData_$(%{{.*}}) : (!llvm.struct<(i256, i256)>) -> i256
+// CHECK-NOT:       yul.func_call @__sol.clone_array
+// CHECK:           yul.calldatacopy
+// CHECK-NOT:       yul.func_call @__sol.clone_array
 // CHECK-LABEL:   yul.func @w2m
 // CHECK:           yul.func_call @__sol.clone_array.storage.memory.array$_dyn_ui256_$_Storage_$(
 // CHECK-LABEL:   yul.func @n2m

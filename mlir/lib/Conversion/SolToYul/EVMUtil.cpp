@@ -741,9 +741,18 @@ static bool isWordElt(Type ty) {
 static bool isBulkArrayCopy(Type srcEltTy, Type dstEltTy,
                             sol::DataLocation srcDataLoc,
                             sol::DataLocation dstDataLoc) {
-  return srcDataLoc != sol::DataLocation::Storage &&
-         dstDataLoc == sol::DataLocation::Memory && srcEltTy == dstEltTy &&
-         isWordElt(dstEltTy);
+  if (srcDataLoc == sol::DataLocation::Storage ||
+      dstDataLoc != sol::DataLocation::Memory || srcEltTy != dstEltTy)
+    return false;
+  // old codegen begin
+  // A calldata array of scalars is one raw calldatacopy, whatever the width.
+  // An external function keeps the loop, because its memory form differs
+  // from its calldata form.
+  // (Via-IR validates every element.)
+  if (srcDataLoc == sol::DataLocation::CallData)
+    return sol::isScalar(dstEltTy) && !isa<sol::ExtFuncRefType>(dstEltTy);
+  // old codegen end
+  return isWordElt(dstEltTy);
 }
 
 // Centralizes common ABI decode bounds checks and the canonical diagnostic
@@ -3510,7 +3519,7 @@ Value evm::Builder::genCloneToMemory(Type ty, Value src,
   Location loc = locArg ? *locArg : defLoc;
   // An array clone that needs a loop is emitted once per type and called:
   // every storage source (sload per slot), and a calldata source whose
-  // elements are not plain 32-byte words. A calldata array of words is one
+  // elements are not one bulk copy. A calldata array of scalars is one
   // calldatacopy and stays inline, as does a calldata or memory string. A
   // storage string clone decodes the length and walks the slots, and is
   // shared. Every struct clone is outlined: an identified struct may be
@@ -3519,7 +3528,8 @@ Value evm::Builder::genCloneToMemory(Type ty, Value src,
   if (auto arrTy = dyn_cast<sol::ArrayType>(ty)) {
     if (srcDataLoc == sol::DataLocation::Storage ||
         (srcDataLoc == sol::DataLocation::CallData &&
-         !isWordElt(arrTy.getEltType())))
+         !isBulkArrayCopy(arrTy.getEltType(), arrTy.getEltType(), srcDataLoc,
+                          sol::DataLocation::Memory)))
       sym = helpersym::cloneArrayToMemory(srcDataLoc, arrTy);
   } else if (auto structTy = dyn_cast<sol::StructType>(ty)) {
     sym = helpersym::cloneStructToMemory(srcDataLoc, structTy);

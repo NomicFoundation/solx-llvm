@@ -251,4 +251,45 @@ sol.contract @C {
     %0 = "sol.erc7201"(%arg0) : (!sol.string<Memory>) -> ui256
     sol.return %0 : ui256
   }
+
+  // A narrowing cast of a constant stays: the lowering passes the value
+  // through with its high bits, as the legacy code generator does.
+  // CHECK-LABEL: sol.func @narrowUnsigned(
+  // CHECK-NEXT:    %[[C:.*]] = sol.constant 511 : ui16
+  // CHECK-NEXT:    %[[R:.*]] = sol.cast %[[C]] : ui16 to ui8
+  // CHECK-NEXT:    sol.return %[[R]] : ui8
+  sol.func @narrowUnsigned() -> ui8 {
+    %0 = sol.constant 511 : ui16
+    %1 = sol.cast %0 : ui16 to ui8
+    sol.return %1 : ui8
+  }
+
+  // CHECK-LABEL: sol.func @narrowSigned(
+  // CHECK-NEXT:    %[[C:.*]] = sol.constant -32768 : si16
+  // CHECK-NEXT:    %[[R:.*]] = sol.cast %[[C]] : si16 to si8
+  // CHECK-NEXT:    sol.return %[[R]] : si8
+  sol.func @narrowSigned() -> si8 {
+    %0 = sol.constant -32768 : si16
+    %1 = sol.cast %0 : si16 to si8
+    sol.return %1 : si8
+  }
+
+  // A widening cast folds, zero-extended or sign-extended by the source type.
+  // CHECK-LABEL: sol.func @widenUnsigned(
+  // CHECK-NEXT:    %[[C:.*]] = sol.constant 255 : ui16
+  // CHECK-NEXT:    sol.return %[[C]] : ui16
+  sol.func @widenUnsigned() -> ui16 {
+    %0 = sol.constant 255 : ui8
+    %1 = sol.cast %0 : ui8 to ui16
+    sol.return %1 : ui16
+  }
+
+  // CHECK-LABEL: sol.func @widenSigned(
+  // CHECK-NEXT:    %[[C:.*]] = sol.constant -1 : si16
+  // CHECK-NEXT:    sol.return %[[C]] : si16
+  sol.func @widenSigned() -> si16 {
+    %0 = sol.constant -1 : si8
+    %1 = sol.cast %0 : si8 to si16
+    sol.return %1 : si16
+  }
 } {kind = #sol<ContractKind Contract>, runtime}

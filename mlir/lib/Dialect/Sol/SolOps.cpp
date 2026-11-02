@@ -72,6 +72,13 @@ OpFoldResult ConstantOp::fold(FoldAdaptor adaptor) { return getValue(); }
 OpFoldResult CastOp::fold(FoldAdaptor adaptor) {
   auto srcIntTy = cast<IntegerType>(getInp().getType());
   auto dstIntTy = cast<IntegerType>(getType());
+  // old codegen begin
+  // A narrowing conversion keeps the dirty high bits, which a folded constant
+  // of the narrow type cannot hold.
+  // (Via-IR cleans on narrowing).
+  if (dstIntTy.getWidth() < srcIntTy.getWidth())
+    return {};
+  // old codegen end
   return constFoldCastOp<IntegerAttr, IntegerAttr>(
       adaptor.getOperands(), getType(),
       [&](const APInt &val, bool &castStatus) -> APInt {

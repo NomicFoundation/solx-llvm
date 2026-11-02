@@ -183,21 +183,14 @@ module {
 #Contract = #sol<ContractKind Contract>
 #Pure = #sol<StateMutability Pure>
 
-// Calldata elements are validated against their type's mask before the
-// memory store.
-// CHECK-LABEL: yul.func @__sol.clone_array.calldata.memory.array$_3_fixedbytes$_16_$_$_CallData_$ : (i256) -> i256
-// CHECK:         %[[P:.*]] = yul.mload %c64
-// CHECK:         yul.for
-// CHECK:           %[[V:.*]] = yul.calldataload
-// CHECK:           %[[M:.*]] = yul.constant -340282366920938463463374607431768211456
-// CHECK:           %[[C:.*]] = yul.and %[[V]], %[[M]]
-// CHECK:           %[[BAD:.*]] = yul.cmp ne, %[[V]], %[[C]]
-// CHECK:           yul.if %[[BAD]] {
-// CHECK:           yul.mstore %{{.*}}, %[[C]]
-// CHECK:         yul.func_return %[[P]] : i256
+// A calldata array of narrow scalars is one raw calldatacopy, as in the
+// legacy code generator: no element is masked or validated.
 // CHECK-LABEL: yul.func @cd2m_b16s_107 : (i256) -> i256
-// CHECK:         %[[R:.*]] = yul.func_call @__sol.clone_array.calldata.memory.array$_3_fixedbytes$_16_$_$_CallData_$(%arg0)
-// CHECK:         yul.func_return %[[R]] : i256
+// CHECK:         %[[P:.*]] = yul.mload %c64
+// CHECK-NOT:     yul.calldataload
+// CHECK:         %[[SIZE:.*]] = yul.mul %c3_i256{{.*}}, %c32_i256
+// CHECK-NEXT:    yul.calldatacopy %[[P]], %arg0, %[[SIZE]]
+// CHECK-NEXT:    yul.func_return %[[P]] : i256
 module {
   sol.contract @C {
     sol.func @cd2m_b16s_107(%arg0: !sol.array<3 x !sol.fixedbytes<16>, CallData>) -> !sol.array<3 x !sol.fixedbytes<16>, Memory> attributes {state_mutability = #Pure} {
