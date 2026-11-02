@@ -1,3 +1,7 @@
+self-hosted-runner:
+  labels:
+    # GitHub-hosted, but unknown to actionlint 1.7.12; drop once actionlint lists it.
+    - ubuntu-26.04
 paths:
   .github/workflows/regression-tests.yml:
     ignore:
