@@ -34,6 +34,10 @@ struct MemoryResource : public SideEffects::Resource::Base<MemoryResource> {
   StringRef getName() final { return "<Memory>"; }
 };
 
+struct StorageResource : public SideEffects::Resource::Base<StorageResource> {
+  StringRef getName() final { return "<Storage>"; }
+};
+
 /// State outside the EVM machine: the caller, the transaction log, the
 /// deployed contracts.
 // TODO: Can we replace ValidationResource with this?
