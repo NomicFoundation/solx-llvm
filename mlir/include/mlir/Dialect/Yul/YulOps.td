@@ -579,7 +579,7 @@ def Yul_CallValOp : Yul_Op<"callvalue", [Pure]> {
   let assemblyFormat = "attr-dict";
 }
 
-def Yul_CallDataLoadOp : Yul_Op<"calldataload"> {
+def Yul_CallDataLoadOp : Yul_Op<"calldataload", [Pure]> {
   let summary = "Represents the `calldataload` call in yul";
   let arguments = (ins I256:$addr);
   let results = (outs I256:$out);
@@ -610,7 +610,7 @@ def Yul_ReturnDataCopyOp : Yul_Op<"returndatacopy", [MemoryEffects<[MemWrite<Yul
   let assemblyFormat = "$dst `,` $src `,` $size attr-dict";
 }
 
-def Yul_SLoadOp : Yul_Op<"sload"> {
+def Yul_SLoadOp : Yul_Op<"sload", [MemoryEffects<[MemRead<Yul_StorageResource>]>]> {
   let summary = "Represents the `sload` call in yul";
   let arguments = (ins I256:$addr);
   let results = (outs I256:$out);
@@ -623,7 +623,7 @@ def Yul_SStoreOp : Yul_Op<"sstore"> {
   let assemblyFormat = "$addr `,` $val attr-dict";
 }
 
-def Yul_TLoadOp : Yul_Op<"tload"> {
+def Yul_TLoadOp : Yul_Op<"tload", [MemoryEffects<[MemRead<Yul_StorageResource>]>]> {
   let summary = "Represents the `tload` call in yul";
   let arguments = (ins I256:$addr);
   let results = (outs I256:$out);
@@ -922,7 +922,7 @@ def Yul_AllocaOp : Yul_Op<"alloca"> {
   let assemblyFormat = "attr-dict `:` type($out)";
 }
 
-def Yul_LoadOp : Yul_Op<"load"> {
+def Yul_LoadOp : Yul_Op<"load", [MemoryEffects<[MemRead]>]> {
   let summary = "Load i256 from a yul pointer";
   let arguments = (ins Yul_PtrType:$ptr);
   let results = (outs I256:$out);

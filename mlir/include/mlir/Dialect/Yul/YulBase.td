@@ -71,6 +71,8 @@ class Yul_Op<string mnemonic, list<Trait> traits = []> : Op<Yul_Dialect,
 
 def Yul_MemoryResource : Resource<"::mlir::yul::MemoryResource">;
 
+def Yul_StorageResource : Resource<"::mlir::yul::StorageResource">;
+
 // Catch-all resource: a write to it stands for effects the dialect does not
 // model.
 // TODO: Do we need finer-grained attributes for them?
