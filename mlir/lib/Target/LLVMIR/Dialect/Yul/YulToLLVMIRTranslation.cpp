@@ -989,6 +989,11 @@ public:
     auto obj = dyn_cast<yul::ObjectOp>(op);
     if (!obj)
       return op->emitError("expected a yul.object");
+    // The backend lowers the marker into the ELF header, where the linker
+    // reads the code segment kind from.
+    if (obj.getRuntime())
+      moduleTranslation.getLLVMModule()->getOrInsertNamedMetadata(
+          "evm.runtime");
     return ObjectTranslation(obj, builder, moduleTranslation).translate();
   }
 };

@@ -4,18 +4,10 @@
 
 ; CHECK: RELOCATION RECORDS FOR [.text]:
 ; CHECK-NEXT: OFFSET   TYPE        VALUE
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__0
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__1
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__2
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__3
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__4
+; CHECK-NEXT: {{d*}} R_EVM_DATA_160 __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__
 ; CHECK-NEXT: {{d*}} R_EVM_DATA __dataoffset__$0336fd807c0716a535e520df5b63ecc41ba7984875fdfa2241fcf3c8d0107e26$__
 ; CHECK-NEXT: {{d*}} R_EVM_DATA __datasize__$0336fd807c0716a535e520df5b63ecc41ba7984875fdfa2241fcf3c8d0107e26$__
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__0
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__1
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__2
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__3
-; CHECK-NEXT: {{d*}} R_EVM_DATA __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__4
+; CHECK-NEXT: {{d*}} R_EVM_DATA_160 __linker_symbol__$65c539c969b08d62684b6c973d3f0f4f37a85c2d0cbe39fffa3022cb69aac23a$__
 ; CHECK-NEXT: {{d*}} R_EVM_DATA __dataoffset__$0336fd807c0716a535e520df5b63ecc41ba7984875fdfa2241fcf3c8d0107e26$__
 ; CHECK-NEXT: {{d*}} R_EVM_DATA __datasize__$0336fd807c0716a535e520df5b63ecc41ba7984875fdfa2241fcf3c8d0107e26$__
 

@@ -19,6 +19,9 @@ enum Fixups {
   fixup_SecRel_i16,                        // 16-bit unsigned
   fixup_SecRel_i8,                         // 8-bit unsigned
   fixup_Data_i32,                          // 32-bit unsigned
+  fixup_Data_i160,                         // 160-bit library address, never
+                                           // resolved by MC, always a
+                                           // relocation
 
   // Marker
   LastTargetFixupKind,

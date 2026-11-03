@@ -58,6 +58,8 @@ unsigned EVMELFObjectWriter::getRelocType(const MCFixup &Fixup,
     llvm_unreachable("Unexpected EVM fixup");
   case EVM::fixup_Data_i32:
     return ELF::R_EVM_DATA;
+  case EVM::fixup_Data_i160:
+    return ELF::R_EVM_DATA_160;
   }
 }
 

@@ -11,3 +11,4 @@ define i256 @runtime() {
 }
 !1 = !{!"A_38_deployed"}
 !2 = !{!"library_id"}
+!evm.runtime = !{}

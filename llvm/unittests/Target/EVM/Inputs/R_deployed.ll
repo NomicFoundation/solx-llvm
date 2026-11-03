@@ -24,3 +24,4 @@ define i256 @get_initcode() {
 !1 = !{!"53"}
 !2 = !{!"A_38.A_38_deployed"}
 !3 = !{!"D_51"}
+!evm.runtime = !{}

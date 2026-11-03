@@ -11,3 +11,4 @@ define i256 @foo() {
 }
 !1 = !{!"library_id2"}
 !2 = !{!"id"}
+!evm.runtime = !{}
