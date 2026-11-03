@@ -6,18 +6,21 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This header declares the following EVM C interfaces:
-//  - 'LLVMLinkEVM'
-//    The interface to the LLD linker functionality (via lld-as-a-library)
+// This header declares the EVM C interfaces:
+//  - 'LLVMAssembleEVM'
+//    Lays out a contract's objects and resolves the symbols the layout defines
 //
-//  - 'LLVMIsELF'
+//  - 'LLVMLinkEVM'
+//    Resolves the library addresses and produces the bytecode
+//
+//  - 'LLVMIsELFEVM'
 //    Checks if the given memory buffer contains an ELF EVM object file
 //
-//  - 'LLVMGetUndefinedSymbolsEVM'
+//  - 'LLVMGetUndefinedReferencesEVM'
 //    Returns an array of undefined linker symbols
 //
-//  - 'LLVMDisposeUndefinedSymbolsEVM'
-//    Disposes an array returned by the 'LLVMGetUndefinedSymbolsEVM'
+//  - 'LLVMDisposeUndefinedReferences'
+//    Disposes an array returned by the 'LLVMGetUndefinedReferencesEVM'
 //
 // These functions use a notion of the 'Linker Symbol' which is generalization
 // of a usual ELF global symbol. The main difference is that 'Linker Symbol'
@@ -37,7 +40,7 @@
 //
 //  with associated 32-bit relocations. Each sub-symbol name is formed by
 //  prepending '__linker' and appending '_[0-4]'. MC layer also sets the
-//  ELF::STO_EVM_LINKER_SYMBOL flag in the 'st_other' field in the symbol
+//  ELF::STO_EVM_REFERENCE_SYMBOL flag in the 'st_other' field in the symbol
 //  table entry to distinguish such symbols from all others.
 //  In EVM, only these symbols are allowed to be undefined in an object
 //  code. All other cases must be treated as unreachable and denote a bug
@@ -50,8 +53,7 @@
 //
 //  For example, if linkerSymbolNames[0] points to a string 'symbol_id',
 //  it takes the linkerSymbolValues[0] value which is 20-byte array
-//  0xAAAAAAAABB.....EEEEEEEE) and creates five symbol definitions in
-//  a linker script:
+//  0xAAAAAAAABB.....EEEEEEEE) and resolves the five sub-symbols as:
 //
 //   "__linker_symbol_id_0" = 0xAAAAAAAA
 //   "__linker_symbol_id_1" = 0xBBBBBBBB
@@ -80,7 +82,8 @@ LLVMBool LLVMIsELFEVM(LLVMMemoryBufferRef inBuffer);
  * Performs the following steps, which are based on Ethereum's
  * Assembly::assemble() logic:
  *   - Concatenates the .text sections of input ELF files referenced
- *     by __dataoffset* symbols from the first file.
+ *     by __dataoffset* symbols from the first file, and appends
+ *     \p metadata to them.
  *   - Resolves undefined __dataoffset* and __datasize* symbols.
  *   - Gathers all undefined linker symbols (library references) from
  *     all files.
@@ -91,11 +94,14 @@ LLVMBool LLVMIsELFEVM(LLVMMemoryBufferRef inBuffer);
  *                 1 - runtime code;
  * \p inBuffers - relocatable ELF files to be assembled
  * \p inBuffersIDs - their IDs
+ * \p metadata - the bytes that end the code, \p metadataSize of them,
+ *               which is 0 when there are none
  * \p outBuffer - resulting relocatable object file */
 LLVMBool LLVMAssembleEVM(uint64_t codeSegment,
                          const LLVMMemoryBufferRef inBuffers[],
                          const char *const inBuffersIDs[],
-                         uint64_t inBuffersNum, LLVMMemoryBufferRef *outBuffer,
+                         uint64_t inBuffersNum, const char *metadata,
+                         uint64_t metadataSize, LLVMMemoryBufferRef *outBuffer,
                          char **errorMessage);
 
 /** Returns an array of undefined linker symbol names

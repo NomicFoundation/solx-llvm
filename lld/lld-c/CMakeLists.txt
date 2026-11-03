@@ -1,4 +1,5 @@
 add_lld_library(lldC
+  EVMLinker.cpp
   LLDAsLibraryC.cpp
 
   ${LLD_INCLUDE_DIR}/lld/Common
@@ -6,13 +7,8 @@ add_lld_library(lldC
   LINK_COMPONENTS
   Core
   EVMDesc
-  ObjCopy
   Object
   Support
-
-  LINK_LIBS
-  lldCommon
-  lldELF
 
   DEPENDS
   intrinsics_gen

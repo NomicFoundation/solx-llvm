@@ -9,7 +9,6 @@
 #include "lld-c/LLDAsLibraryC.h"
 #include "llvm-c/Core.h"
 #include "llvm-c/IRReader.h"
-#include "llvm-c/ObjCopy.h"
 #include "llvm-c/TargetMachine.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
@@ -75,23 +74,14 @@ public:
     return OutAssembly;
   }
 
-  LLVMMemoryBufferRef addmd(LLVMMemoryBufferRef InObj) {
-    char *ErrMsg = nullptr;
-    LLVMMemoryBufferRef Out;
-    if (LLVMAddMetadata(InObj, MD.data(), MD.size(), &Out, &ErrMsg)) {
-      LLVMDisposeMessage(ErrMsg);
-      exit(1);
-    }
-
-    return Out;
-  }
-
   LLVMMemoryBufferRef assemble(uint64_t codeSegment,
                                const std::vector<LLVMMemoryBufferRef> &Objs,
-                               const std::vector<const char *> &IDs) {
+                               const std::vector<const char *> &IDs,
+                               bool WithMD = false) {
     char *ErrMsg = nullptr;
     LLVMMemoryBufferRef OutAssembly = nullptr;
     if (LLVMAssembleEVM(codeSegment, Objs.data(), IDs.data(), Objs.size(),
+                        WithMD ? MD.data() : nullptr, WithMD ? MD.size() : 0,
                         &OutAssembly, &ErrMsg)) {
       LLVMDisposeMessage(ErrMsg);
       exit(1);
@@ -158,8 +148,8 @@ TEST_F(LLDCTest, IterativeLinkage) {
 
   // Assemble deploy with deployed.
   {
-    if (LLVMAssembleEVM(/*codeSegment=*/0, InData.data(), InIDs, 2, &OutMemBuf,
-                        &ErrMsg)) {
+    if (LLVMAssembleEVM(/*codeSegment=*/0, InData.data(), InIDs, 2, nullptr, 0,
+                        &OutMemBuf, &ErrMsg)) {
       FAIL() << "Failed to assemble:" << ErrMsg;
       LLVMDisposeMessage(ErrMsg);
       return;
@@ -260,17 +250,17 @@ TEST_F(LLDCTest, Assembly) {
   LLVMMemoryBufferRef R_deployed_obj = compileIR("R_deployed.ll");
 
   // A assemble.
-  LLVMMemoryBufferRef A_deployed_obj_md = addmd(A_deployed_obj);
   LLVMMemoryBufferRef A_assembly_deployed =
-      assemble(/*codeSegment=*/1, {A_deployed_obj_md}, {"A_38_deployed"});
+      assemble(/*codeSegment=*/1, {A_deployed_obj}, {"A_38_deployed"},
+               /*WithMD=*/true);
   LLVMMemoryBufferRef A_assembly =
       assemble(/*codeSegment=*/0, {A_deploy_obj, A_assembly_deployed},
                {"A_38", "A_38_deployed"});
 
   // D assemble.
-  LLVMMemoryBufferRef D_deployed_obj_md = addmd(D_deployed_obj);
   LLVMMemoryBufferRef D_assembly_deployed =
-      assemble(/*codeSegment=*/1, {D_deployed_obj_md}, {"D_38_deployed"});
+      assemble(/*codeSegment=*/1, {D_deployed_obj}, {"D_38_deployed"},
+               /*WithMD=*/true);
   LLVMMemoryBufferRef D_assembly =
       assemble(/*codeSegment=*/0, {D_deploy_obj, D_assembly_deployed},
                {"D_51", "D_51_deployed"});
@@ -278,11 +268,11 @@ TEST_F(LLDCTest, Assembly) {
   // R_deployed assemble.
   // A_assembly is not required here, but we add it intentionaly to check
   // that it will be ignored (the total number of library reference is 3).
-  LLVMMemoryBufferRef R_deployed_obj_md = addmd(R_deployed_obj);
   LLVMMemoryBufferRef R_deployed_assemble =
       assemble(/*codeSegment=*/1,
-               {R_deployed_obj_md, D_assembly, A_assembly, A_assembly_deployed},
-               {"R_107_deployed", "D_51", "A_38", "A_38.A_38_deployed"});
+               {R_deployed_obj, D_assembly, A_assembly, A_assembly_deployed},
+               {"R_107_deployed", "D_51", "A_38", "A_38.A_38_deployed"},
+               /*WithMD=*/true);
 
   // R assemble.
   LLVMMemoryBufferRef R_assembly = assemble(
@@ -348,7 +338,7 @@ TEST_F(LLDCTest, UndefNonRefSymbols) {
   LLVMMemoryBufferRef OutObj = nullptr;
   char *ErrMsg = nullptr;
   EXPECT_TRUE(LLVMAssembleEVM(/*codeSegment=*/0, InObjs.data(), IDs.data(),
-                              IDs.size(), &OutObj, &ErrMsg));
+                              IDs.size(), nullptr, 0, &OutObj, &ErrMsg));
   EXPECT_TRUE(StringRef(ErrMsg).contains("non-ref undefined symbol:"));
   LLVMDisposeMessage(ErrMsg);
 
