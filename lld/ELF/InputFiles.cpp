@@ -250,31 +250,15 @@ std::optional<MemoryBufferRef> elf::readFile(Ctx &ctx, StringRef path) {
   Log(ctx) << path;
   ctx.arg.dependencyFiles.insert(llvm::CachedHashString(path));
 
-  // EVM local begin
-  MemoryBufferRef mbref;
-  if (ctx.arg.useIOMemoryBuffers) {
-    unsigned idx = 0;
-    if (path.getAsInteger(10, idx)) {
-      error(path + ": path should be an index");
-      return std::nullopt;
-    }
-    if (idx >= ctx.arg.inBuffers.size()) {
-      error("memory buffer index is out of range");
-      return std::nullopt;
-    }
-    mbref = ctx.arg.inBuffers[idx];
-    // Don't take MB ownership, because it's owned externally.
-  } else {
-    auto mbOrErr = MemoryBuffer::getFile(path, /*IsText=*/false,
-                                         /*RequiresNullTerminator=*/false);
-    if (auto ec = mbOrErr.getError()) {
-      ErrAlways(ctx) << "cannot open " << path << ": " << ec.message();
-      return std::nullopt;
-    }
-    mbref = (*mbOrErr)->getMemBufferRef();
-    ctx.memoryBuffers.push_back(std::move(*mbOrErr)); // take MB ownership
+  auto mbOrErr = MemoryBuffer::getFile(path, /*IsText=*/false,
+                                       /*RequiresNullTerminator=*/false);
+  if (auto ec = mbOrErr.getError()) {
+    ErrAlways(ctx) << "cannot open " << path << ": " << ec.message();
+    return std::nullopt;
   }
-  // EVM local end
+
+  MemoryBufferRef mbref = (*mbOrErr)->getMemBufferRef();
+  ctx.memoryBuffers.push_back(std::move(*mbOrErr)); // take MB ownership
 
   if (ctx.tar)
     ctx.tar->append(relativeToRoot(path), mbref.getBuffer());
@@ -1749,10 +1733,6 @@ static uint16_t getBitcodeMachineKind(Ctx &ctx, StringRef path,
     return t.isOSIAMCU() ? EM_IAMCU : EM_386;
   case Triple::x86_64:
     return EM_X86_64;
-  // EVM local begin
-  case Triple::evm:
-    return EM_EVM;
-  // EVM local end
   default:
     ErrAlways(ctx) << path
                    << ": could not infer e_machine from bitcode target triple "
