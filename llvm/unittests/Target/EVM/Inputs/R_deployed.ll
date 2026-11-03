@@ -24,3 +24,5 @@ define i256 @get_initcode() {
 !1 = !{!"53"}
 !2 = !{!"A_38.A_38_deployed"}
 !3 = !{!"D_51"}
+!llvm.module.flags = !{!100}
+!100 = !{i32 1, !"evm.runtime", i32 1}

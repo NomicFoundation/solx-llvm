@@ -11,3 +11,5 @@ define i256 @foo() {
 }
 !1 = !{!"library_id2"}
 !2 = !{!"id"}
+!llvm.module.flags = !{!100}
+!100 = !{i32 1, !"evm.runtime", i32 1}

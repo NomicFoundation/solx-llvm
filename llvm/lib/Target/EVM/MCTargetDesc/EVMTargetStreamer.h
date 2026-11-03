@@ -26,10 +26,6 @@ public:
   EVMTargetStreamer &operator=(EVMTargetStreamer &&) = delete;
 
   void emitLabel(MCSymbol *Symbol) override;
-
-  virtual void emitWideRelocatableSymbol(const MCInst &PushInst,
-                                         StringRef SymbolName,
-                                         unsigned SymbolSize) {};
 };
 
 /// This part is for ASCII assembly output
@@ -40,9 +36,6 @@ public:
   EVMTargetAsmStreamer(EVMTargetAsmStreamer &&) = delete;
   EVMTargetAsmStreamer &operator=(const EVMTargetAsmStreamer &) = delete;
   EVMTargetAsmStreamer &operator=(EVMTargetAsmStreamer &&) = delete;
-
-  void emitWideRelocatableSymbol(const MCInst &PushInst, StringRef SymbolName,
-                                 unsigned SymbolSize) override;
 };
 
 // This part is for EVM object output
@@ -53,9 +46,6 @@ public:
   EVMTargetObjStreamer(EVMTargetObjStreamer &&) = delete;
   EVMTargetObjStreamer &operator=(const EVMTargetObjStreamer &) = delete;
   EVMTargetObjStreamer &operator=(EVMTargetObjStreamer &&) = delete;
-
-  void emitWideRelocatableSymbol(const MCInst &PushInst, StringRef SymbolName,
-                                 unsigned SymbolSize) override;
 };
 } // namespace llvm
 
