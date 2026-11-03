@@ -106,5 +106,6 @@ add_llvm_target(EVMCodeGen
 )
 
 add_subdirectory(Disassembler)
+add_subdirectory(Linker)
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)

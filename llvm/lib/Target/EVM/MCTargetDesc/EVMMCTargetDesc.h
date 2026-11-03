@@ -39,8 +39,6 @@ std::unique_ptr<MCObjectTargetWriter> createEVMELFObjectWriter(uint8_t OSABI);
 
 namespace EVM {
 std::string getLinkerSymbolHash(StringRef SymName);
-std::string getSymbolIndexedName(StringRef Name, unsigned SubIdx);
-std::string getNonIndexedSymbolName(StringRef Name);
 bool isSymbolSectionName(StringRef Name);
 std::string getSymbolSectionName(StringRef Name);
 bool isLinkerSymbolName(StringRef Name);

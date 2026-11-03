@@ -4282,7 +4282,8 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
 
     std::string runtimeObjName = std::string(op.getName()) + "_deployed";
     auto obj = r.create<yul::ObjectOp>(
-        loc, op.getRuntime() ? StringRef(runtimeObjName) : op.getName());
+        loc, op.getRuntime() ? StringRef(runtimeObjName) : op.getName(),
+        op.getRuntime());
 
     ContractFns fns;
     for (auto fn : op.getBody()->getOps<sol::FuncOp>()) {

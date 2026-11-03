@@ -7,3 +7,4 @@ define i256 @runtime() {
   ret i256 %res
 }
 !1 = !{!"40"}
+!evm.runtime = !{}

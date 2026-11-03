@@ -383,17 +383,23 @@ def Yul_ObjectOp
                         IsolatedFromAbove, HasParent<"ModuleOp">]> {
   let summary = "Represents an `object` in yul";
   let description = [{
-    The entry code is in the `__entry` function.
+    The entry code is in the `__entry` function. `$runtime` marks the runtime
+    code segment of a contract, which the translation records on the LLVM
+    module as the `evm.runtime` named metadata.
   }];
 
-  let arguments = (ins SymbolNameAttr:$sym_name);
+  let arguments = (ins SymbolNameAttr:$sym_name, UnitAttr:$runtime);
   let regions = (region SizedRegion<1>:$bodyRegion);
 
   let builders = [
-    OpBuilder<(ins CArg<"StringRef", "{}">:$name),[{
+    OpBuilder<(ins CArg<"StringRef", "{}">:$name,
+                   CArg<"bool", "false">:$runtime),[{
       $_state.addRegion()->emplaceBlock();
       $_state.addAttribute(getSymNameAttrName($_state.name),
                            $_builder.getStringAttr(name));
+      if (runtime)
+        $_state.addAttribute(getRuntimeAttrName($_state.name),
+                             $_builder.getUnitAttr());
     }]>
   ];
   let skipDefaultBuilders = 1;
