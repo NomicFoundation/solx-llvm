@@ -706,7 +706,7 @@ std::optional<ResultRange> DoWhileOp::getLoopResults() {
 void SwitchOp::print(OpAsmPrinter &p) {
   p << ' ' << getArg() << " : " << getArg().getType();
   if (!getResultTypes().empty())
-    p << " -> " << getResultTypes();
+    p.printArrowTypeList(getResultTypes());
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/getCasesAttrName().getValue());
 
