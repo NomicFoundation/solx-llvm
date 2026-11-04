@@ -42,7 +42,7 @@ module {
 // CHECK:         yul.for %{{.*}}, %{{.*}}, %[[SLOT]], %{{.*}} :
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
-// CHECK:             %[[SH:.*]] = yul.arith_shr %[[W]], %{{.*}}
+// CHECK:             %[[SH:.*]] = yul.shr %{{.*}}, %[[W]]
 // CHECK:             %[[M:.*]] = yul.constant 255
 // CHECK:             %[[V:.*]] = yul.and %[[SH]], %[[M]]
 // CHECK:             yul.mstore
@@ -51,7 +51,7 @@ module {
 // CHECK:         %[[T:.*]] = yul.cmp ult, %{{.*}}, %[[LEN]]
 // CHECK:         yul.if %[[T]] -> i256 {
 // CHECK:           %[[TW:.*]] = yul.sload
-// CHECK:             yul.arith_shr %[[TW]], %{{.*}}
+// CHECK:             yul.shr %{{.*}}, %[[TW]]
 // CHECK:         } {full_unroll}
 // CHECK-LABEL: yul.func @static_u8x4 : () -> i256
 // CHECK:         %[[S:.*]] = yul.constant 1{{$}}
@@ -179,7 +179,7 @@ module {
 // CHECK:         yul.for %{{.*}}, %{{.*}}, %[[DATA]], %{{.*}} :
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
-// CHECK:             %[[SH:.*]] = yul.arith_shr %[[W]], %{{.*}}
+// CHECK:             %[[SH:.*]] = yul.shr %{{.*}}, %[[W]]
 // CHECK:             %[[M:.*]] = yul.constant 340282366920938463463374607431768211455
 // CHECK:             yul.and %[[SH]], %[[M]]
 // CHECK:             %[[C128:.*]] = yul.constant 128
@@ -215,7 +215,7 @@ module {
 // CHECK:         yul.for %{{.*}}, %{{.*}}, %[[SLOT]], %{{.*}} :
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
-// CHECK:             %[[SH:.*]] = yul.arith_shr %[[W]], %{{.*}}
+// CHECK:             %[[SH:.*]] = yul.shr %{{.*}}, %[[W]]
 // CHECK:             %[[M:.*]] = yul.constant 255
 // CHECK:             %[[V:.*]] = yul.and %[[SH]], %[[M]]
 // CHECK:             yul.mstore
@@ -224,7 +224,7 @@ module {
 // CHECK:         %[[TAIL:.*]] = yul.cmp ult, %{{.*}}, %[[LEN]]
 // CHECK:         yul.if %[[TAIL]] -> i256 {
 // CHECK:           %[[TW:.*]] = yul.sload
-// CHECK:           yul.arith_shr %[[TW]], %{{.*}}
+// CHECK:           yul.shr %{{.*}}, %[[TW]]
 // CHECK:         } {full_unroll}
 // CHECK-LABEL: yul.func @packed_static_u8x33 : () -> i256
 // CHECK:         %[[S:.*]] = yul.constant 19{{$}}
@@ -253,14 +253,14 @@ module {
 // CHECK:           yul.for
 // CHECK:             %[[W:.*]] = yul.sload
 // CHECK:             yul.for
-// CHECK:               %[[SH:.*]] = yul.arith_shr %[[W]], %{{.*}}
+// CHECK:               %[[SH:.*]] = yul.shr %{{.*}}, %[[W]]
 // CHECK:               %[[M:.*]] = yul.constant 65535
 // CHECK:               yul.and %[[SH]], %[[M]]
 // CHECK:               yul.mstore
 // CHECK:           yul.if %{{.*}} -> i256 {
 // CHECK:             %[[TW:.*]] = yul.sload
 // CHECK:             yul.for
-// CHECK:               yul.arith_shr %[[TW]], %{{.*}}
+// CHECK:               yul.shr %{{.*}}, %[[TW]]
 // CHECK:               yul.mstore
 // CHECK:             } {full_unroll}
 // CHECK-LABEL: yul.func @packed_nested_u16 : () -> i256

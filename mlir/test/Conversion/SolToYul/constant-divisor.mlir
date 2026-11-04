@@ -11,7 +11,7 @@
 // CHECK-NEXT:    %[[Z:.*]] = yul.constant 0
 // CHECK-NEXT:    yul.cmp eq, %[[B]], %[[Z]]
 // CHECK:         yul.func_call @__sol.panic
-// CHECK:         yul.arith_div %[[A]], %[[B]]
+// CHECK:         yul.div %[[A]], %[[B]]
 
 // A checked division by minus one keeps the overflow check only.
 // CHECK-LABEL: yul.func @cdiv_minus_one
@@ -20,7 +20,7 @@
 // CHECK-NEXT:    %[[MIN:.*]] = yul.constant -57896044618658097711785492504343953926634992332820282019728792003956564819968
 // CHECK-NEXT:    yul.cmp eq, %[[A]], %[[MIN]]
 // CHECK:         yul.func_call @__sol.panic
-// CHECK:         yul.arith_sdiv %[[A]], %[[C]]
+// CHECK:         yul.sdiv %[[A]], %[[C]]
 
 // CHECK-LABEL: yul.func @mulmod
 // CHECK:       ^bb0(%[[A:.*]]: i256, %[[B:.*]]: i256):
@@ -37,13 +37,13 @@
 // CHECK-LABEL: yul.func @mod
 // CHECK:       ^bb0(%[[A:.*]]: i256):
 // CHECK-NEXT:    %[[C:.*]] = yul.constant 3
-// CHECK-NEXT:    yul.arith_mod %[[A]], %[[C]]
+// CHECK-NEXT:    yul.mod %[[A]], %[[C]]
 // CHECK-NEXT:    yul.func_return
 
 // CHECK-LABEL: yul.func @div
 // CHECK:       ^bb0(%[[A:.*]]: i256):
 // CHECK-NEXT:    %[[C:.*]] = yul.constant 2
-// CHECK-NEXT:    yul.arith_div %[[A]], %[[C]]
+// CHECK-NEXT:    yul.div %[[A]], %[[C]]
 // CHECK-NEXT:    yul.func_return
 
 module {

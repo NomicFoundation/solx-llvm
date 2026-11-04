@@ -187,45 +187,10 @@ def Yul_CmpOp : Yul_Op<"cmp", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
   let hasFolder = 1;
 }
 
-class Yul_ArithBinOp<string mnemonic> :
-    Yul_Op<mnemonic, [Pure, AllTypesMatch<["lhs", "rhs", "out"]>]> {
-  let arguments = (ins I256:$lhs, I256:$rhs);
-  let results = (outs I256:$out);
-  let assemblyFormat = "$lhs `,` $rhs attr-dict";
-  let hasFolder = 1;
-}
-
-def Yul_ArithShlOp : Yul_ArithBinOp<"arith_shl"> {
-  let summary = "UB-prone arithmetic wrapper for logical left shift; all inputs are i256";
-}
-
-def Yul_ArithShrOp : Yul_ArithBinOp<"arith_shr"> {
-  let summary = "UB-prone arithmetic wrapper for logical right shift; all inputs are i256";
-}
-
-def Yul_ArithSarOp : Yul_ArithBinOp<"arith_sar"> {
-  let summary = "UB-prone arithmetic wrapper for arithmetic right shift; all inputs are i256";
-}
-
-def Yul_ArithDivOp : Yul_ArithBinOp<"arith_div"> {
-  let summary = "UB-prone arithmetic wrapper for unsigned division; all inputs are i256";
-}
-
-def Yul_ArithSDivOp : Yul_ArithBinOp<"arith_sdiv"> {
-  let summary = "UB-prone arithmetic wrapper for signed division; all inputs are i256";
-}
-
-def Yul_ArithModOp : Yul_ArithBinOp<"arith_mod"> {
-  let summary = "UB-prone arithmetic wrapper for unsigned remainder; all inputs are i256";
-}
-
-def Yul_ArithSModOp : Yul_ArithBinOp<"arith_smod"> {
-  let summary = "UB-prone arithmetic wrapper for signed remainder; all inputs are i256";
-}
-
-def Yul_ArithSelectOp : Yul_Op<"arith_select", [Pure,
-    AllTypesMatch<["trueValue", "falseValue", "out"]>]> {
-  let summary = "Arithmetic wrapper for value selection; all inputs are i256";
+def Yul_SelectOp
+    : Yul_Op<"select", [Pure,
+                        AllTypesMatch<["trueValue", "falseValue", "out"]>]> {
+  let summary = "Value selection; all inputs are i256";
   let arguments = (ins I256:$condition, I256:$trueValue, I256:$falseValue);
   let results = (outs I256:$out);
   let assemblyFormat =

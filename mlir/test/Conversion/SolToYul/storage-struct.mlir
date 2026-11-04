@@ -86,8 +86,8 @@
 // CHECK:         yul.add
 // CHECK-NEXT:    %[[I:.*]] = yul.constant 1{{$}}
 // CHECK-NEXT:    %[[C32:.*]] = yul.constant 32{{$}}
-// CHECK-NEXT:    yul.arith_div %[[I]], %[[C32]]
-// CHECK-NEXT:    %[[MOD:.*]] = yul.arith_mod %[[I]], %[[C32]]
+// CHECK-NEXT:    yul.div %[[I]], %[[C32]]
+// CHECK-NEXT:    %[[MOD:.*]] = yul.mod %[[I]], %[[C32]]
 // CHECK:         %[[OFF:.*]] = yul.mul %[[MOD]], %{{.*}}
 // CHECK:         llvm.insertvalue %[[OFF]], %{{.*}}[1]
 // CHECK:         yul.sstore

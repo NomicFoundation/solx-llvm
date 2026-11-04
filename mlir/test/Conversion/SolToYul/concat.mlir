@@ -9,7 +9,7 @@ module {
     // corrupted-encoding panic 34, and copy through the bytes helper.
     // CHECK-LABEL: yul.func @__sol.storage_string_length : (i256) -> i256
     // CHECK:         yul.constant 127{{$}}
-    // CHECK:         yul.arith_select
+    // CHECK:         yul.select
     // CHECK:         yul.constant 34{{$}}
     // CHECK:         yul.func_call @__sol.panic
     // CHECK-LABEL: yul.func @f : (i256, !llvm.struct<(i256, i256)>, i256, i256) -> i256

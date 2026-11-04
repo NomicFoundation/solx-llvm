@@ -41,7 +41,7 @@
 // CHECK:         %[[C160:.*]] = yul.constant 160
 // CHECK:         %[[AB:.*]] = yul.constant 24930
 // CHECK:         %[[C240:.*]] = yul.constant 240
-// CHECK:         %[[SHL:.*]] = yul.arith_shl %[[AB]], %[[C240]]
+// CHECK:         %[[SHL:.*]] = yul.shl %[[C240]], %[[AB]]
 // CHECK:         %[[B:.*]] = yul.and %[[SHL]], %{{.*}}
 // CHECK:         yul.mstore %[[C160]], %[[B]]
 // CHECK:         %[[C192:.*]] = yul.constant 192

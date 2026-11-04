@@ -62,7 +62,7 @@ module {
 // CHECK-LABEL: yul.object @C_deployed {
 // CHECK:         yul.calldatasize loc("C.sol":1:1)
 // CHECK:         yul.callvalue loc("C.sol":1:1)
-// CHECK:         yul.arith_shr {{.*}} loc("C.sol":1:1)
+// CHECK:         yul.shr {{.*}} loc("C.sol":1:1)
 // CHECK:         case 1 {
 // CHECK-NOT:       yul.callvalue
 // CHECK:           yul.func_call @f({{.*}}) : (i256) -> i256 loc("C.sol":3:3)

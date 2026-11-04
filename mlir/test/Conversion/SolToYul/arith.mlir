@@ -11,8 +11,8 @@ module {
     // CHECK:         yul.if %[[Z]] {
     // CHECK:           %[[C18:.*]] = yul.constant 18{{$}}
     // CHECK:           yul.func_call @__sol.panic(%[[C18]])
-    // CHECK:         yul.arith_div %{{.*}}, %[[D]]
-    // CHECK:         yul.arith_mod
+    // CHECK:         yul.div %{{.*}}, %[[D]]
+    // CHECK:         yul.mod
     // CHECK:         yul.shl
     // CHECK:         yul.shr
     // CHECK:         yul.and
@@ -65,8 +65,8 @@ module {
     // CHECK:         %[[M:.*]] = yul.constant 255
     // CHECK:         %[[A:.*]] = yul.and %{{.*}}, %[[M]]
     // CHECK:         %[[B:.*]] = yul.and %{{.*}}, %{{.*}}
-    // CHECK:         yul.arith_div %[[A]], %[[B]]
-    // CHECK:         yul.arith_mod
+    // CHECK:         yul.div %[[A]], %[[B]]
+    // CHECK:         yul.mod
     // CHECK:         yul.shl
     // CHECK:         yul.shr
     // CHECK:         yul.exp
@@ -121,7 +121,7 @@ module {
     // CHECK:         %[[Q:.*]] = yul.div %[[P]], %[[MA]]
     // CHECK:         yul.cmp ne, %[[Q]], %[[MB]]
     // CHECK:         yul.constant 18{{$}}
-    // CHECK:         yul.arith_div
+    // CHECK:         yul.div
     sol.func @chk_ui(%a: ui256, %b: ui256) {
       %0 = sol.cadd %a, %b : ui256
       %1 = sol.csub %a, %b : ui256
@@ -152,7 +152,7 @@ module {
     // CHECK:         %[[M1:.*]] = yul.constant -1
     // CHECK:         yul.cmp eq, %{{.*}}, %[[M1]]
     // CHECK:         yul.constant 17{{$}}
-    // CHECK:         yul.arith_sdiv
+    // CHECK:         yul.sdiv
     sol.func @chk_si(%a: si256, %b: si256) {
       %0 = sol.cadd %a, %b : si256
       %1 = sol.csub %a, %b : si256
@@ -178,7 +178,7 @@ module {
     // CHECK:         %[[P:.*]] = yul.mul
     // CHECK:         %[[PC:.*]] = yul.and %[[P]], %{{.*}}
     // CHECK:         yul.cmp ne, %[[P]], %[[PC]]
-    // CHECK:         yul.arith_div
+    // CHECK:         yul.div
     sol.func @chk_ui8(%a: ui8, %b: ui8) {
       %0 = sol.cadd %a, %b : ui8
       %1 = sol.csub %a, %b : ui8
@@ -205,7 +205,7 @@ module {
     // CHECK:         yul.cmp ne, %[[P]], %[[PS]]
     // CHECK:         yul.constant -128
     // CHECK:         yul.constant -1
-    // CHECK:         yul.arith_sdiv
+    // CHECK:         yul.sdiv
     sol.func @chk_si8(%a: si8, %b: si8) {
       %0 = sol.cadd %a, %b : si8
       %1 = sol.csub %a, %b : si8

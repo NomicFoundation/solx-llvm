@@ -6,7 +6,7 @@ sol.contract @C {
   // CHECK:         %[[Z:.*]] = yul.constant 0{{$}}
   // CHECK:         %[[STIPEND:.*]] = yul.constant 2300{{$}}
   // CHECK:         %[[ZV:.*]] = yul.cmp eq, %arg1, %[[Z]]
-  // CHECK:         %[[GAS:.*]] = yul.arith_select %[[ZV]], %[[STIPEND]], %[[Z]]
+  // CHECK:         %[[GAS:.*]] = yul.select %[[ZV]], %[[STIPEND]], %[[Z]]
   // CHECK:         %[[M:.*]] = yul.constant 1461501637330902918203684832716283019655932542975
   // CHECK:         %[[ADDR:.*]] = yul.and %arg0, %[[M]]
   // CHECK:         %[[OK:.*]] = yul.call %[[GAS]], %[[ADDR]], %arg1, %[[Z]], %[[Z]], %[[Z]], %[[Z]]

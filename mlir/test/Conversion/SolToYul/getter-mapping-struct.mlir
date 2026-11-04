@@ -3,7 +3,7 @@
 // small, flag and addr share struct slot 2 at byte offsets 0, 1 and 2.
 // CHECK-LABEL:   yul.func @get_m : (i256) -> (i256, i256, i256, i256, i256)
 // CHECK:           %[[BASE:.*]] = yul.keccak256
-// CHECK:           %[[A:.*]] = yul.arith_shr
+// CHECK:           %[[A:.*]] = yul.shr
 // CHECK:           yul.add %[[BASE]], %c2_i256{{(_[0-9]+)?$}}
 // CHECK-NEXT:      %[[OFF0:.*]] = yul.constant 0
 // CHECK:           llvm.insertvalue %[[OFF0]], %{{.*}}[1]

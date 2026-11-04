@@ -198,7 +198,7 @@ module {
     // CHECK:         %[[REF:.*]] = yul.func_call @__sol.index_storage_array.array$_dyn_ui256_$_Storage_$(%[[A]], %{{.*}})
     // CHECK:         %[[ES:.*]] = llvm.extractvalue %[[REF]][0]
     // CHECK:         %[[W:.*]] = yul.sload %[[ES]]
-    // CHECK:         %[[V:.*]] = yul.arith_shr %[[W]], %{{.*}}
+    // CHECK:         %[[V:.*]] = yul.shr %{{.*}}, %[[W]]
     // CHECK:         yul.func_return %[[LEN]], %[[V]] : i256, i256
     sol.func @stg_arr(%a: !sol.array<? x ui256, Storage>) -> (ui256, ui256) {
       %0 = sol.length %a : !sol.array<? x ui256, Storage>

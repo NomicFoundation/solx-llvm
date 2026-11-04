@@ -11,7 +11,7 @@
 // CHECK:         yul.callvalue
 // CHECK:         %[[W:.*]] = yul.calldataload
 // CHECK:         %[[C224:.*]] = yul.constant 224{{$}}
-// CHECK:         %[[SEL:.*]] = yul.arith_shr %[[W]], %[[C224]]
+// CHECK:         %[[SEL:.*]] = yul.shr %[[C224]], %[[W]]
 // CHECK:         yul.switch %[[SEL]] : i256
 // CHECK-NEXT:    case 3346476778 {
 // CHECK:           %[[B:.*]] = yul.func_call @__sol.abi_decode_tuple.calldata.i1(

@@ -4,7 +4,7 @@
 module {
   sol.contract @C {
     // CHECK-LABEL: yul.func @f : (i256, i256) -> i256
-    // CHECK:         %[[BV:.*]] = yul.arith_shl %arg1
+    // CHECK:         %[[BV:.*]] = yul.shl %{{.*}}, %arg1
     // CHECK:         %[[LEN:.*]] = yul.mload %arg0
     // CHECK:         %[[OOB:.*]] = yul.cmp uge, %[[IDX:.*]], %[[LEN]]
     // CHECK:         yul.if %[[OOB]] {
@@ -16,7 +16,7 @@ module {
     // CHECK:         %[[W:.*]] = yul.mload
     // CHECK:         yul.constant -452312848583266388373324160190187140051835877600158453279131187530910662656
     // CHECK:         %[[C248:.*]] = yul.constant 248
-    // CHECK:         %[[R:.*]] = yul.arith_shr %{{.*}}, %[[C248]]
+    // CHECK:         %[[R:.*]] = yul.shr %[[C248]], %{{.*}}
     // CHECK:         yul.func_return %[[R]] : i256
     sol.func @f(%arg0: !sol.string<Memory>, %arg1: ui8) -> ui8 attributes {state_mutability = #NonPayable} {
       %0 = sol.bytes_cast %arg1 : ui8 to !sol.fixedbytes<1>

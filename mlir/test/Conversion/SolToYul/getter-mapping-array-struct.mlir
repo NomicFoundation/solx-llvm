@@ -23,9 +23,9 @@
 // CHECK:           %[[ARR:.*]] = yul.keccak256
 // CHECK:           %[[S:.*]] = yul.func_call @__sol.index_storage_array.array$_dyn_struct$_$_ui256_$_ui256_$_$_Storage_$_$_Storage_$.nopanic(%[[ARR]], %arg1)
 // CHECK:           yul.add %[[S]], %{{.*}}
-// CHECK:           %[[F0:.*]] = yul.arith_shr
+// CHECK:           %[[F0:.*]] = yul.shr
 // CHECK:           yul.add %[[S]], %{{.*}}
-// CHECK:           %[[F1:.*]] = yul.arith_shr
+// CHECK:           %[[F1:.*]] = yul.shr
 // CHECK:           yul.func_return %[[F0]], %[[F1]] : i256, i256
 
 #Contract = #sol<ContractKind Contract>

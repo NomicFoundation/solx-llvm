@@ -255,115 +255,17 @@ yul.func @swapped_cmp_predicates : (i256) -> (i256, i256, i256, i256, i256, i256
   yul.func_return %0, %1, %2, %3, %4, %5, %6, %7, %8, %9 : i256, i256, i256, i256, i256, i256, i256, i256, i256, i256
 }
 
-// CHECK-LABEL: yul.func @arith_select
+// CHECK-LABEL: yul.func @select
 // CHECK:       ^bb0(%[[C:.*]]: i256, %[[A:.*]]: i256, %[[B:.*]]: i256):
 // CHECK-NEXT:    yul.func_return %[[A]], %[[B]], %[[A]]
-yul.func @arith_select : (i256, i256, i256) -> (i256, i256, i256) {
+yul.func @select : (i256, i256, i256) -> (i256, i256, i256) {
 ^bb0(%c: i256, %a: i256, %b: i256):
   %c0 = yul.constant 0
   %c5 = yul.constant 5
-  %0 = yul.arith_select %c5, %a, %b
-  %1 = yul.arith_select %c0, %a, %b
-  %2 = yul.arith_select %c, %a, %a
+  %0 = yul.select %c5, %a, %b
+  %1 = yul.select %c0, %a, %b
+  %2 = yul.select %c, %a, %a
   yul.func_return %0, %1, %2 : i256, i256, i256
-}
-
-// The arith wrappers fold what the arith ops they lower to fold: a division by
-// zero, an overflowing signed division and a shift by 256 or more stay.
-
-// CHECK-LABEL: yul.func @arith_shifts
-// CHECK:       ^bb0(%[[X:.*]]: i256):
-// CHECK-DAG:     %[[C1:.*]] = yul.constant 1
-// CHECK-DAG:     %[[MIN:.*]] = yul.constant -57896044618658097711785492504343953926634992332820282019728792003956564819968
-// CHECK-DAG:     %[[CM1:.*]] = yul.constant -1
-// CHECK:         yul.func_return %[[X]], %[[MIN]], %[[X]], %[[C1]], %[[X]], %[[CM1]]
-yul.func @arith_shifts : (i256) -> (i256, i256, i256, i256, i256, i256) {
-^bb0(%x: i256):
-  %c0 = yul.constant 0
-  %c1 = yul.constant 1
-  %c8 = yul.constant 8
-  %c255 = yul.constant 255
-  %c256 = yul.constant 256
-  %cm256 = yul.constant -256
-  %0 = yul.arith_shl %x, %c0
-  %1 = yul.arith_shl %c1, %c255
-  %2 = yul.arith_shr %x, %c0
-  %3 = yul.arith_shr %c256, %c8
-  %4 = yul.arith_sar %x, %c0
-  %5 = yul.arith_sar %cm256, %c8
-  yul.func_return %0, %1, %2, %3, %4, %5 : i256, i256, i256, i256, i256, i256
-}
-
-// CHECK-LABEL: yul.func @arith_shifts_word_width
-// CHECK-DAG:     %[[C1:.*]] = yul.constant 1
-// CHECK-DAG:     %[[C256:.*]] = yul.constant 256
-// CHECK-DAG:     %[[SHL:.*]] = yul.arith_shl %[[C1]], %[[C256]]
-// CHECK-DAG:     %[[SHR:.*]] = yul.arith_shr %[[C1]], %[[C256]]
-// CHECK-DAG:     %[[SAR:.*]] = yul.arith_sar %[[C1]], %[[C256]]
-// CHECK:         yul.func_return %[[SHL]], %[[SHR]], %[[SAR]]
-yul.func @arith_shifts_word_width : () -> (i256, i256, i256) {
-  %c1 = yul.constant 1
-  %c256 = yul.constant 256
-  %0 = yul.arith_shl %c1, %c256
-  %1 = yul.arith_shr %c1, %c256
-  %2 = yul.arith_sar %c1, %c256
-  yul.func_return %0, %1, %2 : i256, i256, i256
-}
-
-// CHECK-LABEL: yul.func @arith_div
-// CHECK:       ^bb0(%[[X:.*]]: i256):
-// CHECK-DAG:     %[[C0:.*]] = yul.constant 0
-// CHECK-DAG:     %[[C3:.*]] = yul.constant 3
-// CHECK-DAG:     %[[C7:.*]] = yul.constant 7
-// CHECK-DAG:     %[[CM1:.*]] = yul.constant -1
-// CHECK-DAG:     %[[CM3:.*]] = yul.constant -3
-// CHECK-DAG:     %[[MIN:.*]] = yul.constant -57896044618658097711785492504343953926634992332820282019728792003956564819968
-// CHECK-DAG:     %[[DIV0:.*]] = yul.arith_div %[[C7]], %[[C0]]
-// CHECK-DAG:     %[[SDIV0:.*]] = yul.arith_sdiv %[[C7]], %[[C0]]
-// CHECK-DAG:     %[[SDIVOVF:.*]] = yul.arith_sdiv %[[MIN]], %[[CM1]]
-// CHECK:         yul.func_return %[[X]], %[[C3]], %[[DIV0]], %[[X]], %[[CM3]], %[[SDIV0]], %[[SDIVOVF]]
-yul.func @arith_div : (i256) -> (i256, i256, i256, i256, i256, i256, i256) {
-^bb0(%x: i256):
-  %c0 = yul.constant 0
-  %c1 = yul.constant 1
-  %c2 = yul.constant 2
-  %c7 = yul.constant 7
-  %cm1 = yul.constant -1
-  %cm7 = yul.constant -7
-  %min = yul.constant -57896044618658097711785492504343953926634992332820282019728792003956564819968
-  %0 = yul.arith_div %x, %c1
-  %1 = yul.arith_div %c7, %c2
-  %2 = yul.arith_div %c7, %c0
-  %3 = yul.arith_sdiv %x, %c1
-  %4 = yul.arith_sdiv %cm7, %c2
-  %5 = yul.arith_sdiv %c7, %c0
-  %6 = yul.arith_sdiv %min, %cm1
-  yul.func_return %0, %1, %2, %3, %4, %5, %6 : i256, i256, i256, i256, i256, i256, i256
-}
-
-// CHECK-LABEL: yul.func @arith_mod
-// CHECK:       ^bb0(%[[X:.*]]: i256):
-// CHECK-DAG:     %[[C0:.*]] = yul.constant 0
-// CHECK-DAG:     %[[C1:.*]] = yul.constant 1
-// CHECK-DAG:     %[[C7:.*]] = yul.constant 7
-// CHECK-DAG:     %[[CM1:.*]] = yul.constant -1
-// CHECK-DAG:     %[[MOD0:.*]] = yul.arith_mod %[[C7]], %[[C0]]
-// CHECK-DAG:     %[[SMOD0:.*]] = yul.arith_smod %[[C7]], %[[C0]]
-// CHECK:         yul.func_return %[[C0]], %[[C1]], %[[MOD0]], %[[C0]], %[[CM1]], %[[SMOD0]]
-yul.func @arith_mod : (i256) -> (i256, i256, i256, i256, i256, i256) {
-^bb0(%x: i256):
-  %c0 = yul.constant 0
-  %c1 = yul.constant 1
-  %c2 = yul.constant 2
-  %c7 = yul.constant 7
-  %cm7 = yul.constant -7
-  %0 = yul.arith_mod %x, %c1
-  %1 = yul.arith_mod %c7, %c2
-  %2 = yul.arith_mod %c7, %c0
-  %3 = yul.arith_smod %x, %c1
-  %4 = yul.arith_smod %cm7, %c2
-  %5 = yul.arith_smod %c7, %c0
-  yul.func_return %0, %1, %2, %3, %4, %5 : i256, i256, i256, i256, i256, i256
 }
 
 // The builtins fold with the EVM's total semantics.

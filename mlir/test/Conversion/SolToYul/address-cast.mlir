@@ -33,7 +33,7 @@ module {
   sol.contract @C {
     // CHECK-LABEL: yul.func @to_bytes20 : (i256) -> i256
     // CHECK:         %[[C96:.*]] = yul.constant 96
-    // CHECK:         %[[R:.*]] = yul.arith_shl %arg0, %[[C96]]
+    // CHECK:         %[[R:.*]] = yul.shl %[[C96]], %arg0
     // CHECK:         yul.func_return %[[R]] : i256
     sol.func @to_bytes20(%arg0: !sol.address) -> !sol.fixedbytes<20> {
       %0 = sol.address_cast %arg0 : !sol.address to !sol.fixedbytes<20>
@@ -49,7 +49,7 @@ module {
     // bytes20 is left-aligned: address(b) shifts it down by 96 bits.
     // CHECK-LABEL: yul.func @from_bytes20 : (i256) -> i256
     // CHECK:         %[[C96:.*]] = yul.constant 96
-    // CHECK:         %[[R:.*]] = yul.arith_shr %arg0, %[[C96]]
+    // CHECK:         %[[R:.*]] = yul.shr %[[C96]], %arg0
     // CHECK:         yul.func_return %[[R]] : i256
     sol.func @from_bytes20(%arg0: !sol.fixedbytes<20>) -> !sol.address {
       %0 = sol.address_cast %arg0 : !sol.fixedbytes<20> to !sol.address

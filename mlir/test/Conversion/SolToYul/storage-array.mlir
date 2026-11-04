@@ -25,7 +25,7 @@ sol.contract @C {
   // CHECK:         yul.sstore %arg0, %[[NLEN]]
   // CHECK:         %[[DATA:.*]] = yul.keccak256
   // CHECK:         %[[PER:.*]] = yul.constant 1{{$}}
-  // CHECK:         %[[Q:.*]] = yul.arith_div %[[LEN]], %[[PER]]
+  // CHECK:         %[[Q:.*]] = yul.div %[[LEN]], %[[PER]]
   // CHECK:         yul.add %[[DATA]], %[[Q]]
 
   // CHECK-LABEL: yul.func @dyn256 : (i256, i256) -> ()
@@ -49,11 +49,11 @@ sol.contract @C {
   // CHECK:         %[[P49:.*]] = yul.constant 49{{$}}
   // CHECK:         yul.func_call @__sol.panic(%[[P49]])
   // CHECK:         %[[NLEN:.*]] = yul.sub %[[LEN]], %{{.*}}
-  // CHECK:         %[[REM:.*]] = yul.arith_mod %[[NLEN]], %{{.*}}
+  // CHECK:         %[[REM:.*]] = yul.mod %[[NLEN]], %{{.*}}
   // CHECK:         %[[PARTIAL:.*]] = yul.cmp ne, %[[REM]], %{{.*}}
   // CHECK:         yul.if %[[PARTIAL]] {
   // CHECK:           %[[ONES:.*]] = yul.constant -1{{$}}
-  // CHECK:           %[[KEEP:.*]] = yul.arith_shr %[[ONES]], %{{.*}}
+  // CHECK:           %[[KEEP:.*]] = yul.shr %{{.*}}, %[[ONES]]
   // CHECK:           yul.and %{{.*}}, %[[KEEP]]
   // CHECK:           yul.sstore
   // CHECK:         } else {
@@ -67,15 +67,15 @@ sol.contract @C {
   // CHECK:         yul.sstore %arg0, %{{.*}}
   // CHECK:         yul.keccak256
   // CHECK:         %[[PER:.*]] = yul.constant 32{{$}}
-  // CHECK:         yul.arith_div %[[LEN]], %[[PER]]
-  // CHECK:         yul.arith_mod %[[LEN]], %[[PER]]
+  // CHECK:         yul.div %[[LEN]], %[[PER]]
+  // CHECK:         yul.mod %[[LEN]], %[[PER]]
 
   // CHECK-LABEL: yul.func @dyn8 : (i256, i256) -> ()
   // CHECK:         yul.func_call @__sol.push_storage_array.array$_dyn_ui8_$_Storage_$(%arg0)
   // CHECK:         %[[M:.*]] = yul.constant 255{{$}}
   // CHECK:         yul.and %arg1, %[[M]]
   // CHECK:         %[[FM:.*]] = yul.constant 255{{$}}
-  // CHECK:         yul.arith_shl %[[FM]], %{{.*}}
+  // CHECK:         yul.shl %{{.*}}, %[[FM]]
   // CHECK:         yul.sstore
   // CHECK:         yul.func_call @__sol.pop_storage_array.array$_dyn_ui8_$_Storage_$(%arg0)
   sol.func @dyn8(%a: !sol.array<? x ui8, Storage>, %v: ui8) {
@@ -115,18 +115,18 @@ sol.contract @C {
   // CHECK:         %[[I1:.*]] = yul.constant 1{{$}}
   // CHECK-NOT:     yul.cmp uge
   // CHECK:         %[[PER:.*]] = yul.constant 32{{$}}
-  // CHECK:         %[[Q:.*]] = yul.arith_div %[[I1]], %[[PER]]
+  // CHECK:         %[[Q:.*]] = yul.div %[[I1]], %[[PER]]
   // CHECK:         yul.add %arg0, %[[Q]]
-  // CHECK:         %[[S:.*]] = yul.arith_shr
+  // CHECK:         %[[S:.*]] = yul.shr
   // CHECK:         %[[M:.*]] = yul.constant 255{{$}}
   // CHECK:         %[[V:.*]] = yul.and %[[S]], %[[M]]
   // CHECK:         %[[I0:.*]] = yul.constant 0{{$}}
   // CHECK-NOT:     yul.cmp uge
-  // CHECK:         yul.arith_div %[[I0]], %{{.*}}
+  // CHECK:         yul.div %[[I0]], %{{.*}}
   // CHECK:         %[[VC:.*]] = yul.and %[[V]], %{{.*}}
   // CHECK:         %[[FM:.*]] = yul.constant 255{{$}}
-  // CHECK:         yul.arith_shl %[[FM]], %{{.*}}
-  // CHECK:         yul.arith_shl %[[VC]], %{{.*}}
+  // CHECK:         yul.shl %{{.*}}, %[[FM]]
+  // CHECK:         yul.shl %{{.*}}, %[[VC]]
   // CHECK:         yul.sstore
   sol.func @static8(%a: !sol.array<4 x ui8, Storage>) {
     %c1 = sol.constant 1 : ui8
@@ -146,12 +146,12 @@ sol.contract @C {
   // CHECK-LABEL: yul.func @__sol.index_storage_array.array$_dyn_i1_$_Storage_$ : (i256, i256) -> !llvm.struct<(i256, i256)>
   // CHECK:         yul.keccak256
   // CHECK:         %[[C32:.*]] = yul.constant 32{{$}}
-  // CHECK:         yul.arith_div %arg1, %[[C32]]
-  // CHECK:         yul.arith_mod %arg1, %[[C32]]
+  // CHECK:         yul.div %arg1, %[[C32]]
+  // CHECK:         yul.mod %arg1, %[[C32]]
   // CHECK-LABEL: yul.func @dynBool : (i256, i256) -> i256
   // CHECK:         yul.func_call @__sol.index_storage_array.array$_dyn_i1_$_Storage_$(%arg0, %arg1)
   // CHECK:         %[[S:.*]] = yul.sload
-  // CHECK:         %[[SH:.*]] = yul.arith_shr %[[S]], %{{.*}}
+  // CHECK:         %[[SH:.*]] = yul.shr %{{.*}}, %[[S]]
   // CHECK:         %[[MASK:.*]] = yul.constant 255{{$}}
   // CHECK:         %[[M:.*]] = yul.and %[[SH]], %[[MASK]]
   // CHECK:         %[[B:.*]] = yul.cmp ne, %[[M]], %{{.*}}

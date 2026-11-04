@@ -4,7 +4,7 @@
 // CHECK:         %[[M:.*]] = yul.constant 1461501637330902918203684832716283019655932542975{{$}}
 // CHECK:         yul.and %arg0, %[[M]]
 // CHECK:         %[[FM:.*]] = yul.constant 1461501637330902918203684832716283019655932542975{{$}}
-// CHECK:         yul.arith_shl %[[FM]], %{{.*}}
+// CHECK:         yul.shl %{{.*}}, %[[FM]]
 // CHECK:         yul.sstore
 // CHECK:         %[[LM:.*]] = yul.constant 1461501637330902918203684832716283019655932542975{{$}}
 // CHECK:         %[[R:.*]] = yul.and %{{.*}}, %[[LM]]
@@ -28,13 +28,13 @@ module {
 // CHECK-LABEL: yul.func @bytes4 : (i256) -> i256
 // CHECK:         %[[V:.*]] = yul.and %arg0, %{{.*}}
 // CHECK:         %[[C224:.*]] = yul.constant 224{{$}}
-// CHECK:         yul.arith_shr %[[V]], %[[C224]]
+// CHECK:         yul.shr %[[C224]], %[[V]]
 // CHECK:         %[[FM:.*]] = yul.constant 4294967295{{$}}
-// CHECK:         yul.arith_shl %[[FM]], %{{.*}}
+// CHECK:         yul.shl %{{.*}}, %[[FM]]
 // CHECK:         yul.sstore
-// CHECK:         %[[L:.*]] = yul.arith_shr
+// CHECK:         %[[L:.*]] = yul.shr
 // CHECK:         %[[L224:.*]] = yul.constant 224{{$}}
-// CHECK:         %[[R:.*]] = yul.arith_shl %[[L]], %[[L224]]
+// CHECK:         %[[R:.*]] = yul.shl %[[L224]], %[[L]]
 // CHECK:         yul.func_return %[[R]]
 #Contract = #sol<ContractKind Contract>
 module {
@@ -54,10 +54,10 @@ module {
 // CHECK-LABEL: yul.func @ui256 : (i256) -> i256
 // CHECK-NOT:     yul.and %arg0
 // CHECK:         %[[FM:.*]] = yul.constant -1{{$}}
-// CHECK:         yul.arith_shl %[[FM]], %{{.*}}
-// CHECK:         yul.arith_shl %arg0, %{{.*}}
+// CHECK:         yul.shl %{{.*}}, %[[FM]]
+// CHECK:         yul.shl %{{.*}}, %arg0
 // CHECK:         yul.sstore
-// CHECK:         %[[R:.*]] = yul.arith_shr
+// CHECK:         %[[R:.*]] = yul.shr
 // CHECK-NEXT:    yul.func_return %[[R]]
 #Contract = #sol<ContractKind Contract>
 module {
@@ -78,10 +78,10 @@ module {
 // CHECK-LABEL: yul.func @bool : (i256) -> i256
 // CHECK:         %[[V:.*]] = yul.cmp ne, %arg0, %{{.*}}
 // CHECK:         %[[FM:.*]] = yul.constant 255{{$}}
-// CHECK:         yul.arith_shl %[[FM]], %{{.*}}
-// CHECK:         yul.arith_shl %[[V]], %{{.*}}
+// CHECK:         yul.shl %{{.*}}, %[[FM]]
+// CHECK:         yul.shl %{{.*}}, %[[V]]
 // CHECK:         yul.sstore
-// CHECK:         %[[L:.*]] = yul.arith_shr
+// CHECK:         %[[L:.*]] = yul.shr
 // CHECK:         %[[LM:.*]] = yul.constant 255{{$}}
 // CHECK:         %[[B:.*]] = yul.and %[[L]], %[[LM]]
 // CHECK:         %[[R:.*]] = yul.cmp ne, %[[B]], %{{.*}}
@@ -107,10 +107,10 @@ module {
 // CHECK:         yul.cmp ugt, %arg0, %[[MAX]]
 // CHECK:         yul.constant 33{{$}}
 // CHECK:         %[[FM:.*]] = yul.constant 255{{$}}
-// CHECK:         yul.arith_shl %[[FM]], %{{.*}}
-// CHECK:         yul.arith_shl %arg0, %{{.*}}
+// CHECK:         yul.shl %{{.*}}, %[[FM]]
+// CHECK:         yul.shl %{{.*}}, %arg0
 // CHECK:         yul.sstore
-// CHECK:         %[[L:.*]] = yul.arith_shr
+// CHECK:         %[[L:.*]] = yul.shr
 // CHECK:         %[[LM:.*]] = yul.constant 255{{$}}
 // CHECK:         %[[R:.*]] = yul.and %[[L]], %[[LM]]
 // CHECK:         yul.func_return %[[R]]
@@ -135,10 +135,10 @@ module {
 // CHECK:         %[[M:.*]] = yul.constant 65535{{$}}
 // CHECK:         %[[V:.*]] = yul.and %[[SX]], %[[M]]
 // CHECK:         %[[FM:.*]] = yul.constant 65535{{$}}
-// CHECK:         yul.arith_shl %[[FM]], %{{.*}}
-// CHECK:         yul.arith_shl %[[V]], %{{.*}}
+// CHECK:         yul.shl %{{.*}}, %[[FM]]
+// CHECK:         yul.shl %{{.*}}, %[[V]]
 // CHECK:         yul.sstore
-// CHECK:         %[[L:.*]] = yul.arith_shr
+// CHECK:         %[[L:.*]] = yul.shr
 // CHECK:         %[[R:.*]] = yul.signextend %{{.*}}, %[[L]]
 // CHECK:         yul.func_return %[[R]]
 #Contract = #sol<ContractKind Contract>
@@ -170,17 +170,17 @@ module {
 // CHECK:         %[[SH:.*]] = yul.mul %[[OFF]], %{{.*}}
 // CHECK:         %[[OLD:.*]] = yul.sload %[[SLOT]]
 // CHECK:         %[[FM:.*]] = yul.constant 255{{$}}
-// CHECK:         %[[HOLE:.*]] = yul.arith_shl %[[FM]], %[[SH]]
+// CHECK:         %[[HOLE:.*]] = yul.shl %[[SH]], %[[FM]]
 // CHECK:         %[[INV:.*]] = yul.xor %[[HOLE]], %{{.*}}
 // CHECK:         %[[CLR:.*]] = yul.and %[[OLD]], %[[INV]]
-// CHECK:         %[[VSH:.*]] = yul.arith_shl %[[V]], %[[SH]]
+// CHECK:         %[[VSH:.*]] = yul.shl %[[SH]], %[[V]]
 // CHECK:         %[[NEW:.*]] = yul.or %[[CLR]], %[[VSH]]
 // CHECK:         yul.sstore %[[SLOT]], %[[NEW]]
 // CHECK:         %[[LSLOT:.*]] = llvm.extractvalue %{{.*}}[0]
 // CHECK:         %[[LOFF:.*]] = llvm.extractvalue %{{.*}}[1]
 // CHECK:         %[[LD:.*]] = yul.sload %[[LSLOT]]
 // CHECK:         %[[LSH:.*]] = yul.mul %[[LOFF]], %{{.*}}
-// CHECK:         %[[L:.*]] = yul.arith_shr %[[LD]], %[[LSH]]
+// CHECK:         %[[L:.*]] = yul.shr %[[LSH]], %[[LD]]
 // CHECK:         %[[LM:.*]] = yul.constant 255{{$}}
 // CHECK:         %[[R:.*]] = yul.and %[[L]], %[[LM]]
 // CHECK:         yul.func_return %[[R]]
@@ -204,10 +204,10 @@ module {
 // CHECK:         %[[M:.*]] = yul.constant 18446744073709551615{{$}}
 // CHECK:         %[[V:.*]] = yul.and %arg0, %[[M]]
 // CHECK:         %[[FM:.*]] = yul.constant 18446744073709551615{{$}}
-// CHECK:         yul.arith_shl %[[FM]], %{{.*}}
-// CHECK:         yul.arith_shl %[[V]], %{{.*}}
+// CHECK:         yul.shl %{{.*}}, %[[FM]]
+// CHECK:         yul.shl %{{.*}}, %[[V]]
 // CHECK:         yul.sstore
-// CHECK:         %[[L:.*]] = yul.arith_shr
+// CHECK:         %[[L:.*]] = yul.shr
 // CHECK:         %[[LM:.*]] = yul.constant 18446744073709551615{{$}}
 // CHECK:         %[[R:.*]] = yul.and %[[L]], %[[LM]]
 // CHECK:         yul.func_return %[[R]]

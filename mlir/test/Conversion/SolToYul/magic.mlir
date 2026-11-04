@@ -74,11 +74,11 @@ module {
   sol.contract @C {
     // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.packed.inplace.ui24.ui96 : (i256, i256, i256) -> i256
     // CHECK:         %[[X:.*]] = yul.and %arg0, %c16777215_i256
-    // CHECK:         %[[XS:.*]] = yul.arith_shl %[[X]], %c232_i256
+    // CHECK:         %[[XS:.*]] = yul.shl %c232_i256{{(_[0-9]+)?}}, %[[X]]
     // CHECK:         yul.mstore %arg2, %[[XS]]
     // CHECK:         %[[P1:.*]] = yul.add %arg2, %c3_i256
     // CHECK:         %[[Y:.*]] = yul.and %arg1, %c79228162514264337593543950335_i256
-    // CHECK:         %[[YS:.*]] = yul.arith_shl %[[Y]], %c160_i256
+    // CHECK:         %[[YS:.*]] = yul.shl %c160_i256{{(_[0-9]+)?}}, %[[Y]]
     // CHECK:         yul.mstore %[[P1]], %[[YS]]
     // CHECK:         %[[END:.*]] = yul.add %[[P1]], %c12_i256
     // CHECK:         yul.func_return %[[END]] : i256
@@ -299,7 +299,7 @@ module {
 module {
   sol.contract @C {
     // CHECK-LABEL: yul.func @encode_selector_literal : () -> i256
-    // CHECK:         %[[SEL:.*]] = yul.arith_shl %c69443890_i256, %c224_i256
+    // CHECK:         %[[SEL:.*]] = yul.shl %c224_i256{{(_[0-9]+)?}}, %c69443890_i256
     // CHECK:         yul.mstore %{{.*}}, %[[SEL]]
     sol.func @encode_selector_literal() -> !sol.string<Memory> {
       %c69443890_ui32 = sol.constant 69443890 : ui32
@@ -316,7 +316,7 @@ module {
   sol.contract @C {
     // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.ext_func_ref$_$_ui256_$returnsui256_$ : (!llvm.struct<(i256, i256)>, i256) -> i256
     // CHECK:         %[[F:.*]] = yul.or
-    // CHECK:         %[[W:.*]] = yul.arith_shl %[[F]], %c64_i256
+    // CHECK:         %[[W:.*]] = yul.shl %c64_i256{{(_[0-9]+)?}}, %[[F]]
     // CHECK:         yul.mstore %arg1, %[[W]]
     // CHECK:         yul.add %arg1, %c32_i256
     // CHECK-LABEL: yul.func @encode_fnptr : (!llvm.struct<(i256, i256)>) -> i256
@@ -336,9 +336,9 @@ module {
     // CHECK:         %[[A:.*]] = llvm.extractvalue %arg0[0]
     // CHECK:         %[[S:.*]] = llvm.extractvalue %arg0[1]
     // CHECK:         %[[SEL:.*]] = yul.and %[[S]], %c4294967295_i256
-    // CHECK:         %[[AS:.*]] = yul.arith_shl %[[A]], %c32_i256
+    // CHECK:         %[[AS:.*]] = yul.shl %c32_i256{{(_[0-9]+)?}}, %[[A]]
     // CHECK:         %[[F:.*]] = yul.or %[[AS]], %[[SEL]]
-    // CHECK:         %[[W:.*]] = yul.arith_shl %[[F]], %c64_i256
+    // CHECK:         %[[W:.*]] = yul.shl %c64_i256{{(_[0-9]+)?}}, %[[F]]
     // CHECK:         yul.mstore %arg1, %[[W]]
     // CHECK:         %[[END:.*]] = yul.add %arg1, %c24_i256
     // CHECK:         yul.func_return %[[END]] : i256

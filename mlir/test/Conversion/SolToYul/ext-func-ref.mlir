@@ -24,7 +24,7 @@
 // CHECK:           %[[ECLEAN:.*]] = yul.and %[[EW]], %[[EHI]]
 // CHECK:           %[[EBAD:.*]] = yul.cmp ne, %[[EW]], %[[ECLEAN]]
 // CHECK:           yul.if %[[EBAD]] {
-// CHECK-NOT:       yul.arith_shr
+// CHECK-NOT:       yul.shr
 // CHECK:           yul.mstore %{{.*}}, %[[EW]]
 
 // CHECK-LABEL: yul.func @__sol.abi_decode_tuple.calldata.ext_func_ref$_$_ui256_$returnsui256_$ : (i256, i256) -> !llvm.struct<(i256, i256)>
@@ -34,8 +34,8 @@
 // CHECK:         %[[BAD:.*]] = yul.cmp ne, %[[W]], %[[CLEAN]]
 // CHECK:         yul.if %[[BAD]] {
 // CHECK:           yul.revert
-// CHECK:         %[[A:.*]] = yul.arith_shr %[[W]], %c96_i256
-// CHECK:         %[[S:.*]] = yul.arith_shr %[[W]], %c64_i256
+// CHECK:         %[[A:.*]] = yul.shr %c96_i256{{(_[0-9]+)?}}, %[[W]]
+// CHECK:         %[[S:.*]] = yul.shr %c64_i256{{(_[0-9]+)?}}, %[[W]]
 // CHECK:         %[[SEL:.*]] = yul.and %[[S]], %c4294967295_i256
 // CHECK:         %[[R0:.*]] = llvm.insertvalue %[[A]], %{{.*}}[0]
 // CHECK:         %[[FP:.*]] = llvm.insertvalue %[[SEL]], %[[R0]][1]
@@ -47,12 +47,12 @@
 // CHECK:         %[[ADDR:.*]] = llvm.extractvalue %[[FP]][0]
 // CHECK:         %[[SEL:.*]] = llvm.extractvalue %[[FP]][1]
 // CHECK:         %[[SELC:.*]] = yul.and %[[SEL]], %c4294967295_i256
-// CHECK:         %[[HI:.*]] = yul.arith_shl %[[ADDR]], %c32_i256
+// CHECK:         %[[HI:.*]] = yul.shl %c32_i256{{(_[0-9]+)?}}, %[[ADDR]]
 // CHECK:         %[[PACKED:.*]] = yul.or %[[HI]], %[[SELC]]
-// CHECK:         %[[T:.*]] = yul.arith_shl %[[PACKED]], %c64_i256
-// CHECK:         %[[V:.*]] = yul.arith_shr %[[T]], %c64_i256
-// CHECK:         yul.arith_shl %c6277101735386680763835789423207666416102355444464034512895_i256, %{{.*}}
-// CHECK:         %[[VS:.*]] = yul.arith_shl %[[V]], %{{.*}}
+// CHECK:         %[[T:.*]] = yul.shl %c64_i256{{(_[0-9]+)?}}, %[[PACKED]]
+// CHECK:         %[[V:.*]] = yul.shr %c64_i256{{(_[0-9]+)?}}, %[[T]]
+// CHECK:         yul.shl %{{.*}}, %c6277101735386680763835789423207666416102355444464034512895_i256
+// CHECK:         %[[VS:.*]] = yul.shl %{{.*}}, %[[V]]
 // CHECK:         %[[W:.*]] = yul.or %{{.*}}, %[[VS]]
 // CHECK:         yul.sstore %{{.*}}, %[[W]]
 module {
@@ -82,7 +82,7 @@ module {
 // CHECK:         %[[ADDR:.*]] = llvm.extractvalue %[[REF]][0]
 // CHECK:         %[[S:.*]] = llvm.extractvalue %[[REF]][1]
 // CHECK:         %[[C224:.*]] = yul.constant 224
-// CHECK:         %[[B4:.*]] = yul.arith_shl %[[S]], %[[C224]]
+// CHECK:         %[[B4:.*]] = yul.shl %[[C224]], %[[S]]
 // CHECK:         yul.func_return %[[ADDR]], %[[B4]] : i256, i256
 module {
   sol.contract @C {
@@ -101,8 +101,8 @@ module {
 
 // CHECK-LABEL: yul.func @structGet : (i256) -> !llvm.struct<(i256, i256)>
 // CHECK:         %[[W:.*]] = yul.mload
-// CHECK:         %[[A:.*]] = yul.arith_shr %[[W]], %c96_i256
-// CHECK:         %[[S:.*]] = yul.arith_shr %[[W]], %c64_i256
+// CHECK:         %[[A:.*]] = yul.shr %c96_i256{{(_[0-9]+)?}}, %[[W]]
+// CHECK:         %[[S:.*]] = yul.shr %c64_i256{{(_[0-9]+)?}}, %[[W]]
 // CHECK:         %[[SEL:.*]] = yul.and %[[S]], %c4294967295_i256
 // CHECK:         %[[R0:.*]] = llvm.insertvalue %[[A]], %{{.*}}[0]
 // CHECK:         %[[R:.*]] = llvm.insertvalue %[[SEL]], %[[R0]][1]
@@ -128,9 +128,9 @@ module {
 // CHECK:         %[[A:.*]] = llvm.extractvalue %[[FP]][0]
 // CHECK:         %[[S:.*]] = llvm.extractvalue %[[FP]][1]
 // CHECK:         %[[SEL:.*]] = yul.and %[[S]], %c4294967295_i256
-// CHECK:         %[[AS:.*]] = yul.arith_shl %[[A]], %c32_i256
+// CHECK:         %[[AS:.*]] = yul.shl %c32_i256{{(_[0-9]+)?}}, %[[A]]
 // CHECK:         %[[F:.*]] = yul.or %[[AS]], %[[SEL]]
-// CHECK:         %[[W:.*]] = yul.arith_shl %[[F]], %c64_i256
+// CHECK:         %[[W:.*]] = yul.shl %c64_i256{{(_[0-9]+)?}}, %[[F]]
 // CHECK:         yul.mstore %[[P]], %[[W]]
 module {
   sol.contract @C {
@@ -149,9 +149,9 @@ module {
 
 // CHECK-LABEL: yul.func @getExtFn : () -> !llvm.struct<(i256, i256)>
 // CHECK:         llvm.insertvalue %c8_i256, %{{.*}}[1]
-// CHECK:         %[[V:.*]] = yul.arith_shr
+// CHECK:         %[[V:.*]] = yul.shr
 // CHECK:         %[[SEL:.*]] = yul.and %[[V]], %c4294967295_i256
-// CHECK:         %[[HI:.*]] = yul.arith_shr %[[V]], %c32_i256
+// CHECK:         %[[HI:.*]] = yul.shr %c32_i256{{(_[0-9]+)?}}, %[[V]]
 // CHECK:         %[[ADDR:.*]] = yul.and %[[HI]], %c1461501637330902918203684832716283019655932542975_i256
 // CHECK:         %[[R0:.*]] = llvm.insertvalue %[[ADDR]], %{{.*}}[0]
 // CHECK:         %[[R1:.*]] = llvm.insertvalue %[[SEL]], %[[R0]][1]

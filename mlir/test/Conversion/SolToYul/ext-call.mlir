@@ -11,7 +11,7 @@ module {
     // CHECK:         %[[SEL:.*]] = yul.constant 3017696395
     // CHECK:         %[[ADDR:.*]] = yul.and %[[A]], %{{.*}}
     // CHECK:         %[[BUF:.*]] = yul.mload
-    // CHECK:         %[[SEL_W:.*]] = yul.arith_shl %[[SEL]], %{{.*}}
+    // CHECK:         %[[SEL_W:.*]] = yul.shl %{{.*}}, %[[SEL]]
     // CHECK:         yul.mstore %[[BUF]], %[[SEL_W]]
     // CHECK:         %[[ARGS:.*]] = yul.add %[[BUF]], %{{.*}}
     // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.ui256(%[[X]], %[[ARGS]])
@@ -234,7 +234,7 @@ module {
     // CHECK-LABEL: yul.func @calldataString : (i256, !llvm.struct<(i256, i256)>) -> i256
     // CHECK:         %[[SEL:.*]] = yul.constant 151743695
     // CHECK:         %[[BUF:.*]] = yul.mload
-    // CHECK:         yul.arith_shl %[[SEL]], %{{.*}}
+    // CHECK:         yul.shl %{{.*}}, %[[SEL]]
     // CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.string$_CallData_$(%arg1, %{{.*}})
     // CHECK:         yul.static_call %{{.*}}, %{{.*}}, %[[BUF]], %{{.*}}, %[[BUF]], %c0_i256{{(_[0-9]+)?$}}
     // CHECK:         %[[R:.*]] = yul.if %{{.*}} -> i256 {
@@ -265,7 +265,7 @@ module {
     // CHECK:         %[[GAS:.*]] = yul.gas
     // CHECK:         %[[ZERO:.*]] = yul.constant 0
     // CHECK:         %[[C224:.*]] = yul.constant 224
-    // CHECK:         yul.arith_shl %{{.*}}, %[[C224]]
+    // CHECK:         yul.shl %[[C224]], %{{.*}}
     // CHECK:         %[[OK:.*]] = yul.call %[[GAS]], %{{.*}}, %[[ZERO]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
     // CHECK:         %[[FAIL:.*]] = yul.cmp eq, %[[OK]], %{{.*}}
     // CHECK:         yul.if %[[FAIL]] {

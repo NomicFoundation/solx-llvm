@@ -7,7 +7,7 @@ module {
     // Long storage bytes read their first word from keccak(slot); data shorter
     // than the target is masked to its length.
     // CHECK-LABEL: yul.func @__sol.storage_string_length : (i256) -> i256
-    // CHECK:         %[[LEN:.*]] = yul.arith_select
+    // CHECK:         %[[LEN:.*]] = yul.select
     // CHECK:         %[[PANIC:.*]] = yul.constant 34{{$}}
     // CHECK:         yul.func_call @__sol.panic(%[[PANIC]])
     // CHECK:         yul.func_return %[[LEN]] : i256
@@ -49,7 +49,7 @@ module {
     // CHECK:         %[[SHORT:.*]] = yul.cmp ult, %[[LEN]], %[[N]]
     // CHECK:         %[[R:.*]] = yul.if %[[SHORT]] -> i256 {
     // CHECK:           %[[SH:.*]] = yul.mul
-    // CHECK:           %[[KEEP:.*]] = yul.arith_shl %[[M]], %[[SH]]
+    // CHECK:           %[[KEEP:.*]] = yul.shl %[[SH]], %[[M]]
     // CHECK:           yul.and %[[V]], %[[KEEP]]
     // CHECK:         yul.func_return %[[R]] : i256
     sol.func @fromCalldata16(%arg0: !sol.string<CallData>) -> !sol.fixedbytes<16> attributes {state_mutability = #Pure} {
@@ -73,7 +73,7 @@ module {
     // CHECK:         %[[SHORT:.*]] = yul.cmp ult, %[[LEN]], %[[N]]
     // CHECK:         %[[R:.*]] = yul.if %[[SHORT]] -> i256 {
     // CHECK:           %[[SH:.*]] = yul.mul
-    // CHECK:           %[[KEEP:.*]] = yul.arith_shl %[[M]], %[[SH]]
+    // CHECK:           %[[KEEP:.*]] = yul.shl %[[SH]], %[[M]]
     // CHECK:           yul.and %[[V]], %[[KEEP]]
     // CHECK:         yul.func_return %[[R]] : i256
     sol.func @fromMemory16(%arg0: !sol.string<Memory>) -> !sol.fixedbytes<16> attributes {state_mutability = #Pure} {

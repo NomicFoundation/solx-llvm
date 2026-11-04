@@ -14,20 +14,13 @@
 // CHECK-NEXT: %[[V8:[0-9]+]] = or i256 %[[V7]], %[[V1]]
 // CHECK-NEXT: %[[V9:[0-9]+]] = xor i256 %[[V8]], %[[V1]]
 // CHECK-NEXT: %[[V10:[0-9]+]] = xor i256 %[[V9]], -1
-// CHECK-NEXT: %[[V11:[0-9]+]] = shl i256 %[[V10]], %[[V1]]
-// CHECK-NEXT: %[[V12:[0-9]+]] = lshr i256 %[[V11]], %[[V1]]
-// CHECK-NEXT: %[[V13:[0-9]+]] = ashr i256 %[[V12]], %[[V1]]
-// CHECK-NEXT: %[[V14:[0-9]+]] = udiv i256 %[[V13]], %[[V1]]
-// CHECK-NEXT: %[[V15:[0-9]+]] = sdiv i256 %[[V14]], %[[V1]]
-// CHECK-NEXT: %[[V16:[0-9]+]] = urem i256 %[[V15]], %[[V1]]
-// CHECK-NEXT: %[[V17:[0-9]+]] = srem i256 %[[V16]], %[[V1]]
-// CHECK-NEXT: %[[V18:[0-9]+]] = icmp ne i256 %[[V2]], 0
-// CHECK-NEXT: %[[V19:[0-9]+]] = select i1 %[[V18]], i256 %[[V17]], i256 %[[V0]]
-// CHECK-NEXT: %[[V20:[0-9]+]] = icmp slt i256 %[[V19]], %[[V1]]
-// CHECK-NEXT: %[[V21:[0-9]+]] = zext i1 %[[V20]] to i256
-// CHECK-NEXT: %[[V22:[0-9]+]] = select i1 %[[V20]], i256 %[[V19]], i256 %[[V1]]
-// CHECK-NEXT: %[[V23:[0-9]+]] = inttoptr i256 %[[V0]] to ptr addrspace(5)
-// CHECK-NEXT: store i256 %[[V22]], ptr addrspace(5) %[[V23]], align 1
+// CHECK-NEXT: %[[V11:[0-9]+]] = icmp ne i256 %[[V2]], 0
+// CHECK-NEXT: %[[V12:[0-9]+]] = select i1 %[[V11]], i256 %[[V10]], i256 %[[V0]]
+// CHECK-NEXT: %[[V13:[0-9]+]] = icmp slt i256 %[[V12]], %[[V1]]
+// CHECK-NEXT: %[[V14:[0-9]+]] = zext i1 %[[V13]] to i256
+// CHECK-NEXT: %[[V15:[0-9]+]] = select i1 %[[V13]], i256 %[[V12]], i256 %[[V1]]
+// CHECK-NEXT: %[[V16:[0-9]+]] = inttoptr i256 %[[V0]] to ptr addrspace(5)
+// CHECK-NEXT: store i256 %[[V15]], ptr addrspace(5) %[[V16]], align 1
 // CHECK-NEXT: ret void
 // CHECK-NEXT: }
 // CHECK-LABEL: define private void @selfdestruct(
@@ -291,17 +284,10 @@ module {
       %4 = yul.or %3, %b
       %5 = yul.xor %4, %b
       %6 = yul.not %5
-      %7 = yul.arith_shl %6, %b
-      %8 = yul.arith_shr %7, %b
-      %9 = yul.arith_sar %8, %b
-      %10 = yul.arith_div %9, %b
-      %11 = yul.arith_sdiv %10, %b
-      %12 = yul.arith_mod %11, %b
-      %13 = yul.arith_smod %12, %b
-      %14 = yul.arith_select %c, %13, %a
-      %15 = yul.cmp slt, %14, %b
-      %16 = yul.arith_select %15, %14, %b
-      yul.sstore %a, %16
+      %7 = yul.select %c, %6, %a
+      %8 = yul.cmp slt, %7, %b
+      %9 = yul.select %8, %7, %b
+      yul.sstore %a, %9
       yul.func_return
     }
 

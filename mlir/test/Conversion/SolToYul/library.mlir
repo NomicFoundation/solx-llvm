@@ -42,7 +42,7 @@ module {
 // CHECK:         %[[LIB:.*]] = yul.linkersymbol "library.sol:L"
 // CHECK:         %[[LIBA:.*]] = yul.and %[[LIB]], %{{.*}}
 // CHECK:         %[[C224:.*]] = yul.constant 224
-// CHECK:         yul.arith_shl %[[SEL]], %[[C224]]
+// CHECK:         yul.shl %[[C224]], %[[SEL]]
 // CHECK:         %[[OK:.*]] = yul.delegate_call %[[GAS]], %[[LIBA]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
 // CHECK:         yul.cmp eq, %[[OK]], %{{.*}}
 

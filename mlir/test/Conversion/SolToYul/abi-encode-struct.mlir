@@ -169,11 +169,11 @@ module {
 // CHECK:         %[[MA:.*]] = yul.constant 340282366920938463463374607431768211455
 // CHECK:         yul.and %[[W]], %[[MA]]
 // CHECK:         %[[SB:.*]] = yul.constant 128{{$}}
-// CHECK:         %[[B:.*]] = yul.arith_shr %[[W]], %[[SB]]
+// CHECK:         %[[B:.*]] = yul.shr %[[SB]], %[[W]]
 // CHECK:         %[[MB:.*]] = yul.constant 18446744073709551615
 // CHECK:         yul.and %[[B]], %[[MB]]
 // CHECK:         %[[SC:.*]] = yul.constant 192{{$}}
-// CHECK:         %[[C:.*]] = yul.arith_shr %[[W]], %[[SC]]
+// CHECK:         %[[C:.*]] = yul.shr %[[SC]], %[[W]]
 // CHECK:         %[[MC:.*]] = yul.constant 255{{$}}
 // CHECK:         %[[CB:.*]] = yul.and %[[C]], %[[MC]]
 // CHECK:         yul.cmp ne, %[[CB]], %{{.*}}

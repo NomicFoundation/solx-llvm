@@ -175,8 +175,8 @@ struct StructEncodeMemberReaderStorage final : evm::StructEncodeMemberReader {
 
       Value shifted = previousSlotValue;
       if (byteOffset != 0)
-        shifted = b.create<yul::ArithShrOp>(loc, previousSlotValue,
-                                            bExt.genI256Const(byteOffset * 8));
+        shifted = b.create<yul::ShrOp>(loc, bExt.genI256Const(byteOffset * 8),
+                                       previousSlotValue);
 
       if (skipCleanup)
         return shifted;
@@ -226,7 +226,7 @@ struct StructMemberWriterStorage final : evm::StructMemberWriter {
       APInt fieldMask = APInt::getLowBitsSet(256, storageBits);
       Value shiftBits = bExt.genI256Const(byteOffset * 8);
       Value shifted = byteOffset > 0
-                          ? b.create<yul::ArithShlOp>(loc, srcVal, shiftBits)
+                          ? b.create<yul::ShlOp>(loc, shiftBits, srcVal)
                           : srcVal;
       accum = b.create<yul::OrOp>(loc, accum, shifted);
 
@@ -357,7 +357,7 @@ Value emitCompactStorageArrayReadLoop(OpBuilder &b, Location loc, Value size,
   // not efficient.
   auto hasFullSlots =
       bExt.genCmp(yul::CmpPredicate::uge, size, itemsPerSlotI256);
-  Value fullLoopUpperBoundI256 = b.create<yul::ArithSelectOp>(
+  Value fullLoopUpperBoundI256 = b.create<yul::SelectOp>(
       loc, hasFullSlots,
       b.create<yul::SubOp>(loc, size, bExt.genI256Const(itemsPerSlot - 1)),
       zeroI256);
@@ -506,7 +506,7 @@ void emitCompactStorageArrayWriteLoop(OpBuilder &b, Location loc, Value size,
 
   auto hasFullSlots =
       bExt.genCmp(yul::CmpPredicate::uge, size, itemsPerSlotI256);
-  Value fullLoopUpperBoundI256 = b.create<yul::ArithSelectOp>(
+  Value fullLoopUpperBoundI256 = b.create<yul::SelectOp>(
       loc, hasFullSlots,
       b.create<yul::SubOp>(loc, size, bExt.genI256Const(itemsPerSlot - 1)),
       zeroI256);
@@ -643,7 +643,7 @@ static void emitRepackStorageToStorageCopyLoop(OpBuilder &b, Location loc,
         // Extract src item (right-aligned, masked).
         Value srcShift = b.create<yul::MulOp>(
             loc, srcItemInSlot, bExt.genI256Const(srcEltByteSize * 8));
-        Value raw = b.create<yul::ArithShrOp>(loc, srcSlotVal, srcShift);
+        Value raw = b.create<yul::ShrOp>(loc, srcShift, srcSlotVal);
         Value srcVal =
             b.create<yul::AndOp>(loc, raw, bExt.genI256Const(srcMask));
 
@@ -652,15 +652,15 @@ static void emitRepackStorageToStorageCopyLoop(OpBuilder &b, Location loc,
         if (isa<sol::FixedBytesType>(srcEltTy) &&
             srcEltByteSize < dstEltByteSize) {
           // Bytes widening: shift MSB toward the high end of dst field.
-          dstVal = b.create<yul::ArithShlOp>(
-              loc, srcVal,
-              bExt.genI256Const((dstEltByteSize - srcEltByteSize) * 8));
+          dstVal = b.create<yul::ShlOp>(
+              loc, bExt.genI256Const((dstEltByteSize - srcEltByteSize) * 8),
+              srcVal);
         } else if (isa<sol::FixedBytesType>(srcEltTy) &&
                    srcEltByteSize > dstEltByteSize) {
           // Bytes narrowing: take the most-significant dst bytes.
-          dstVal = b.create<yul::ArithShrOp>(
-              loc, srcVal,
-              bExt.genI256Const((srcEltByteSize - dstEltByteSize) * 8));
+          dstVal = b.create<yul::ShrOp>(
+              loc, bExt.genI256Const((srcEltByteSize - dstEltByteSize) * 8),
+              srcVal);
         } else if (auto intTy = dyn_cast<IntegerType>(srcEltTy);
                    intTy && intTy.isSigned() &&
                    srcEltByteSize < dstEltByteSize) {
@@ -677,7 +677,7 @@ static void emitRepackStorageToStorageCopyLoop(OpBuilder &b, Location loc,
         // Pack into current dst slot accumulator.
         Value dstShift = b.create<yul::MulOp>(
             loc, dstItemInSlot, bExt.genI256Const(dstEltByteSize * 8));
-        Value packed = b.create<yul::ArithShlOp>(loc, dstVal, dstShift);
+        Value packed = b.create<yul::ShlOp>(loc, dstShift, dstVal);
         Value newDstAccum = b.create<yul::OrOp>(loc, dstAccum, packed);
 
         // Advance source item index in slot. Reload slot on slot boundary,
@@ -1544,7 +1544,7 @@ Value evm::Builder::genDynBytesToFixedBytes(Value src, Type srcTy,
   else
     // For smaller widths, it is safe to use the arithmetic wrapper, as
     // shiftBits won't be 256.
-    shortMask = b.create<yul::ArithShlOp>(loc, fixedMaskVal, shiftBits);
+    shortMask = b.create<yul::ShlOp>(loc, shiftBits, fixedMaskVal);
 
   Value shortValue = b.create<yul::AndOp>(loc, value, shortMask);
   b.create<yul::YieldOp>(loc, shortValue);
@@ -1681,8 +1681,8 @@ std::pair<Value, Value> evm::Builder::genPackedStorageAddrPair(
   // 32 may not be evenly divisible by eltByteSize.
   unsigned itemsPerSlot = 32 / eltByteSize;
   Value itemsPerSlotV = bExt.genI256Const(itemsPerSlot);
-  Value slotOffset = b.create<yul::ArithDivOp>(loc, idx, itemsPerSlotV);
-  Value itemInSlot = b.create<yul::ArithModOp>(loc, idx, itemsPerSlotV);
+  Value slotOffset = b.create<yul::DivOp>(loc, idx, itemsPerSlotV);
+  Value itemInSlot = b.create<yul::ModOp>(loc, idx, itemsPerSlotV);
   Value byteOffset = b.create<yul::MulOp>(loc, itemInSlot,
                                           bExt.genI256Const(eltByteSize, loc));
   if (isDataLeftAligned)
@@ -1720,7 +1720,7 @@ static Value genPunchHoleInValue(OpBuilder &b, Value value, Value shiftBits,
   // holeMask = not(ones(numBits) << shiftBits)
   APInt ones = APInt::getLowBitsSet(256, numBits);
   Value shiftedOnes =
-      b.create<yul::ArithShlOp>(loc, bExt.genI256Const(ones), shiftBits);
+      b.create<yul::ShlOp>(loc, shiftBits, bExt.genI256Const(ones));
   Value holeMask = b.create<yul::XOrOp>(
       loc, shiftedOnes, bExt.genI256Const(APInt::getAllOnes(256)));
 
@@ -1750,8 +1750,8 @@ Value evm::Builder::genCleanupPackedStorageValue(
     unsigned numBits = sol::getNumBytes(eltTy) * 8;
     if (numBits == 256)
       return value;
-    return b.create<yul::ArithShlOp>(loc, value,
-                                     bExt.genI256Const(256 - numBits, loc));
+    return b.create<yul::ShlOp>(loc, bExt.genI256Const(256 - numBits, loc),
+                                value);
   }
 
   if (auto intTy = dyn_cast<IntegerType>(eltTy)) {
@@ -1800,15 +1800,14 @@ Value evm::Builder::genExtFuncPack(Value extFuncStruct, bool inStorage,
   // MSB form: | addr(160) | sel(32) | zeros(64) |.
   Value selMasked = b.create<yul::AndOp>(
       loc, sel, bExt.genI256Const(APInt::getLowBitsSet(256, 32), loc));
-  Value addrShifted =
-      b.create<yul::ArithShlOp>(loc, addr, bExt.genI256Const(32));
+  Value addrShifted = b.create<yul::ShlOp>(loc, bExt.genI256Const(32), addr);
   Value combined = b.create<yul::OrOp>(loc, addrShifted, selMasked);
-  Value msb = b.create<yul::ArithShlOp>(loc, combined, bExt.genI256Const(64));
+  Value msb = b.create<yul::ShlOp>(loc, bExt.genI256Const(64), combined);
   if (!inStorage)
     return msb;
 
   // LSB form: | zeros(64) | addr(160) | sel(32) |.
-  return b.create<yul::ArithShrOp>(loc, msb, bExt.genI256Const(64));
+  return b.create<yul::ShrOp>(loc, bExt.genI256Const(64), msb);
 }
 
 Value evm::Builder::genExtFuncUnpack(Value word, bool inStorage,
@@ -1824,15 +1823,13 @@ Value evm::Builder::genExtFuncUnpack(Value word, bool inStorage,
     // LSB form: | zeros(64) | addr(160) | sel(32) |.
     sel = b.create<yul::AndOp>(
         loc, word, bExt.genI256Const(APInt::getLowBitsSet(256, 32)));
-    Value addrShifted =
-        b.create<yul::ArithShrOp>(loc, word, bExt.genI256Const(32));
+    Value addrShifted = b.create<yul::ShrOp>(loc, bExt.genI256Const(32), word);
     addr = b.create<yul::AndOp>(
         loc, addrShifted, bExt.genI256Const(APInt::getLowBitsSet(256, 160)));
   } else {
     // MSB form: | addr(160) | sel(32) | zeros(64) |.
-    addr = b.create<yul::ArithShrOp>(loc, word, bExt.genI256Const(96));
-    Value selShifted =
-        b.create<yul::ArithShrOp>(loc, word, bExt.genI256Const(64));
+    addr = b.create<yul::ShrOp>(loc, bExt.genI256Const(96), word);
+    Value selShifted = b.create<yul::ShrOp>(loc, bExt.genI256Const(64), word);
     sel = b.create<yul::AndOp>(
         loc, selShifted, bExt.genI256Const(APInt::getLowBitsSet(256, 32)));
   }
@@ -1866,9 +1863,9 @@ Value evm::Builder::genExtFuncConversion(Value src,
   }
   // Shifting between the forms pushes out the non-lane bits.
   if (srcLSB && !dstLSB)
-    return b.create<yul::ArithShlOp>(loc, src, bExt.genI256Const(64));
+    return b.create<yul::ShlOp>(loc, bExt.genI256Const(64), src);
   if (!srcLSB && dstLSB)
-    return b.create<yul::ArithShrOp>(loc, src, bExt.genI256Const(64));
+    return b.create<yul::ShrOp>(loc, bExt.genI256Const(64), src);
   APInt mask =
       srcLSB ? APInt::getLowBitsSet(256, 192) : APInt::getHighBitsSet(256, 192);
   return b.create<yul::AndOp>(loc, src, bExt.genI256Const(mask));
@@ -2001,15 +1998,15 @@ Value evm::Builder::genStorageStringLengthInline(Value lengthSlot,
   //  }
   //
   Value one = bExt.genI256Const(1);
-  Value length = b.create<yul::ArithShrOp>(loc, lengthSlot, one);
+  Value length = b.create<yul::ShrOp>(loc, one, lengthSlot);
   Value isOutOfPlaceEnc = b.create<yul::AndOp>(loc, lengthSlot, one);
   Value isInPlace =
       bExt.genCmp(yul::CmpPredicate::eq, isOutOfPlaceEnc, bExt.genI256Const(0));
 
   Value maskedLength =
       b.create<yul::AndOp>(loc, length, bExt.genI256Const(0x7F));
-  length = b.create<yul::ArithSelectOp>(loc, isInPlace, maskedLength, length)
-               .getResult();
+  length =
+      b.create<yul::SelectOp>(loc, isInPlace, maskedLength, length).getResult();
 
   Value lengthLT32 =
       bExt.genCmp(yul::CmpPredicate::ult, length, bExt.genI256Const(32));
@@ -2031,8 +2028,8 @@ static Value getI256MSBMaskedValue(OpBuilder &b, Value val, Value maskLen,
   Value nbits = b.create<yul::MulOp>(loc, maskLen, bExt.genI256Const(8, loc));
   Value shiftVal =
       b.create<yul::SubOp>(loc, bExt.genI256Const(256, loc), nbits);
-  Value mask = b.create<yul::ArithShlOp>(
-      loc, bExt.genI256Const(APInt::getAllOnes(256), loc), shiftVal);
+  Value mask = b.create<yul::ShlOp>(
+      loc, shiftVal, bExt.genI256Const(APInt::getAllOnes(256), loc));
   return b.create<yul::AndOp>(loc, val, mask);
 }
 
@@ -2071,7 +2068,7 @@ void evm::Builder::genClearStringStorageTailInline(Value dstAddr,
     Value isInPlace =
         bExt.genCmp(yul::CmpPredicate::ult, newLength, bExt.genI256Const(32));
     deleteStart =
-        b.create<yul::ArithSelectOp>(loc, isInPlace, dstDataArea, deleteStart);
+        b.create<yul::SelectOp>(loc, isInPlace, dstDataArea, deleteStart);
 
     Value deleteEnd = b.create<yul::AddOp>(loc, dstDataArea,
                                            bExt.genCeilDivision<32>(oldLength));
@@ -2155,8 +2152,8 @@ void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
   bExt.createCountedLoop(
       bExt.genI256Const(0), loopEnd, bExt.genI256Const(32), ValueRange{},
       [&](OpBuilder &b, Location loc, Value i256IndVar, ValueRange) {
-        Value slotIndVar = b.create<yul::ArithDivOp>(
-            loc, i256IndVar, bExt.genI256Const(32, loc));
+        Value slotIndVar =
+            b.create<yul::DivOp>(loc, i256IndVar, bExt.genI256Const(32, loc));
         Value srcIndVar =
             srcDataLoc == sol::DataLocation::Storage ? slotIndVar : i256IndVar;
         Value src = b.create<yul::AddOp>(loc, srcDataAddr, srcIndVar);
@@ -2176,7 +2173,7 @@ void evm::Builder::genCopyStringToStorageInline(Value src, Type ty,
     Value residualLength =
         b.create<yul::AndOp>(loc, length, bExt.genI256Const(0x1F, loc));
     Value slotLoopEnd =
-        b.create<yul::ArithDivOp>(loc, loopEnd, bExt.genI256Const(32, loc));
+        b.create<yul::DivOp>(loc, loopEnd, bExt.genI256Const(32, loc));
     Value srcResidualIdx =
         srcDataLoc == sol::DataLocation::Storage ? slotLoopEnd : loopEnd;
     Value lastVal =
@@ -2289,8 +2286,7 @@ Value evm::Builder::genStorageArraySlotCount(Value len, Type eltTy,
     unsigned elemsPerSlot = 32 / byteSize;
     Value padded =
         b.create<yul::AddOp>(loc, len, bExt.genI256Const(elemsPerSlot - 1));
-    return b.create<yul::ArithDivOp>(loc, padded,
-                                     bExt.genI256Const(elemsPerSlot));
+    return b.create<yul::DivOp>(loc, padded, bExt.genI256Const(elemsPerSlot));
   }
   // Non-packable: each element occupies getStorageSlotCount(eltTy) slots.
   APInt slotsPerElt = sol::getStorageSlotCount(eltTy);
@@ -2582,8 +2578,8 @@ void evm::Builder::genClearStorageArrayTail(Value arraySlot,
     if (trulyPacked) {
       unsigned byteSize = sol::getNumBytes(eltTy);
       unsigned elemsPerSlot = 32 / byteSize;
-      Value remainder = b.create<yul::ArithModOp>(
-          loc, startIdx, bExt.genI256Const(elemsPerSlot));
+      Value remainder =
+          b.create<yul::ModOp>(loc, startIdx, bExt.genI256Const(elemsPerSlot));
       Value hasRemainder =
           bExt.genCmp(yul::CmpPredicate::ne, remainder, bExt.genI256Const(0));
       // For isDecrement, the else branch handles the case where the popped
@@ -2604,7 +2600,7 @@ void evm::Builder::genClearStorageArrayTail(Value arraySlot,
         Value allOnes = bExt.genI256Const(APInt::getAllOnes(256), loc);
         Value shiftAmt =
             b.create<yul::SubOp>(loc, bExt.genI256Const(256), bitsToKeep);
-        Value mask = b.create<yul::ArithShrOp>(loc, allOnes, shiftAmt);
+        Value mask = b.create<yul::ShrOp>(loc, shiftAmt, allOnes);
         Value partialSlot =
             b.create<yul::SubOp>(loc, deleteStart, bExt.genI256Const(1));
         Value slotVal = genLoad(partialSlot, sol::DataLocation::Storage, loc);
@@ -2758,8 +2754,8 @@ void evm::Builder::genCopyStringDataFromStorageToMemoryInline(Value src,
     bExt.createCountedLoop(
         bExt.genI256Const(0), length, bExt.genI256Const(32), ValueRange{},
         [&](OpBuilder &b, Location loc, Value i256IndVar, ValueRange) {
-          Value slotOffset = b.create<yul::ArithDivOp>(
-              loc, i256IndVar, bExt.genI256Const(32, loc));
+          Value slotOffset =
+              b.create<yul::DivOp>(loc, i256IndVar, bExt.genI256Const(32, loc));
           Value src = b.create<yul::AddOp>(loc, srcDataAddr, slotOffset);
           Value val = b.create<yul::SLoadOp>(loc, src);
           Value dst = b.create<yul::AddOp>(loc, dstDataAddr, i256IndVar);
@@ -2779,7 +2775,7 @@ Value evm::Builder::genInsertIntToSlot(Value slot, Value offset, Value intVal,
   Value bitOffset =
       b.create<yul::MulOp>(loc, offset, bExt.genI256Const(8, loc));
   Value punchedSlot = genPunchHoleInValue(b, slot, bitOffset, numBits, loc);
-  Value shiftedByte = b.create<yul::ArithShlOp>(loc, intVal, bitOffset);
+  Value shiftedByte = b.create<yul::ShlOp>(loc, bitOffset, intVal);
   return b.create<yul::OrOp>(loc, punchedSlot, shiftedByte);
 }
 
@@ -2940,7 +2936,7 @@ Value evm::Builder::genStringItemAddress(Value srcAddr, Value idx,
       bExt.genCmp(yul::CmpPredicate::ugt, length, bExt.genI256Const(31, loc));
 
   Value dataSlot =
-      b.create<yul::ArithSelectOp>(
+      b.create<yul::SelectOp>(
            loc, isOutOfPlace,
            genDataAddrPtr(srcAddr, sol::DataLocation::Storage), srcAddr)
           .getResult();
@@ -2996,7 +2992,7 @@ void evm::Builder::genPopString(Value srcAddr, Value oldData, Value length,
       Value nbits =
           b.create<yul::MulOp>(loc, newLen, bExt.genI256Const(8, loc));
       Value mask = b.create<yul::XOrOp>(
-          loc, b.create<yul::ArithShrOp>(loc, allOnes, nbits), allOnes);
+          loc, b.create<yul::ShrOp>(loc, nbits, allOnes), allOnes);
       Value maskedData = b.create<yul::AndOp>(loc, oldData, mask);
       Value dLen = b.create<yul::MulOp>(loc, newLen, bExt.genI256Const(2, loc));
       b.create<yul::SStoreOp>(loc, srcAddr,
@@ -3199,10 +3195,10 @@ Value evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
         unsigned eltBits = dstEltByteSize * 8;
         APInt fullSlotMask = APInt::getLowBitsSet(256, itemsPerSlot * eltBits);
 
-        Value numFullSlots = b.create<yul::ArithDivOp>(
-            loc, length, bExt.genI256Const(itemsPerSlot));
-        Value remainder = b.create<yul::ArithModOp>(
-            loc, length, bExt.genI256Const(itemsPerSlot));
+        Value numFullSlots =
+            b.create<yul::DivOp>(loc, length, bExt.genI256Const(itemsPerSlot));
+        Value remainder =
+            b.create<yul::ModOp>(loc, length, bExt.genI256Const(itemsPerSlot));
 
         bExt.createCountedLoop(
             bExt.genI256Const(0), numFullSlots, bExt.genI256Const(1),
@@ -3232,7 +3228,7 @@ Value evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
           Value remBits =
               b.create<yul::MulOp>(loc, remainder, bExt.genI256Const(eltBits));
           Value shifted =
-              b.create<yul::ArithShlOp>(loc, bExt.genI256Const(1), remBits);
+              b.create<yul::ShlOp>(loc, remBits, bExt.genI256Const(1));
           Value partialMask =
               b.create<yul::SubOp>(loc, shifted, bExt.genI256Const(1));
           Value lastMasked = b.create<yul::AndOp>(loc, lastRaw, partialMask);
@@ -3264,13 +3260,13 @@ Value evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
               Value loaded = b.create<yul::SLoadOp>(loc, srcAddr);
               Value narrowed = nullptr;
               if (narrowShift > 0)
-                narrowed = b.create<yul::ArithShrOp>(
-                    loc, loaded, bExt.genI256Const(narrowShift));
+                narrowed = b.create<yul::ShrOp>(
+                    loc, bExt.genI256Const(narrowShift), loaded);
               else
                 narrowed = loaded;
               Value masked = b.create<yul::AndOp>(loc, narrowed,
                                                   bExt.genI256Const(dstMask));
-              Value shifted = b.create<yul::ArithShlOp>(loc, masked, shiftBits);
+              Value shifted = b.create<yul::ShlOp>(loc, shiftBits, masked);
               Value newAccum = b.create<yul::OrOp>(loc, accum, shifted);
               // One storage slot per src element.
               Value nextSrcAddr =
@@ -3292,15 +3288,14 @@ Value evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
             srcArrTy.isDynSized(),
             [&](OpBuilder &b, Location loc, Value slotVal, Value shiftBits,
                 Value dstAddr) {
-              Value extracted =
-                  b.create<yul::ArithShrOp>(loc, slotVal, shiftBits);
+              Value extracted = b.create<yul::ShrOp>(loc, shiftBits, slotVal);
               Value val = nullptr;
               auto srcIntTy = dyn_cast<IntegerType>(srcEltTy);
               if (srcIntTy && srcIntTy.isSigned()) {
                 val = genCleanupPackedStorageValue(srcEltTy, extracted, loc);
               } else {
-                Value widened = b.create<yul::ArithShlOp>(
-                    loc, extracted, bExt.genI256Const(widenShift));
+                Value widened = b.create<yul::ShlOp>(
+                    loc, bExt.genI256Const(widenShift), extracted);
                 APInt maskBits = APInt::getBitsSet(
                     256, widenShift, widenShift + srcEltByteSize * 8);
                 val = b.create<yul::AndOp>(loc, widened,
@@ -3319,7 +3314,7 @@ Value evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
           srcEltByteSize, srcArrTy.isDynSized(),
           [&](OpBuilder &b, Location loc, Value slotVal, Value shiftBits,
               Value dstAddr) {
-            Value shifted = b.create<yul::ArithShrOp>(loc, slotVal, shiftBits);
+            Value shifted = b.create<yul::ShrOp>(loc, shiftBits, slotVal);
             Value val = genCleanupPackedStorageValue(srcEltTy, shifted, loc);
             genStore(val, dstAddr, dstDataLoc, loc);
           });
@@ -3345,12 +3340,12 @@ Value evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
             // ExtFuncRef is not handled here, as it occupies a full slot in
             // array.
             if (isa<sol::FixedBytesType>(dstEltTy))
-              val = b.create<yul::ArithShrOp>(loc, val,
-                                              bExt.genI256Const(256 - numBits));
+              val = b.create<yul::ShrOp>(loc, bExt.genI256Const(256 - numBits),
+                                         val);
 
             Value masked =
                 b.create<yul::AndOp>(loc, val, bExt.genI256Const(mask));
-            Value shifted = b.create<yul::ArithShlOp>(loc, masked, shiftBits);
+            Value shifted = b.create<yul::ShlOp>(loc, shiftBits, masked);
             Value newAccum = b.create<yul::OrOp>(loc, accum, shifted);
             Value nextSrcAddr =
                 b.create<yul::AddOp>(loc, srcAddr, bExt.genI256Const(32));
@@ -3420,18 +3415,15 @@ Value evm::Builder::genCopyInline(Type srcTy, Type dstTy, Value srcAddr,
       val = srcIsStorage ? genCleanupPackedStorageValue(srcTy, val, loc)
                          : genCleanup(srcTy, val, loc, srcDataLoc);
       if (alignShift > 0)
-        val =
-            b.create<yul::ArithShrOp>(loc, val, bExt.genI256Const(alignShift));
+        val = b.create<yul::ShrOp>(loc, bExt.genI256Const(alignShift), val);
     } else if (alignShift > 0) {
       if (srcDataLoc == sol::DataLocation::CallData)
         val = genCleanup(dstTy, val, loc, /*shouldRevert=*/true);
 
       if (!srcIsStorage && dstIsStorage)
-        val =
-            b.create<yul::ArithShrOp>(loc, val, bExt.genI256Const(alignShift));
+        val = b.create<yul::ShrOp>(loc, bExt.genI256Const(alignShift), val);
       else if (srcIsStorage && !dstIsStorage)
-        val =
-            b.create<yul::ArithShlOp>(loc, val, bExt.genI256Const(alignShift));
+        val = b.create<yul::ShlOp>(loc, bExt.genI256Const(alignShift), val);
     } else {
       // Upstream array copies mask only packed elements to their width.
       val = genCleanup(dstTy, val, loc, srcDataLoc);
@@ -3592,8 +3584,7 @@ void evm::Builder::genStructToStorageCopyInline(sol::StructType srcStructTy,
         } else if (alignShift > 0) {
           if (srcIsCallData)
             val = genCleanup(dstMemberTy, val, loc, /*shouldRevert=*/true);
-          val = b.create<yul::ArithShrOp>(loc, val,
-                                          bExt.genI256Const(alignShift));
+          val = b.create<yul::ShrOp>(loc, bExt.genI256Const(alignShift), val);
         } else if (srcIsCallData) {
           val = genCleanup(dstMemberTy, val, loc, /*shouldRevert=*/true);
           // genCleanup for signed integers returns signextend(), which leaves
@@ -3688,8 +3679,8 @@ Value evm::Builder::genABIEncodingImplInline(
     // Right-aligned types need a left-shift in packed mode so their bytes
     // land at the low memory address after mstore.
     if (!opts.padded && !sol::isLeftAligned(ty) && numBytes < 32)
-      cleaned = b.create<yul::ArithShlOp>(
-          loc, cleaned, bExt.genI256Const(256 - numBytes * 8));
+      cleaned = b.create<yul::ShlOp>(loc, bExt.genI256Const(256 - numBytes * 8),
+                                     cleaned);
     b.create<yul::MStoreOp>(loc, dstAddr, cleaned);
     if (opts.dynamicInplace)
       return b.create<yul::AddOp>(
@@ -3878,7 +3869,7 @@ Value evm::Builder::genABIEncodingImplInline(
             [&](OpBuilder &builder, Location loc, Value slotValue,
                 Value shiftBits, Value iDstAddr) {
               Value shifted =
-                  builder.create<yul::ArithShrOp>(loc, slotValue, shiftBits);
+                  builder.create<yul::ShrOp>(loc, shiftBits, slotValue);
               Value srcVal = genCleanupPackedStorageValue(eltTy, shifted, loc);
               genABIEncodingImpl(eltTy, srcVal, iDstAddr, sub, dstAddrInTail,
                                  tupleStart, tailAddr, loc, dataLoc);

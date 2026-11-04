@@ -178,9 +178,9 @@ module {
     // CHECK:         %[[SRC:.*]] = yul.sload
     // CHECK:         %[[V:.*]] = yul.and %[[SRC]], %c65535_i256
     // CHECK:         %[[VP:.*]] = yul.or %c0_i256{{.*}}, %[[V]]
-    // CHECK:         %[[WS:.*]] = yul.arith_shr %[[SRC]], %c16_i256
+    // CHECK:         %[[WS:.*]] = yul.shr %c16_i256{{(_[0-9]+)?}}, %[[SRC]]
     // CHECK:         %[[W:.*]] = yul.and %[[WS]], %c4294967295_i256
-    // CHECK:         %[[WP:.*]] = yul.arith_shl %[[W]], %c16_i256
+    // CHECK:         %[[WP:.*]] = yul.shl %c16_i256{{(_[0-9]+)?}}, %[[W]]
     // CHECK:         %[[VWP:.*]] = yul.or %[[VP]], %[[WP]]
     // CHECK:         %[[DSLOT:.*]] = yul.add %arg1, %c0_i256
     // CHECK:         %[[DST:.*]] = yul.sload %[[DSLOT]]

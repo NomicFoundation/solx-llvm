@@ -11,7 +11,7 @@ module {
     // CHECK:         yul.if %[[OOB]] {
     // CHECK:           %[[C50:.*]] = yul.constant 50
     // CHECK:           yul.func_call @__sol.panic(%[[C50]])
-    // CHECK:         %[[W:.*]] = yul.arith_div %[[I]], %{{.*}}
+    // CHECK:         %[[W:.*]] = yul.div %[[I]], %{{.*}}
     // CHECK:         yul.add %[[ARR]], %[[W]]
     // CHECK-LABEL: yul.func @get : (i256, i256) -> i256
     // CHECK-NEXT:  ^bb0(%[[ARR:.*]]: i256, %[[I:.*]]: i256):
@@ -34,7 +34,7 @@ module {
     // CHECK-LABEL: yul.func @setConst : (i256, i256) -> ()
     // CHECK:         %[[IDX:.*]] = yul.constant 18446744073709551623
     // CHECK-NOT:     yul.if
-    // CHECK:         yul.arith_div %[[IDX]], %{{.*}}
+    // CHECK:         yul.div %[[IDX]], %{{.*}}
     // CHECK:         yul.sstore
     sol.func @setConst(%a: !sol.array<36893488147419103232 x ui256, Storage>, %v: ui256) {
       %c = sol.constant 18446744073709551623 : ui72
@@ -58,7 +58,7 @@ module {
     // CHECK:         yul.if %[[OOB]] {
     // CHECK:           %[[C50:.*]] = yul.constant 50
     // CHECK:           yul.func_call @__sol.panic(%[[C50]])
-    // CHECK:         %[[W:.*]] = yul.arith_div %[[I]], %{{.*}}
+    // CHECK:         %[[W:.*]] = yul.div %[[I]], %{{.*}}
     // CHECK:         yul.add %[[INNER]], %[[W]]
     // CHECK-LABEL: yul.func @setNested : (i256, i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[ARR:.*]]: i256, %[[I:.*]]: i256):

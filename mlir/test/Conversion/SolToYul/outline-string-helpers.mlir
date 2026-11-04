@@ -93,7 +93,7 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK-LABEL:   yul.func @__sol.clear_storage_string_tail : (i256, i256, i256) -> ()
 // CHECK:           yul.sstore
 // CHECK-LABEL:   yul.func @__sol.storage_string_length : (i256) -> i256
-// CHECK:           yul.arith_shr %arg0
+// CHECK:           yul.shr %{{.*}}, %arg0
 // CHECK:           yul.constant 127
 // CHECK:           yul.func_call @__sol.panic(%c34
 // CHECK:           yul.func_return

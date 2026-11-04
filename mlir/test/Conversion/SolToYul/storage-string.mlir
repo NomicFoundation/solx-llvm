@@ -42,7 +42,7 @@ sol.contract @C {
   // CHECK-LABEL: yul.func @p2 : (i256) -> ()
   // CHECK:         %[[B:.*]] = yul.constant 101
   // CHECK:         %[[REF:.*]] = yul.func_call @__sol.push_storage_string.zero(%arg0)
-  // CHECK:         yul.arith_shl %[[B]], %{{.*}}
+  // CHECK:         yul.shl %{{.*}}, %[[B]]
   // CHECK:         %[[SLOT:.*]] = llvm.extractvalue %[[REF]][0]
   // CHECK:         yul.sstore %[[SLOT]], %{{.*}}
   sol.func @p2(%s: !sol.string<Storage>) {
@@ -82,12 +82,12 @@ sol.contract @C {
   // Short strings keep 2 * length in the slot's low byte, long ones 2 * length + 1.
   // The length helper decodes the slot word and panics on a malformed one.
   // CHECK-LABEL: yul.func @__sol.storage_string_length : (i256) -> i256
-  // CHECK:         %[[HALF:.*]] = yul.arith_shr %arg0, %{{.*}}
+  // CHECK:         %[[HALF:.*]] = yul.shr %{{.*}}, %arg0
   // CHECK:         %[[LONG:.*]] = yul.and %arg0, %{{.*}}
   // CHECK:         %[[SHORT:.*]] = yul.cmp eq, %[[LONG]], %{{.*}}
   // CHECK:         %[[C127:.*]] = yul.constant 127
   // CHECK:         %[[SLEN:.*]] = yul.and %[[HALF]], %[[C127]]
-  // CHECK:         %[[LEN:.*]] = yul.arith_select %[[SHORT]], %[[SLEN]], %[[HALF]]
+  // CHECK:         %[[LEN:.*]] = yul.select %[[SHORT]], %[[SLEN]], %[[HALF]]
   // CHECK:         yul.func_call @__sol.panic(%c34
   // CHECK:         yul.func_return %[[LEN]] : i256
 
@@ -122,13 +122,13 @@ sol.contract @C {
   // CHECK:         %[[W:.*]] = yul.mload
   // CHECK:         %[[BITS:.*]] = yul.sub
   // CHECK:         %[[ONES:.*]] = yul.constant -1
-  // CHECK:         %[[M:.*]] = yul.arith_shl %[[ONES]], %[[BITS]]
+  // CHECK:         %[[M:.*]] = yul.shl %[[BITS]], %[[ONES]]
   // CHECK:         %[[V:.*]] = yul.and %[[W]], %[[M]]
   // CHECK:         yul.sstore %{{.*}}, %[[V]]
   // CHECK:         %[[W:.*]] = yul.mload
   // CHECK:         %[[BITS:.*]] = yul.sub
   // CHECK:         %[[ONES:.*]] = yul.constant -1
-  // CHECK:         %[[M:.*]] = yul.arith_shl %[[ONES]], %[[BITS]]
+  // CHECK:         %[[M:.*]] = yul.shl %[[BITS]], %[[ONES]]
   // CHECK:         %[[V:.*]] = yul.and %[[W]], %[[M]]
   // CHECK:         %[[LEN:.*]] = yul.mul
   // CHECK:         %[[P:.*]] = yul.or %[[V]], %[[LEN]]
@@ -174,13 +174,13 @@ sol.contract @C {
   // CHECK:         %[[W:.*]] = yul.calldataload
   // CHECK:         %[[BITS:.*]] = yul.sub
   // CHECK:         %[[ONES:.*]] = yul.constant -1
-  // CHECK:         %[[M:.*]] = yul.arith_shl %[[ONES]], %[[BITS]]
+  // CHECK:         %[[M:.*]] = yul.shl %[[BITS]], %[[ONES]]
   // CHECK:         %[[V:.*]] = yul.and %[[W]], %[[M]]
   // CHECK:         yul.sstore %{{.*}}, %[[V]]
   // CHECK:         %[[W:.*]] = yul.calldataload
   // CHECK:         %[[BITS:.*]] = yul.sub
   // CHECK:         %[[ONES:.*]] = yul.constant -1
-  // CHECK:         %[[M:.*]] = yul.arith_shl %[[ONES]], %[[BITS]]
+  // CHECK:         %[[M:.*]] = yul.shl %[[BITS]], %[[ONES]]
   // CHECK:         %[[V:.*]] = yul.and %[[W]], %[[M]]
   // CHECK:         %[[LEN:.*]] = yul.mul
   // CHECK:         %[[P:.*]] = yul.or %[[V]], %[[LEN]]
@@ -231,9 +231,9 @@ sol.contract @C {
   // CHECK:         yul.if %[[OOB]] {
   // CHECK:           yul.func_call @__sol.panic(%c50
   // CHECK:         %[[W:.*]] = yul.sload
-  // CHECK:         %[[B:.*]] = yul.arith_shr %[[W]]
+  // CHECK:         %[[B:.*]] = yul.shr %{{.*}}, %[[W]]
   // CHECK:         %[[C248:.*]] = yul.constant 248
-  // CHECK:         %[[R:.*]] = yul.arith_shl %[[B]], %[[C248]]
+  // CHECK:         %[[R:.*]] = yul.shl %[[C248]], %[[B]]
   // CHECK:         yul.func_return %[[R]] : i256
   sol.func @ld(%s: !sol.string<Storage>, %i: ui256) -> !sol.fixedbytes<1> {
     %0 = sol.gep %s, %i : !sol.string<Storage>, ui256, !sol.ptr<!sol.byte, Storage>
@@ -252,7 +252,7 @@ sol.contract @C {
   // CHECK:         %[[OOB:.*]] = yul.cmp uge, %arg1, %[[LEN]]
   // CHECK:         yul.if %[[OOB]] {
   // CHECK:           yul.func_call @__sol.panic(%c50
-  // CHECK:         yul.arith_mod
+  // CHECK:         yul.mod
   // CHECK:         %[[C31:.*]] = yul.constant 31
   // CHECK:         yul.sub %[[C31]], %{{.*}}
   // CHECK:         yul.sstore

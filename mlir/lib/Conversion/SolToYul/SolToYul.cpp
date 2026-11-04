@@ -217,7 +217,7 @@ struct ExtFuncSelectorOpLowering
     auto i256Ty = r.getIntegerType(256);
     Value sel = r.create<LLVM::ExtractValueOp>(loc, i256Ty, adaptor.getFunc(),
                                                r.getDenseI64ArrayAttr({1}));
-    r.replaceOpWithNewOp<yul::ArithShlOp>(op, sel, bExt.genI256Const(224));
+    r.replaceOpWithNewOp<yul::ShlOp>(op, bExt.genI256Const(224), sel);
     return success();
   }
 };
@@ -266,8 +266,8 @@ struct AddressCastOpLowering : public OpConversionPattern<sol::AddressCastOp> {
         assert(inpBytesTy.getSize() == 20 &&
                "AddressCastOp only supports bytes20");
         assert(isa<sol::AddressType>(outTy));
-        r.replaceOpWithNewOp<yul::ArithShrOp>(op, adaptor.getInp(),
-                                              bExt.genI256Const(96));
+        r.replaceOpWithNewOp<yul::ShrOp>(op, bExt.genI256Const(96),
+                                         adaptor.getInp());
         return success();
       }
 
@@ -275,8 +275,8 @@ struct AddressCastOpLowering : public OpConversionPattern<sol::AddressCastOp> {
       assert(cast<sol::FixedBytesType>(outTy).getSize() == 20 &&
              "AddressCastOp only supports bytes20");
       assert(isa<sol::AddressType>(inpTy));
-      r.replaceOpWithNewOp<yul::ArithShlOp>(op, adaptor.getInp(),
-                                            bExt.genI256Const(96));
+      r.replaceOpWithNewOp<yul::ShlOp>(op, bExt.genI256Const(96),
+                                       adaptor.getInp());
       return success();
     }
 
@@ -393,7 +393,7 @@ struct BytesCastOpLowering : public OpConversionPattern<sol::BytesCastOp> {
 
       // Bytes to int
       auto shiftAmt = bExt.genI256Const(256 - (8 * inpBytesSize));
-      r.replaceOpWithNewOp<yul::ArithShrOp>(op, adaptor.getInp(), shiftAmt);
+      r.replaceOpWithNewOp<yul::ShrOp>(op, shiftAmt, adaptor.getInp());
       return success();
     }
 
@@ -401,7 +401,7 @@ struct BytesCastOpLowering : public OpConversionPattern<sol::BytesCastOp> {
     assert(isa<IntegerType>(inpTy));
     unsigned outBytesSize = sol::getNumBytes(outTy);
     auto shiftAmt = bExt.genI256Const(256 - (8 * outBytesSize));
-    r.replaceOpWithNewOp<yul::ArithShlOp>(op, adaptor.getInp(), shiftAmt);
+    r.replaceOpWithNewOp<yul::ShlOp>(op, shiftAmt, adaptor.getInp());
     return success();
   }
 };
@@ -482,12 +482,13 @@ struct NotOpLowering : public OpConversionPattern<sol::NotOp> {
 // old codegen end
 
 /// A templatized version of a conversion pattern for lowering div and mod ops.
-template <typename SolOp, typename ArithSignedOp, typename ArithUnsignedOp>
+template <typename SolOp, typename SignedOp, typename UnsignedOp>
 struct DivOrModOpLowering
     : public CleanedOperandsLowering<
-          SolOp, DivOrModOpLowering<SolOp, ArithSignedOp, ArithUnsignedOp>> {
-  using Base = CleanedOperandsLowering<
-      SolOp, DivOrModOpLowering<SolOp, ArithSignedOp, ArithUnsignedOp>>;
+          SolOp, DivOrModOpLowering<SolOp, SignedOp, UnsignedOp>> {
+  using Base =
+      CleanedOperandsLowering<SolOp,
+                              DivOrModOpLowering<SolOp, SignedOp, UnsignedOp>>;
 
   using Base::Base;
 
@@ -501,9 +502,9 @@ struct DivOrModOpLowering
     evmB.genDivisionByZeroPanic(rhs, loc);
 
     if (ty.isSigned())
-      r.replaceOpWithNewOp<ArithSignedOp>(op, lhs, rhs);
+      r.replaceOpWithNewOp<SignedOp>(op, lhs, rhs);
     else
-      r.replaceOpWithNewOp<ArithUnsignedOp>(op, lhs, rhs);
+      r.replaceOpWithNewOp<UnsignedOp>(op, lhs, rhs);
     return success();
   }
 };
@@ -583,12 +584,12 @@ struct CExpOpLowering
       Value lsb = r.create<yul::AndOp>(loc, curExp, one);
       Value zero = bExt.genI256Const(0, loc);
       Value expIsOdd = bExt.genCmp(yul::CmpPredicate::ne, lsb, zero);
-      Value newPow = r.create<yul::ArithSelectOp>(
+      Value newPow = r.create<yul::SelectOp>(
                           loc, expIsOdd,
                           r.create<yul::MulOp>(loc, curPow, curBase), curPow)
                          .getResult();
       Value newBase = r.create<yul::MulOp>(loc, curBase, curBase);
-      Value newExp = r.create<yul::ArithShrOp>(loc, curExp, one);
+      Value newExp = r.create<yul::ShrOp>(loc, one, curExp);
       r.create<yul::YieldOp>(loc, ValueRange{newPow, newBase, newExp});
     }
 
@@ -832,10 +833,9 @@ struct CExpOpLowering
 
     Value lsb = r.create<yul::AndOp>(loc, exp, one);
     Value expIsOdd = bExt.genCmp(yul::CmpPredicate::ne, lsb, zero);
-    Value pow2 =
-        r.create<yul::ArithSelectOp>(loc, expIsOdd, base, one).getResult();
+    Value pow2 = r.create<yul::SelectOp>(loc, expIsOdd, base, one).getResult();
     Value base2 = r.create<yul::MulOp>(loc, base, base);
-    Value exp2 = r.create<yul::ArithShrOp>(loc, exp, one);
+    Value exp2 = r.create<yul::ShrOp>(loc, one, exp);
     auto [pow3, base3] =
         genExpHelper(getModule(op), r, loc, pow2, base2, exp2, max256);
 
@@ -1271,9 +1271,9 @@ struct CDivOpLowering
       auto rhsEqMinusOne = bExt.genCmp(yul::CmpPredicate::eq, rhs, minusOne);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
                     r.create<yul::AndOp>(loc, lhsEqMin, rhsEqMinusOne));
-      r.replaceOpWithNewOp<yul::ArithSDivOp>(op, lhs, rhs);
+      r.replaceOpWithNewOp<yul::SDivOp>(op, lhs, rhs);
     } else {
-      r.replaceOpWithNewOp<yul::ArithDivOp>(op, lhs, rhs);
+      r.replaceOpWithNewOp<yul::DivOp>(op, lhs, rhs);
     }
 
     return success();
@@ -1745,8 +1745,7 @@ struct PushStringOpLowering : public OpConversionPattern<sol::PushStringOp> {
 
     Value byte =
         isa<sol::FixedBytesType>(inpValueTy)
-            ? r.create<yul::ArithShrOp>(loc, val, bExt.genI256Const(248))
-                  .getResult()
+            ? r.create<yul::ShrOp>(loc, bExt.genI256Const(248), val).getResult()
             : val;
     // The push is shared by every site. It takes the string slot and the
     // byte, right-aligned.
@@ -2233,7 +2232,7 @@ struct LoadOpLowering : public OpConversionPattern<sol::LoadOp> {
         Value slotVal = genSlotLoad(slot);
         Value shiftBits =
             r.create<yul::MulOp>(loc, offset, bExt.genI256Const(8));
-        Value shifted = r.create<yul::ArithShrOp>(loc, slotVal, shiftBits);
+        Value shifted = r.create<yul::ShrOp>(loc, shiftBits, slotVal);
         Value cleaned = evmB.genCleanupPackedStorageValue(eltTy, shifted, loc);
         r.replaceOp(op, cleaned);
       } else {
@@ -2328,8 +2327,8 @@ struct StoreOpLowering : public OpConversionPattern<sol::StoreOp> {
         if (sol::isBytesLikeType(eltTy)) {
           // Bytes-like types: shr to convert from MSB-aligned to LSB-aligned.
           numBits = sol::getNumBytes(eltTy) * 8;
-          preparedVal = r.create<yul::ArithShrOp>(
-              loc, preparedVal, bExt.genI256Const(256 - numBits));
+          preparedVal = r.create<yul::ShrOp>(
+              loc, bExt.genI256Const(256 - numBits), preparedVal);
         } else if (sol::isAddressLikeType(eltTy)) {
           numBits = 160;
         } else if (auto intTy = dyn_cast<IntegerType>(eltTy)) {
@@ -2364,7 +2363,7 @@ struct StoreOpLowering : public OpConversionPattern<sol::StoreOp> {
             evmB.genPunchHole(slot, shiftBits, numBits, dataLoc);
 
         // Shift new value to position: shl(offset * 8, preparedVal)
-        preparedVal = r.create<yul::ArithShlOp>(loc, preparedVal, shiftBits);
+        preparedVal = r.create<yul::ShlOp>(loc, shiftBits, preparedVal);
 
         // Combine, i.e. or(slotWithHole, preparedVal) and store.
         genSlotStore(slot, r.create<yul::OrOp>(loc, slotWithHole, preparedVal));
@@ -2925,8 +2924,8 @@ struct ExtCallOpLowering : public OpConversionPattern<sol::ExtCallOp> {
 
     // Generate the store of the selector.
     Value selectorAddr = evmB.genFreePtr();
-    Value shiftedSelector = r.create<yul::ArithShlOp>(
-        loc, adaptor.getSelector(), bExt.genI256Const(224));
+    Value shiftedSelector = r.create<yul::ShlOp>(loc, bExt.genI256Const(224),
+                                                 adaptor.getSelector());
     r.create<yul::MStoreOp>(loc, selectorAddr, shiftedSelector);
 
     // Generate the abi encoding code.
@@ -3183,7 +3182,7 @@ static Value genValueTransferStatus(OpT op, AdaptorT adaptor,
   Value callStipend = bExt.genI256Const(2300);
   Value valueIsZero =
       bExt.genCmp(yul::CmpPredicate::eq, adaptor.getVal(), zero);
-  Value gas = r.create<yul::ArithSelectOp>(loc, valueIsZero, callStipend, zero);
+  Value gas = r.create<yul::SelectOp>(loc, valueIsZero, callStipend, zero);
   // old codegen begin
   // (Via-IR cleans on casts, not here).
   Value addr = evmB.genCleanup(op.getAddr().getType(), adaptor.getAddr(), loc);
@@ -3453,7 +3452,7 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
                                     /*size=*/bExt.genI256Const(4));
     auto selectorWord = r.create<yul::MLoadOp>(loc, zero);
     auto selector =
-        r.create<yul::ArithShrOp>(loc, selectorWord, bExt.genI256Const(224));
+        r.create<yul::ShrOp>(loc, bExt.genI256Const(224), selectorWord);
 
     // Generate the switch for the panic and error catch blocks.
     SmallVector<APInt, 2> switchSelectors;
@@ -4084,7 +4083,7 @@ struct ContractOpLowering : public OpRewritePattern<sol::ContractOp> {
     // Load the selector from the calldata.
     auto callDataLd = r.create<yul::CallDataLoadOp>(loc, bExt.genI256Const(0));
     Value callDataSelector =
-        r.create<yul::ArithShrOp>(loc, callDataLd, bExt.genI256Const(224));
+        r.create<yul::ShrOp>(loc, bExt.genI256Const(224), callDataLd);
 
     SmallVector<APInt, 4> selectorValues;
     selectorValues.reserve(selectors.size());
@@ -4396,12 +4395,8 @@ void evm::populateArithPats(RewritePatternSet &pats, TypeConverter &tyConv) {
            ArithBinOpLowering<sol::AndOp, yul::AndOp>,
            ArithBinOpLowering<sol::OrOp, yul::OrOp>,
            ArithBinOpLowering<sol::XorOp, yul::XOrOp>, NotOpLowering,
-           // Signed div/mod use the EVM sdiv/smod ops (defined wrapping on
-           // INT_MIN/-1) rather than the arith family, whose LLVM sdiv/srem are
-           // UB on that overflow. Unsigned has no such overflow, so the arith
-           // ops are fine there (div-by-zero is guarded by genPanic).
-           DivOrModOpLowering<sol::DivOp, yul::SDivOp, yul::ArithDivOp>,
-           DivOrModOpLowering<sol::ModOp, yul::SModOp, yul::ArithModOp>,
+           DivOrModOpLowering<sol::DivOp, yul::SDivOp, yul::DivOp>,
+           DivOrModOpLowering<sol::ModOp, yul::SModOp, yul::ModOp>,
            ExpOpLowering, ShrOpLowering, ShlOpLowering, CmpOpLowering,
            AddModOpLowering, MulModOpLowering>(tyConv, pats.getContext());
 }

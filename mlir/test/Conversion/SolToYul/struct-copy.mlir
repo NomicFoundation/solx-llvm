@@ -51,15 +51,15 @@ module {
 // CHECK:         %[[ACC:.*]] = yul.or %{{.*}}, %[[AC]]
 // CHECK:         %[[B:.*]] = yul.mload
 // CHECK:         %[[C104:.*]] = yul.constant 104
-// CHECK:         %[[BR:.*]] = yul.arith_shr %[[B]], %[[C104]]
+// CHECK:         %[[BR:.*]] = yul.shr %[[C104]], %[[B]]
 // CHECK:         %[[C8:.*]] = yul.constant 8
-// CHECK:         %[[BS:.*]] = yul.arith_shl %[[BR]], %[[C8]]
+// CHECK:         %[[BS:.*]] = yul.shl %[[C8]], %[[BR]]
 // CHECK:         %[[ACC2:.*]] = yul.or %[[ACC]], %[[BS]]
 // CHECK:         %[[C:.*]] = yul.mload
 // CHECK:         %[[CM:.*]] = yul.constant 4722366482869645213695
 // CHECK:         %[[CC:.*]] = yul.and %[[C]], %[[CM]]
 // CHECK:         %[[C160:.*]] = yul.constant 160
-// CHECK:         %[[CS:.*]] = yul.arith_shl %[[CC]], %[[C160]]
+// CHECK:         %[[CS:.*]] = yul.shl %[[C160]], %[[CC]]
 // CHECK:         %[[W:.*]] = yul.or %[[ACC2]], %[[CS]]
 // CHECK:         %[[OLD:.*]] = yul.sload
 // CHECK:         %[[KEEP:.*]] = yul.constant -6901746346790563787434755862277025452451108972170386555162524223799296
@@ -99,7 +99,7 @@ module {
 // CHECK:         yul.if %[[BDIRTY]] {
 // CHECK:           yul.revert
 // CHECK:         %[[C104:.*]] = yul.constant 104
-// CHECK:         yul.arith_shr %[[BC]], %[[C104]]
+// CHECK:         yul.shr %[[C104]], %[[BC]]
 // CHECK:         %[[I:.*]] = yul.calldataload
 // CHECK:         %[[IC:.*]] = yul.signextend %{{.*}}, %[[I]]
 // CHECK:         %[[IDIRTY:.*]] = yul.cmp ne, %[[I]], %[[IC]]
@@ -142,7 +142,7 @@ module {
 // CHECK:         yul.constant 128
 // CHECK:         %[[S:.*]] = yul.sload
 // CHECK:         %[[C160:.*]] = yul.constant 160
-// CHECK-NEXT:    %[[I:.*]] = yul.arith_shr %[[S]], %[[C160]]
+// CHECK-NEXT:    %[[I:.*]] = yul.shr %[[C160]], %[[S]]
 // CHECK-NEXT:    %[[C8:.*]] = yul.constant 8
 // CHECK-NEXT:    yul.signextend %[[C8]], %[[I]]
 // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}

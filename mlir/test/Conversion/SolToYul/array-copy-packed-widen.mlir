@@ -14,11 +14,11 @@
 // CHECK:         yul.for
 // CHECK:           %[[C24:.*]] = yul.constant 24{{$}}
 // CHECK:           %[[OFF:.*]] = yul.mul %{{.*}}, %[[C24]]
-// CHECK:           %[[E:.*]] = yul.arith_shr %{{.*}}, %[[OFF]]
+// CHECK:           %[[E:.*]] = yul.shr %[[OFF]], %{{.*}}
 // CHECK:           %[[M:.*]] = yul.constant 16777215
 // CHECK:           %[[V:.*]] = yul.and %[[E]], %[[M]]
 // CHECK:           %[[C40:.*]] = yul.constant 40
-// CHECK:           yul.arith_shl %[[V]], %[[C40]]
+// CHECK:           yul.shl %[[C40]], %[[V]]
 // CHECK:           %[[C10:.*]] = yul.constant 10{{$}}
 // CHECK:           yul.cmp eq, %{{.*}}, %[[C10]]
 // CHECK:           yul.cmp eq, %{{.*}}, %{{.*}}
@@ -52,9 +52,9 @@ module {
 // CHECK:         yul.for
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
-// CHECK:             %[[E:.*]] = yul.arith_shr %[[W]], %{{.*}}
+// CHECK:             %[[E:.*]] = yul.shr %{{.*}}, %[[W]]
 // CHECK:             %[[C64:.*]] = yul.constant 64
-// CHECK:             %[[SH:.*]] = yul.arith_shl %[[E]], %[[C64]]
+// CHECK:             %[[SH:.*]] = yul.shl %[[C64]], %[[E]]
 // CHECK:             %[[M:.*]] = yul.constant 87112285931760246646605452758458952581120
 // CHECK:             %[[V:.*]] = yul.and %[[SH]], %[[M]]
 // CHECK:             yul.sstore %{{.*}}, %[[V]]
@@ -89,7 +89,7 @@ module {
 // CHECK:         yul.for %{{.*}}, %arg0, %{{.*}}, %{{.*}}, %arg1, %{{.*}}, %{{.*}} :
 // CHECK:           %[[C8:.*]] = yul.constant 8{{$}}
 // CHECK:           %[[OFF:.*]] = yul.mul %{{.*}}, %[[C8]]
-// CHECK:           %[[E:.*]] = yul.arith_shr %{{.*}}, %[[OFF]]
+// CHECK:           %[[E:.*]] = yul.shr %[[OFF]], %{{.*}}
 // CHECK:           %[[M:.*]] = yul.constant 255
 // CHECK:           yul.and %[[E]], %[[M]]
 // CHECK:           %[[C64:.*]] = yul.constant 64
@@ -128,8 +128,8 @@ module {
 // CHECK:         yul.for
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
-// CHECK:             %[[E:.*]] = yul.arith_shr %[[W]], %{{.*}}
-// CHECK:             %[[SH:.*]] = yul.arith_shl %[[E]], %{{.*}}
+// CHECK:             %[[E:.*]] = yul.shr %{{.*}}, %[[W]]
+// CHECK:             %[[SH:.*]] = yul.shl %{{.*}}, %[[E]]
 // CHECK:             %[[M:.*]] = yul.constant 255
 // CHECK:             %[[V:.*]] = yul.and %[[SH]], %[[M]]
 // CHECK:             yul.sstore %{{.*}}, %[[V]]

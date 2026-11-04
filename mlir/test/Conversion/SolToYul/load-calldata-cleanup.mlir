@@ -172,9 +172,9 @@ module {
     // CHECK:         yul.if %[[D]] {
     // CHECK:           yul.revert
     // CHECK:         %[[C96:.*]] = yul.constant 96
-    // CHECK:         %[[ADDR:.*]] = yul.arith_shr %[[V]], %[[C96]]
+    // CHECK:         %[[ADDR:.*]] = yul.shr %[[C96]], %[[V]]
     // CHECK:         %[[C64:.*]] = yul.constant 64
-    // CHECK:         %[[S:.*]] = yul.arith_shr %[[V]], %[[C64]]
+    // CHECK:         %[[S:.*]] = yul.shr %[[C64]], %[[V]]
     // CHECK:         %[[SEL:.*]] = yul.and %[[S]], %{{.*}}
     // CHECK:         %[[R0:.*]] = llvm.insertvalue %[[ADDR]], %{{.*}}[0]
     // CHECK:         %[[R:.*]] = llvm.insertvalue %[[SEL]], %[[R0]][1]

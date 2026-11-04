@@ -17,7 +17,7 @@
 // CHECK:             %[[C:.*]] = yul.and %[[V]], %[[M]]
 // CHECK:             yul.cmp ne, %[[V]], %[[C]]
 // CHECK:             %[[C128:.*]] = yul.constant 128
-// CHECK:             yul.arith_shr %[[C]], %[[C128]]
+// CHECK:             yul.shr %[[C128]], %[[C]]
 // CHECK:           yul.sstore
 // CHECK-LABEL: yul.func @__sol.copy_array.calldata.storage.array$_dyn_array$_2_fixedbytes$_15_$_$_CallData_$_$_CallData_$.array$_dyn_array$_2_fixedbytes$_16_$_$_Storage_$_$_Storage_$ : (!llvm.struct<(i256, i256)>, i256) -> ()
 // CHECK-NEXT:  ^bb0(%[[A:.*]]: !llvm.struct<(i256, i256)>, %[[SLOT:.*]]: i256):
@@ -95,7 +95,7 @@ module {
 // CHECK:           %[[S:.*]] = yul.add %arg1, %{{.*}}
 // CHECK:           %[[V:.*]] = yul.mload
 // CHECK:           %[[C120:.*]] = yul.constant 120
-// CHECK:           %[[R:.*]] = yul.arith_shr %[[V]], %[[C120]]
+// CHECK:           %[[R:.*]] = yul.shr %[[C120]], %[[V]]
 // CHECK:           yul.sstore %[[S]], %[[R]]
 // CHECK-LABEL: yul.func @m2s_b17s_135 : (i256) -> ()
 // CHECK:         %[[SLOT:.*]] = yul.constant 9{{$}}
@@ -157,7 +157,7 @@ module {
 // CHECK:         %[[TW:.*]] = yul.sload
 // CHECK:         %[[C24:.*]] = yul.constant 24{{$}}
 // CHECK:         %[[BITS:.*]] = yul.mul %{{.*}}, %[[C24]]
-// CHECK:         %[[SH:.*]] = yul.arith_shl %{{.*}}, %[[BITS]]
+// CHECK:         %[[SH:.*]] = yul.shl %[[BITS]], %{{.*}}
 // CHECK:         %[[TM:.*]] = yul.sub %[[SH]], %{{.*}}
 // CHECK:         %[[TV:.*]] = yul.and %[[TW]], %[[TM]]
 // CHECK:         yul.sstore %{{.*}}, %[[TV]]
@@ -221,10 +221,10 @@ module {
 // CHECK:             %[[C:.*]] = yul.and %[[V]], %[[M]]
 // CHECK:             yul.cmp ne, %[[V]], %[[C]]
 // CHECK:             %[[C232:.*]] = yul.constant 232
-// CHECK:             %[[R:.*]] = yul.arith_shr %[[C]], %[[C232]]
+// CHECK:             %[[R:.*]] = yul.shr %[[C232]], %[[C]]
 // CHECK:             %[[B3:.*]] = yul.constant 16777215
 // CHECK:             %[[E:.*]] = yul.and %[[R]], %[[B3]]
-// CHECK:             yul.arith_shl %[[E]], %{{.*}}
+// CHECK:             yul.shl %{{.*}}, %[[E]]
 // CHECK:           yul.sstore
 // CHECK:         yul.if
 // CHECK:         } {full_unroll}
@@ -256,9 +256,9 @@ module {
 // CHECK:         yul.for
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
-// CHECK:             %[[E:.*]] = yul.arith_shr %[[W]], %{{.*}}
+// CHECK:             %[[E:.*]] = yul.shr %{{.*}}, %[[W]]
 // CHECK:             %[[C128:.*]] = yul.constant 128
-// CHECK:             %[[L:.*]] = yul.arith_shl %[[E]], %[[C128]]
+// CHECK:             %[[L:.*]] = yul.shl %[[C128]], %[[E]]
 // CHECK:             yul.mstore %{{.*}}, %[[L]]
 // CHECK:         yul.if %{{.*}} -> i256 {
 // CHECK:         yul.func_return %[[P]] : i256
@@ -288,9 +288,9 @@ module {
 // CHECK:         yul.for %{{.*}}, %[[P]], %arg0, %{{.*}} :
 // CHECK:           %[[W:.*]] = yul.sload
 // CHECK:           yul.for
-// CHECK:             %[[E:.*]] = yul.arith_shr %[[W]], %{{.*}}
+// CHECK:             %[[E:.*]] = yul.shr %{{.*}}, %[[W]]
 // CHECK:             %[[C232:.*]] = yul.constant 232
-// CHECK:             %[[L:.*]] = yul.arith_shl %[[E]], %[[C232]]
+// CHECK:             %[[L:.*]] = yul.shl %[[C232]], %[[E]]
 // CHECK:             yul.mstore %{{.*}}, %[[L]]
 // CHECK:         yul.if %{{.*}} -> i256 {
 // CHECK:         yul.func_return %[[P]] : i256
@@ -331,7 +331,7 @@ module {
 // CHECK:           %[[ONES:.*]] = yul.constant -1
 // CHECK:           %[[C256:.*]] = yul.constant 256
 // CHECK:           %[[SH:.*]] = yul.sub %[[C256]], %[[BITS]]
-// CHECK:           %[[KEEP:.*]] = yul.arith_shr %[[ONES]], %[[SH]]
+// CHECK:           %[[KEEP:.*]] = yul.shr %[[SH]], %[[ONES]]
 // CHECK:           %[[LAST:.*]] = yul.sload
 // CHECK:           %[[CL:.*]] = yul.and %[[LAST]], %[[KEEP]]
 // CHECK:           yul.sstore %{{.*}}, %[[CL]]
@@ -341,10 +341,10 @@ module {
 // CHECK:           yul.for
 // CHECK:             %[[V:.*]] = yul.mload
 // CHECK-NEXT:        %[[C128:.*]] = yul.constant 128
-// CHECK-NEXT:        %[[R:.*]] = yul.arith_shr %[[V]], %[[C128]]
+// CHECK-NEXT:        %[[R:.*]] = yul.shr %[[C128]], %[[V]]
 // CHECK-NEXT:        %[[M:.*]] = yul.constant 340282366920938463463374607431768211455
 // CHECK-NEXT:        %[[E:.*]] = yul.and %[[R]], %[[M]]
-// CHECK:             yul.arith_shl %[[E]], %{{.*}}
+// CHECK:             yul.shl %{{.*}}, %[[E]]
 // CHECK:           yul.sstore
 // CHECK-LABEL: yul.func @m2s_b16d_62 : (i256) -> ()
 // CHECK:         %[[S:.*]] = yul.constant 8{{$}}
@@ -374,7 +374,7 @@ module {
 // CHECK:             %[[V:.*]] = yul.mload
 // CHECK:             %[[M:.*]] = yul.constant 255
 // CHECK:             %[[E:.*]] = yul.and %[[V]], %[[M]]
-// CHECK:             yul.arith_shl %[[E]], %{{.*}}
+// CHECK:             yul.shl %{{.*}}, %[[E]]
 // CHECK:           yul.sstore
 // CHECK:         yul.cmp ult, %{{.*}}, %[[LEN]]
 // CHECK:         } {full_unroll}

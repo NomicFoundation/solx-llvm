@@ -226,7 +226,7 @@ public:
     static_assert(llvm::isPowerOf2_32(multiple));
     mlir::Location loc = locArg ? *locArg : defLoc;
     auto add = b.create<mlir::yul::AddOp>(loc, val, genI256Const(multiple - 1));
-    return b.create<mlir::yul::ArithDivOp>(loc, add, genI256Const(multiple));
+    return b.create<mlir::yul::DivOp>(loc, add, genI256Const(multiple));
   }
 
   /// Generates an LLVM literal struct from the given values.

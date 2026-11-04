@@ -62,8 +62,8 @@ module {
   // CHECK:         yul.scope {
   // CHECK:           yul.sstore
   // CHECK:           yul.scope {
-  // CHECK:             %[[X:.*]] = yul.arith_shr
-  // CHECK:             %[[Y:.*]] = yul.arith_shr
+  // CHECK:             %[[X:.*]] = yul.shr
+  // CHECK:             %[[Y:.*]] = yul.shr
   // CHECK:             llvm.store %[[X]], %[[R0]] {
   // CHECK:             llvm.store %[[Y]], %[[R1]] {
   // CHECK-NEXT:        yul.leave_scope

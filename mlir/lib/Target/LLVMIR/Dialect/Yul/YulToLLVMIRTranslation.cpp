@@ -191,13 +191,6 @@ getBinaryOpcode(Operation &op) {
       .Case([](yul::AndOp) { return Instruction::And; })
       .Case([](yul::OrOp) { return Instruction::Or; })
       .Case([](yul::XOrOp) { return Instruction::Xor; })
-      .Case([](yul::ArithShlOp) { return Instruction::Shl; })
-      .Case([](yul::ArithShrOp) { return Instruction::LShr; })
-      .Case([](yul::ArithSarOp) { return Instruction::AShr; })
-      .Case([](yul::ArithDivOp) { return Instruction::UDiv; })
-      .Case([](yul::ArithSDivOp) { return Instruction::SDiv; })
-      .Case([](yul::ArithModOp) { return Instruction::URem; })
-      .Case([](yul::ArithSModOp) { return Instruction::SRem; })
       .Default([](Operation *) { return std::nullopt; });
 }
 
@@ -567,7 +560,7 @@ LogicalResult ObjectTranslation::emitOp(Operation &op, bool &fallsThrough) {
         mt.mapValue(op, builder.CreateZExt(cmp, i256Ty));
         return success();
       })
-      .Case([&](yul::ArithSelectOp op) {
+      .Case([&](yul::SelectOp op) {
         mt.mapValue(op, builder.CreateSelect(genCond(op.getCondition()),
                                              lookup(op.getTrueValue()),
                                              lookup(op.getFalseValue())));
