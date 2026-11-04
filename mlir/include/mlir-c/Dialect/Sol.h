@@ -10,6 +10,7 @@
 #define MLIR_C_DIALECT_SOL_H
 
 #include "mlir-c/IR.h"
+#include "mlir-c/Pass.h"
 #include "mlir-c/Support.h"
 
 #ifdef __cplusplus
@@ -36,6 +37,11 @@ MLIR_CAPI_EXPORTED MlirValue mlirSolGenDefaultVal(MlirBlock block,
                                                   MlirOperation insertBefore,
                                                   MlirType ty,
                                                   MlirLocation loc);
+
+/// Adds the pipeline that lowers a Sol module to the Yul module the LLVM IR
+/// translation reads to `passManager`.
+MLIR_CAPI_EXPORTED void
+mlirSolBuildSolToYulPipeline(MlirOpPassManager passManager);
 
 #ifdef __cplusplus
 }

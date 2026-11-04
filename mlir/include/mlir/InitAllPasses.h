@@ -39,6 +39,7 @@
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Dialect/SPIRV/Transforms/Passes.h"
 #include "mlir/Dialect/Shape/Transforms/Passes.h"
+#include "mlir/Dialect/Sol/Pipelines/Passes.h"
 #include "mlir/Dialect/Sol/Transforms/Passes.h"
 #include "mlir/Dialect/SparseTensor/Pipelines/Passes.h"
 #include "mlir/Dialect/SparseTensor/Transforms/Passes.h"
@@ -101,6 +102,7 @@ inline void registerAllPasses() {
   // Dialect pipelines
   bufferization::registerBufferizationPipelines();
   sparse_tensor::registerSparseTensorPipelines();
+  sol::registerSolPipelines();
   tosa::registerTosaToLinalgPipelines();
   gpu::registerGPUToNVVMPipeline();
 }
