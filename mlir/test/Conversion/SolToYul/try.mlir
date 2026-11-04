@@ -144,15 +144,11 @@ module {
       sol.try %3 {
         %c1_ui256 = sol.constant 1 : ui256
         sol.return %c1_ui256 : ui256
-      ^bb1:  // no predecessors
-        sol.yield
       } panic {
       } error {
       } fallback {
         %c2_ui256 = sol.constant 2 : ui256
         sol.return %c2_ui256 : ui256
-      ^bb1:  // no predecessors
-        sol.yield
       }
       sol.return %c0_ui256 : ui256
     }
