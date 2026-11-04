@@ -18,6 +18,12 @@ extern "C" {
 
 MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Yul, yul);
 
+/// Registers the LLVM IR translations a Yul module needs with `context`: the
+/// Yul dialect's, and the builtin and LLVM dialects' for the module around the
+/// objects and the LLVM dialect ops inside them.
+MLIR_CAPI_EXPORTED void
+mlirRegisterYulToLLVMIRTranslations(MlirContext context);
+
 #ifdef __cplusplus
 }
 #endif

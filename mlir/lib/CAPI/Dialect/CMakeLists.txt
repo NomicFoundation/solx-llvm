@@ -301,7 +301,10 @@ add_mlir_upstream_c_api_library(MLIRCAPIYul
 
   PARTIAL_SOURCES_INTENDED
   LINK_LIBS PUBLIC
+  MLIRBuiltinToLLVMIRTranslation
   MLIRCAPIIR
+  MLIRLLVMToLLVMIRTranslation
   MLIRYulDialect
+  MLIRYulToLLVMIRTranslation
 )
 # EVM local end

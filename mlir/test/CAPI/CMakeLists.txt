@@ -147,6 +147,7 @@ _add_capi_test_executable(mlir-capi-yul-test
   yul.c
   LINK_LIBS PRIVATE
     MLIRCAPIIR
+    MLIRCAPITarget
     MLIRCAPIYul
 )
 # EVM local end
