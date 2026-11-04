@@ -50,3 +50,20 @@ func.func @attrs(%arg0: i256) -> i256 {
   }
   return %0 : i256
 }
+
+// CHECK-LABEL: func @results
+func.func @results(%arg0: i256) -> (i256, i256) {
+  // CHECK:      %{{.*}}:2 = yul.switch %{{.*}} : i256 -> (i256, i256)
+  // CHECK-NEXT: case 1 {
+  // CHECK:      default {
+  %0:2 = yul.switch %arg0 : i256 -> (i256, i256)
+  case 1 {
+    %c10 = yul.constant 10
+    yul.yield %c10, %c10 : i256, i256
+  }
+  default {
+    %c40 = yul.constant 40
+    yul.yield %c40, %c40 : i256, i256
+  }
+  return %0#0, %0#1 : i256, i256
+}
