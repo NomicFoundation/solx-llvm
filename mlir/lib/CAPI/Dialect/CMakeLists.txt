@@ -292,6 +292,7 @@ add_mlir_upstream_c_api_library(MLIRCAPISol
   MLIRCAPIIR
   MLIRPass
   MLIRSolDialect
+  MLIRSolPipelines
   MLIRSolTransforms
 )
 

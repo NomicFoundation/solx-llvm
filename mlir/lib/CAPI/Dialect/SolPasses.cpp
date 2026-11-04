@@ -6,7 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir-c/Dialect/Sol.h"
 #include "mlir/CAPI/Pass.h"
+#include "mlir/Dialect/Sol/Pipelines/Passes.h"
 #include "mlir/Dialect/Sol/Transforms/Passes.h"
 #include "mlir/Pass/Pass.h"
 
@@ -21,6 +23,10 @@ extern "C" {
 #endif
 
 #include "mlir/Dialect/Sol/Transforms/Passes.capi.cpp.inc"
+
+void mlirSolBuildSolToYulPipeline(MlirOpPassManager passManager) {
+  buildSolToYulPipeline(*unwrap(passManager));
+}
 
 #ifdef __cplusplus
 }

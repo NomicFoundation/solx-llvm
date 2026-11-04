@@ -110,11 +110,36 @@ static void testSolPasses(MlirContext ctx) {
   mlirModuleDestroy(module);
 }
 
+// CHECK-LABEL: testSolPipelines
+static void testSolPipelines(MlirContext ctx) {
+  fprintf(stderr, "testSolPipelines\n");
+
+  MlirPassManager pm = mlirPassManagerCreate(ctx);
+  mlirSolBuildSolToYulPipeline(mlirPassManagerGetAsOpPassManager(pm));
+
+  MlirModule module =
+      mlirModuleCreateParse(ctx, mlirStringRefCreateFromCString(
+                                     "module { sol.contract @C { } "
+                                     "{kind = #sol<ContractKind Contract>} }"));
+  MlirLogicalResult status =
+      mlirPassManagerRunOnOp(pm, mlirModuleGetOperation(module));
+  if (!mlirLogicalResultIsSuccess(status)) {
+    fprintf(stderr, "Pipeline run failed\n");
+    exit(EXIT_FAILURE);
+  }
+  // CHECK: pipeline run successfully
+  fprintf(stderr, "pipeline run successfully\n");
+
+  mlirPassManagerDestroy(pm);
+  mlirModuleDestroy(module);
+}
+
 int main(void) {
   MlirContext ctx = mlirContextCreate();
   testSolDialectHandle(ctx);
   testSolPassRegistration(ctx);
   testSolPasses(ctx);
+  testSolPipelines(ctx);
   mlirContextDestroy(ctx);
   return 0;
 }

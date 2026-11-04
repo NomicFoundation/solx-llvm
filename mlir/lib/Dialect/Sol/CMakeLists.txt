@@ -25,4 +25,5 @@ add_mlir_dialect_library(MLIRSolDialect
   MLIRLLVMDialect
   )
 
+add_subdirectory(Pipelines)
 add_subdirectory(Transforms)
