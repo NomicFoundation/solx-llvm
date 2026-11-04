@@ -297,16 +297,10 @@ add_mlir_upstream_c_api_library(MLIRCAPISol
 
 add_mlir_upstream_c_api_library(MLIRCAPIYul
   Yul.cpp
-  YulPasses.cpp
 
   PARTIAL_SOURCES_INTENDED
-  DEPENDS
-  MLIRYulPassIncGen
-
   LINK_LIBS PUBLIC
   MLIRCAPIIR
-  MLIRPass
   MLIRYulDialect
-  MLIRYulTransforms
 )
 # EVM local end

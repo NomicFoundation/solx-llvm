@@ -5,20 +5,6 @@ module {
   yul.object @Test {
     yul.func @__entry : () -> () {
       %c0 = yul.constant 0
-      // expected-error @below {{cannot be translated to LLVM IR}}
-      %0 = yul.upd_free_ptr %c0
-      yul.stop
-    }
-  }
-}
-
-// -----
-
-module {
-  // expected-error @below {{LLVM Translation failed for operation: yul.object}}
-  yul.object @Test {
-    yul.func @__entry : () -> () {
-      %c0 = yul.constant 0
       // expected-error @below {{expected an else region yielding the results}}
       %0 = yul.if %c0 -> i256 {
         yul.yield %c0 : i256

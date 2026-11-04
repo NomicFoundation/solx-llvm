@@ -378,12 +378,6 @@ def Yul_ForOp : Yul_Op<"for", [Yul_LoopOpInterface,
   }];
 }
 
-def Yul_UpdFreePtrOp : Yul_Op<"upd_free_ptr"> {
-  let arguments = (ins I256:$size);
-  let results = (outs I256:$out);
-  let assemblyFormat = "$size attr-dict";
-}
-
 def Yul_ObjectOp
     : Yul_Op<"object", [Symbol, SymbolTable, SingleBlock, NoTerminator,
                         IsolatedFromAbove, HasParent<"ModuleOp">]> {
