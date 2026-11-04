@@ -161,6 +161,8 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
       });
   PB.registerScalarOptimizerLateEPCallback(
       [](FunctionPassManager &PM, OptimizationLevel Level) {
+        PM.addPass(EVMCorrelatedValuePropagationPass());
+
         if (Level.getSizeLevel() || Level.getSpeedupLevel() > 1)
           PM.addPass(MergeIdenticalBBPass());
 
@@ -215,6 +217,10 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
          ArrayRef<PassBuilder::PipelineElement>) {
         if (PassName == "evm-sha3-constant-folding") {
           PM.addPass(EVMSHA3ConstFoldingPass());
+          return true;
+        }
+        if (PassName == "evm-correlated-propagation") {
+          PM.addPass(EVMCorrelatedValuePropagationPass());
           return true;
         }
         return false;

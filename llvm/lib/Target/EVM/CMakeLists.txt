@@ -47,6 +47,7 @@ add_llvm_target(EVMCodeGen
   EVMCalculateModuleSize.cpp
   EVMConstantUnfolding.cpp
   EVMCodegenPrepare.cpp
+  EVMCorrelatedValuePropagation.cpp
   EVMFinalizeStackFrames.cpp
   EVMFixIrreducibleControlFlow.cpp
   EVMFoldMemoryGuard.cpp
