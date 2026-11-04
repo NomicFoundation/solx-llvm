@@ -312,8 +312,6 @@ LogicalResult ObjectTranslation::emitBlock(Block &block, Dest *yieldDest,
 LogicalResult ObjectTranslation::emitRegion(Dest &dest, Region &region,
                                             Dest *yieldDest,
                                             llvm::Instruction **yieldBranch) {
-  if (!llvm::hasSingleElement(region))
-    return region.getParentOp()->emitError("expected single block regions");
   place(dest.block);
   Block &block = region.front();
   for (auto [arg, phi] : llvm::zip(block.getArguments(), dest.phis))
@@ -435,8 +433,6 @@ LogicalResult ObjectTranslation::emitLoop(yul::LoopOpInterface op,
 LogicalResult ObjectTranslation::emitScope(yul::ScopeOp op,
                                            bool &fallsThrough) {
   Region &region = op.getBodyRegion();
-  if (!llvm::hasSingleElement(region))
-    return op.emitError("expected single block regions");
   Dest &exit = newDest({}, {});
   scopes.push_back(&exit);
   if (failed(emitBlock(region.front(), &exit)))

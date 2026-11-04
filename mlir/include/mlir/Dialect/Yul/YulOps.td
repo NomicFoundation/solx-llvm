@@ -246,7 +246,7 @@ def Yul_ScopeOp : Yul_Op<"scope",
    DeclareOpInterfaceMethods<RegionBranchOpInterface>]
 > {
   let summary = "A block that yul.leave_scope exits";
-  let regions = (region MinSizedRegion<1>:$bodyRegion);
+  let regions = (region SizedRegion<1>:$bodyRegion);
 
   let assemblyFormat = "$bodyRegion attr-dict";
 }
@@ -289,7 +289,7 @@ def Yul_IfOp : Yul_Op<"if",
 > {
   let arguments = (ins I256:$cond);
   let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
-  let regions = (region MinSizedRegion<1>:$thenRegion, AnyRegion:$elseRegion);
+  let regions = (region SizedRegion<1>:$thenRegion, MaxSizedRegion<1>:$elseRegion);
 
   let builders = [
     OpBuilder<(ins "Value":$cond), [{
@@ -310,8 +310,8 @@ def Yul_SwitchOp : Yul_Op<"switch", [
 ]> {
   let arguments = (ins I256:$arg, SignlessIntElementsAttr<256>:$cases);
   let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
-  let regions = (region MinSizedRegion<1>:$defaultRegion,
-                        VariadicRegion<MinSizedRegion<1>>:$caseRegions);
+  let regions = (region SizedRegion<1>:$defaultRegion,
+                        VariadicRegion<SizedRegion<1>>:$caseRegions);
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
@@ -324,14 +324,14 @@ class Yul_WhileOpBase<string mnemonic> : Yul_Op<mnemonic, [
 def Yul_WhileOp : Yul_WhileOpBase<"while"> {
   let arguments = (ins Variadic<I256OrI256LLVMStruct>:$initArgs);
   let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
-  let regions = (region SizedRegion<1>:$cond, MinSizedRegion<1>:$body);
+  let regions = (region SizedRegion<1>:$cond, SizedRegion<1>:$body);
 
   let assemblyFormat =
       "($initArgs^ `:` type($initArgs))? (`->` type($results)^)? $cond `do` $body attr-dict";
 }
 
 def Yul_DoWhileOp : Yul_WhileOpBase<"do"> {
-  let regions = (region MinSizedRegion<1>:$body, SizedRegion<1>:$cond);
+  let regions = (region SizedRegion<1>:$body, SizedRegion<1>:$cond);
 
   let assemblyFormat = "$body `while` $cond attr-dict";
 
@@ -347,10 +347,9 @@ def Yul_ForOp : Yul_Op<"for", [Yul_LoopOpInterface,
   let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
   // TODO: Verifier:
   // - $cond ends in yul.condition.
-  // - $body blocks end in yul.yield, yul.func_return, yul.break or
-  //   yul.continue.
+  // - $body ends in yul.yield, yul.func_return, yul.break or yul.continue.
   // - $step ends in yul.yield or yul.func_return.
-  let regions = (region SizedRegion<1>:$cond, MinSizedRegion<1>:$body,
+  let regions = (region SizedRegion<1>:$cond, SizedRegion<1>:$body,
                         SizedRegion<1>:$step);
 
   let builders = [

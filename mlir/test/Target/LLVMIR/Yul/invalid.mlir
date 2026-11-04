@@ -19,25 +19,6 @@ module {
   yul.object @Test {
     yul.func @__entry : () -> () {
       %c0 = yul.constant 0
-      // expected-error @below {{expected single block regions}}
-      yul.if %c0 {
-        llvm.br ^bb1
-      ^bb1:
-        yul.yield
-      } else {
-      }
-      yul.stop
-    }
-  }
-}
-
-// -----
-
-module {
-  // expected-error @below {{LLVM Translation failed for operation: yul.object}}
-  yul.object @Test {
-    yul.func @__entry : () -> () {
-      %c0 = yul.constant 0
       // expected-error @below {{expected an else region yielding the results}}
       %0 = yul.if %c0 -> i256 {
         yul.yield %c0 : i256

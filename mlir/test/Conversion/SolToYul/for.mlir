@@ -21,14 +21,10 @@ module {
       } body {
         sol.if %b {
           sol.break
-        ^bb1:  // no predecessors
-          sol.yield
         } else {
         }
         sol.if %k {
           sol.continue
-        ^bb1:  // no predecessors
-          sol.yield
         } else {
         }
         sol.yield

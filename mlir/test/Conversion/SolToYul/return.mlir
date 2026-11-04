@@ -9,8 +9,6 @@ module {
     // CHECK:       ^bb0(%[[A:.*]]: i256):
     // CHECK:         yul.if %[[A]] {
     // CHECK:           yul.func_return %c2_i256{{.*}} : i256
-    // CHECK:         ^bb1:
-    // CHECK:           yul.yield
     // CHECK:         } else {
     // CHECK:         }
     // CHECK:         yul.func_return %c0_i256{{.*}} : i256
@@ -18,8 +16,6 @@ module {
       sol.if %arg0 {
         %c2 = sol.constant 2 : ui256
         sol.return %c2 : ui256
-      ^bb1:  // no predecessors
-        sol.yield
       } else {
       }
       %c0 = sol.constant 0 : ui256
@@ -43,8 +39,6 @@ module {
     sol.func @g(%arg0: i1) attributes {state_mutability = #NonPayable} {
       sol.if %arg0 {
         sol.return
-      ^bb1:  // no predecessors
-        sol.yield
       } else {
       }
       sol.return
