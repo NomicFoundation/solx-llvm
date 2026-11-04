@@ -11,6 +11,8 @@
 
 #include "mlir-c/Dialect/Yul.h"
 #include "mlir-c/IR.h"
+#include "mlir-c/Target/LLVMIR.h"
+#include "llvm-c/Core.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,9 +41,47 @@ static void testYulDialectHandle(MlirContext ctx) {
   fprintf(stderr, "yul.caller op registered successfully\n");
 }
 
+// CHECK-LABEL: testYulToLLVMIRTranslations
+static void testYulToLLVMIRTranslations(MlirContext ctx) {
+  fprintf(stderr, "testYulToLLVMIRTranslations\n");
+
+  MlirModule module = mlirModuleCreateParse(
+      ctx, mlirStringRefCreateFromCString(
+               "module { yul.object @O { "
+               "yul.func @__entry : () -> () { yul.stop } } }"));
+  if (mlirModuleIsNull(module)) {
+    fprintf(stderr, "Module parsing failed\n");
+    exit(EXIT_FAILURE);
+  }
+  MlirOperation moduleOp = mlirModuleGetOperation(module);
+  LLVMContextRef llvmCtx = LLVMContextCreate();
+
+  if (mlirTranslateModuleToLLVMIR(moduleOp, llvmCtx)) {
+    fprintf(stderr, "Module translated before registration\n");
+    exit(EXIT_FAILURE);
+  }
+  // CHECK: translation failed before registration
+  fprintf(stderr, "translation failed before registration\n");
+
+  mlirRegisterYulToLLVMIRTranslations(ctx);
+
+  LLVMModuleRef llvmModule = mlirTranslateModuleToLLVMIR(moduleOp, llvmCtx);
+  if (!llvmModule) {
+    fprintf(stderr, "Module translation failed after registration\n");
+    exit(EXIT_FAILURE);
+  }
+  // CHECK: translation succeeded after registration
+  fprintf(stderr, "translation succeeded after registration\n");
+
+  LLVMDisposeModule(llvmModule);
+  LLVMContextDispose(llvmCtx);
+  mlirModuleDestroy(module);
+}
+
 int main(void) {
   MlirContext ctx = mlirContextCreate();
   testYulDialectHandle(ctx);
+  testYulToLLVMIRTranslations(ctx);
   mlirContextDestroy(ctx);
   return 0;
 }
