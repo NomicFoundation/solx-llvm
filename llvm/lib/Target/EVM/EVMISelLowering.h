@@ -144,6 +144,8 @@ private:
 
   SDValue LowerUSUBSAT(SDValue Op, SelectionDAG &DAG) const;
 
+  SDValue LowerMULO(SDValue Op, SelectionDAG &DAG) const;
+
   SDValue LowerCTPOP(SDValue CTPOP, SelectionDAG &DAG) const;
 
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;

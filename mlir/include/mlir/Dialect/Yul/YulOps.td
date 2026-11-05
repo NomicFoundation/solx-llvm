@@ -198,6 +198,31 @@ def Yul_SelectOp
   let hasFolder = 1;
 }
 
+class Yul_MulOverflowOp<string mnemonic> :
+    Yul_Op<mnemonic, [Commutative, Pure,
+                      AllTypesMatch<["lhs", "rhs", "product", "overflow"]>]> {
+  let arguments = (ins I256:$lhs, I256:$rhs);
+  let results = (outs I256:$product, I256:$overflow);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+}
+
+def Yul_UMulOverflowOp : Yul_MulOverflowOp<"umul_overflow"> {
+  let summary = "The product of two words and whether it overflows unsigned";
+  let description = [{
+    The overflow is 1 when the product of the unsigned words does not fit a
+    word, and 0 otherwise. It translates to the LLVM multiplication with
+    overflow, which the optimizer can fold or remove.
+  }];
+}
+
+def Yul_SMulOverflowOp : Yul_MulOverflowOp<"smul_overflow"> {
+  let summary = "The product of two words and whether it overflows signed";
+  let description = [{
+    The overflow is 1 when the product of the signed words does not fit a
+    word, and 0 otherwise.
+  }];
+}
+
 def Yul_BreakOp : Yul_Op<"break", [Terminator]> {
   let assemblyFormat = "attr-dict";
 }

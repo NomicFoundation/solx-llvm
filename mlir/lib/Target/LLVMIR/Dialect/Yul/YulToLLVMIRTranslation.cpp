@@ -566,6 +566,18 @@ LogicalResult ObjectTranslation::emitOp(Operation &op, bool &fallsThrough) {
                                              lookup(op.getFalseValue())));
         return success();
       })
+      .Case<yul::UMulOverflowOp, yul::SMulOverflowOp>([&](auto op) {
+        llvm::Intrinsic::ID id = isa<yul::UMulOverflowOp>(op.getOperation())
+                                     ? llvm::Intrinsic::umul_with_overflow
+                                     : llvm::Intrinsic::smul_with_overflow;
+        llvm::Value *mul = LLVM::detail::createIntrinsicCall(
+            builder, id, {lookup(op.getLhs()), lookup(op.getRhs())}, {i256Ty});
+        mt.mapValue(op.getProduct(), builder.CreateExtractValue(mul, 0));
+        mt.mapValue(op.getOverflow(),
+                    builder.CreateZExt(builder.CreateExtractValue(mul, 1),
+                                       i256Ty));
+        return success();
+      })
       .Case([&](yul::IfOp op) { return emitIf(op, fallsThrough); })
       .Case([&](yul::SwitchOp op) { return emitSwitch(op, fallsThrough); })
       .Case([&](yul::LoopOpInterface op) { return emitLoop(op, fallsThrough); })

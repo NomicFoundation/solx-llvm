@@ -79,6 +79,7 @@ EVMTargetLowering::EVMTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::BSWAP, MVT::i256, Custom);
   setOperationAction(ISD::CTPOP, MVT::i256, Custom);
   setOperationAction(ISD::USUBSAT, MVT::i256, Custom);
+  setOperationAction({ISD::UMULO, ISD::SMULO}, MVT::i256, Custom);
 
   // Custom lowering of extended loads.
   for (const MVT VT : MVT::integer_valuetypes()) {
@@ -161,7 +162,74 @@ SDValue EVMTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) const {
     return LowerBSWAP(Op, DAG);
   case ISD::USUBSAT:
     return LowerUSUBSAT(Op, DAG);
+  case ISD::UMULO:
+  case ISD::SMULO:
+    return LowerMULO(Op, DAG);
   }
+}
+
+SDValue EVMTargetLowering::LowerMULO(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  EVT VT = Op.getValueType();
+  EVT OverflowVT = Op->getValueType(1);
+  unsigned BitWidth = VT.getSizeInBits();
+  bool IsSigned = Op.getOpcode() == ISD::SMULO;
+  SDValue X = DAG.getFreeze(Op.getOperand(0));
+  SDValue Y = DAG.getFreeze(Op.getOperand(1));
+  SDValue Product = DAG.getNode(ISD::MUL, DL, VT, X, Y);
+  SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue Min = DAG.getConstant(APInt::getSignedMinValue(BitWidth), DL, VT);
+
+  // x * y fits when product / x == y. A nonzero constant factor, which the
+  // combiner moves to the right, is the divisor instead, so no zero test is
+  // needed. A compare against its bound would take a wide immediate.
+  SDValue Fits;
+  if (auto *C = dyn_cast<ConstantSDNode>(Op.getOperand(1));
+      C && !C->isZero()) {
+    // The minimum divided by -1 gives the minimum, so -1 tests the minimum.
+    if (IsSigned && C->isAllOnes())
+      Fits = DAG.getSetCC(DL, OverflowVT, X, Min, ISD::SETNE);
+    else
+      Fits = DAG.getSetCC(
+          DL, OverflowVT,
+          DAG.getNode(IsSigned ? ISD::SDIV : ISD::UDIV, DL, VT, Product, Y), X,
+          ISD::SETEQ);
+  } else if (!IsSigned && Op.getOperand(0) == Op.getOperand(1)) {
+    // x * x fits unsigned when x u< 2^(N/2), as InstCombine folds it when only
+    // the overflow is used.
+    Fits = DAG.getSetCC(
+        DL, OverflowVT, X,
+        DAG.getConstant(APInt::getOneBitSet(BitWidth, BitWidth / 2), DL, VT),
+        ISD::SETULT);
+  } else {
+    // The EVM division gives 0 for x == 0, where the LLVM one is undefined.
+    SDValue Quotient = DAG.getNode(
+        ISD::INTRINSIC_WO_CHAIN, DL, VT,
+        DAG.getTargetConstant(IsSigned ? Intrinsic::evm_sdiv
+                                       : Intrinsic::evm_div,
+                              DL, getPointerTy(DAG.getDataLayout())),
+        Product, X);
+    Fits = DAG.getSetCC(DL, OverflowVT, Quotient, Y, ISD::SETEQ);
+    // For x == 0 the quotient is 0, which matches y only when y is x itself.
+    // The EVM division of the minimum by -1 gives the minimum, so the signed
+    // quotient misses -1 * min, which x >= 0 or y != min rules out and a
+    // square cannot be.
+    if (Op.getOperand(0) != Op.getOperand(1)) {
+      Fits = DAG.getNode(ISD::OR, DL, OverflowVT, Fits,
+                         DAG.getSetCC(DL, OverflowVT, X, Zero, ISD::SETEQ));
+      if (IsSigned)
+        Fits = DAG.getNode(
+            ISD::AND, DL, OverflowVT, Fits,
+            DAG.getNode(ISD::OR, DL, OverflowVT,
+                        DAG.getSetCC(DL, OverflowVT, X, Zero, ISD::SETGE),
+                        DAG.getSetCC(DL, OverflowVT, Y, Min, ISD::SETNE)));
+    }
+  }
+
+  // A branch past the panic tests that the product fits, which takes this
+  // compare away.
+  SDValue Overflow = DAG.getSetCC(DL, OverflowVT, Fits, Zero, ISD::SETEQ);
+  return DAG.getMergeValues({Product, Overflow}, DL);
 }
 
 SDValue EVMTargetLowering::LowerUSUBSAT(SDValue Op, SelectionDAG &DAG) const {

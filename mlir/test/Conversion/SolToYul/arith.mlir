@@ -117,9 +117,9 @@ module {
     // CHECK:           yul.func_call @__sol.panic(%[[C17]])
     // CHECK:         %[[D:.*]] = yul.sub %[[Y:.*]], %{{.*}}
     // CHECK:         yul.cmp ugt, %[[D]], %[[Y]]
-    // CHECK:         %[[P:.*]] = yul.mul %[[MA:.*]], %[[MB:.*]]
-    // CHECK:         %[[Q:.*]] = yul.div %[[P]], %[[MA]]
-    // CHECK:         yul.cmp ne, %[[Q]], %[[MB]]
+    // CHECK:         %{{.*}}, %[[MOV:.*]] = yul.umul_overflow
+    // CHECK:         yul.if %[[MOV]] {
+    // CHECK:           yul.constant 17{{$}}
     // CHECK:         yul.constant 18{{$}}
     // CHECK:         yul.div
     sol.func @chk_ui(%a: ui256, %b: ui256) {
@@ -143,9 +143,9 @@ module {
     // CHECK:         yul.constant 17{{$}}
     // CHECK:         yul.sub
     // CHECK:         yul.cmp sgt
-    // CHECK:         yul.mul
-    // CHECK:         yul.constant -57896044618658097711785492504343953926634992332820282019728792003956564819968
-    // CHECK:         yul.sdiv
+    // CHECK:         %{{.*}}, %[[MOV:.*]] = yul.smul_overflow
+    // CHECK:         yul.if %[[MOV]] {
+    // CHECK:           yul.constant 17{{$}}
     // CHECK:         yul.constant 18{{$}}
     // CHECK:         %[[MIN:.*]] = yul.constant -57896044618658097711785492504343953926634992332820282019728792003956564819968
     // CHECK:         yul.cmp eq, %{{.*}}, %[[MIN]]
@@ -158,6 +158,25 @@ module {
       %1 = sol.csub %a, %b : si256
       %2 = sol.cmul %a, %b : si256
       %3 = sol.cdiv %a, %b : si256
+      sol.return
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // Below 256 bits, a product that fits the word must also fit the type.
+    // CHECK-LABEL: yul.func @chk_ui160 : (i256, i256) -> ()
+    // CHECK:         %[[P:.*]], %[[MOV:.*]] = yul.umul_overflow
+    // CHECK:         %[[PC:.*]] = yul.and %[[P]], %{{.*}}
+    // CHECK:         %[[NE:.*]] = yul.cmp ne, %[[P]], %[[PC]]
+    // CHECK:         %[[OV:.*]] = yul.or %[[MOV]], %[[NE]]
+    // CHECK:         yul.if %[[OV]] {
+    // CHECK:           yul.constant 17{{$}}
+    sol.func @chk_ui160(%a: ui160, %b: ui160) {
+      %0 = sol.cmul %a, %b : ui160
       sol.return
     }
   } {kind = #sol<ContractKind Contract>, runtime}

@@ -1174,10 +1174,9 @@ struct CMulOpLowering
 
     auto ty = cast<IntegerType>(op.getType());
 
-    Value rawProduct = r.create<yul::MulOp>(loc, lhs, rhs);
-    Value product = evmB.genCleanup(op.getType(), rawProduct, loc);
-    auto zero = bExt.genI256Const(0, loc);
     if (ty.getWidth() <= 128) {
+      Value rawProduct = r.create<yul::MulOp>(loc, lhs, rhs);
+      Value product = evmB.genCleanup(op.getType(), rawProduct, loc);
       // overflow/underflow, if product != product_raw
       Value panicCond = bExt.genCmp(yul::CmpPredicate::ne, rawProduct, product);
       evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
@@ -1185,34 +1184,27 @@ struct CMulOpLowering
       return success();
     }
 
+    // The product of wider operands can overflow the word, which the
+    // multiplication with overflow reports.
+    Value rawProduct;
+    Value panicCond;
     if (ty.isSigned()) {
-      // (Copied from the yul codegen)
-      // underflow, if x < 0 and y == int.min
-      if (ty.getWidth() == 256) {
-        auto lhsLtZero = bExt.genCmp(yul::CmpPredicate::slt, lhs, zero);
-        auto minVal = bExt.genI256Const(
-            APInt::getSignedMinValue(ty.getWidth()).sext(256), loc);
-        auto rhsEqMin = bExt.genCmp(yul::CmpPredicate::eq, rhs, minVal);
-        evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                      r.create<yul::AndOp>(loc, lhsLtZero, rhsEqMin));
-      }
-
-      // over/underflow, if x != 0 and product/x != y
-      auto lhsNeqZero = bExt.genCmp(yul::CmpPredicate::ne, lhs, zero);
-      auto quotient = r.create<yul::SDivOp>(loc, product, lhs);
-      auto quotientNeqRhs = bExt.genCmp(yul::CmpPredicate::ne, quotient, rhs);
-      evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                    r.create<yul::AndOp>(loc, lhsNeqZero, quotientNeqRhs));
-
-      // Unsigned case
+      auto mul = r.create<yul::SMulOverflowOp>(loc, lhs, rhs);
+      rawProduct = mul.getProduct();
+      panicCond = mul.getOverflow();
     } else {
-      // over/underflow, if x != 0 and product/x != y
-      auto lhsNeqZero = bExt.genCmp(yul::CmpPredicate::ne, lhs, zero);
-      auto quotient = r.create<yul::DivOp>(loc, product, lhs);
-      auto quotientNeqRhs = bExt.genCmp(yul::CmpPredicate::ne, quotient, rhs);
-      evmB.genPanic(mlir::evm::PanicCode::UnderOverflow,
-                    r.create<yul::AndOp>(loc, lhsNeqZero, quotientNeqRhs));
+      auto mul = r.create<yul::UMulOverflowOp>(loc, lhs, rhs);
+      rawProduct = mul.getProduct();
+      panicCond = mul.getOverflow();
     }
+
+    // Below 256 bits, a product that fits the word must also fit the type.
+    Value product = evmB.genCleanup(op.getType(), rawProduct, loc);
+    if (ty.getWidth() < 256)
+      panicCond = r.create<yul::OrOp>(
+          loc, panicCond,
+          bExt.genCmp(yul::CmpPredicate::ne, rawProduct, product));
+    evmB.genPanic(mlir::evm::PanicCode::UnderOverflow, panicCond);
 
     r.replaceOp(op, product);
     return success();

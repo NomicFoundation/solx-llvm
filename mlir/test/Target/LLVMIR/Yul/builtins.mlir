@@ -23,6 +23,22 @@
 // CHECK-NEXT: store i256 %[[V15]], ptr addrspace(5) %[[V16]], align 1
 // CHECK-NEXT: ret void
 // CHECK-NEXT: }
+// CHECK-LABEL: define private void @mul_overflow(
+// CHECK-SAME: i256 %[[V0:[0-9]+]], i256 %[[V1:[0-9]+]]) #{{[0-9]+}} {
+// CHECK-NEXT: %[[V3:[0-9]+]] = call { i256, i1 } @llvm.umul.with.overflow.i256(i256 %[[V0]], i256 %[[V1]])
+// CHECK-NEXT: %[[V4:[0-9]+]] = extractvalue { i256, i1 } %[[V3]], 0
+// CHECK-NEXT: %[[V5:[0-9]+]] = extractvalue { i256, i1 } %[[V3]], 1
+// CHECK-NEXT: %[[V6:[0-9]+]] = zext i1 %[[V5]] to i256
+// CHECK-NEXT: %[[V7:[0-9]+]] = call { i256, i1 } @llvm.smul.with.overflow.i256(i256 %[[V4]], i256 %[[V1]])
+// CHECK-NEXT: %[[V8:[0-9]+]] = extractvalue { i256, i1 } %[[V7]], 0
+// CHECK-NEXT: %[[V9:[0-9]+]] = extractvalue { i256, i1 } %[[V7]], 1
+// CHECK-NEXT: %[[V10:[0-9]+]] = zext i1 %[[V9]] to i256
+// CHECK-NEXT: %[[V11:[0-9]+]] = inttoptr i256 %[[V6]] to ptr addrspace(5)
+// CHECK-NEXT: store i256 %[[V8]], ptr addrspace(5) %[[V11]], align 1
+// CHECK-NEXT: %[[V12:[0-9]+]] = inttoptr i256 %[[V10]] to ptr addrspace(5)
+// CHECK-NEXT: store i256 %[[V4]], ptr addrspace(5) %[[V12]], align 1
+// CHECK-NEXT: ret void
+// CHECK-NEXT: }
 // CHECK-LABEL: define private void @selfdestruct(
 // CHECK-SAME: i256 %[[V0:[0-9]+]]) #{{[0-9]+}} {
 // CHECK-NEXT: call void @llvm.evm.selfdestruct(i256 %[[V0]])
@@ -288,6 +304,15 @@ module {
       %8 = yul.cmp slt, %7, %b
       %9 = yul.select %8, %7, %b
       yul.sstore %a, %9
+      yul.func_return
+    }
+
+    yul.func @mul_overflow : (i256, i256) -> () {
+    ^bb0(%a: i256, %b: i256):
+      %product, %overflow = yul.umul_overflow %a, %b
+      %sproduct, %soverflow = yul.smul_overflow %product, %b
+      yul.sstore %overflow, %sproduct
+      yul.sstore %soverflow, %product
       yul.func_return
     }
 
