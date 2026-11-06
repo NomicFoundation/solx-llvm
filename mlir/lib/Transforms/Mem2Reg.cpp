@@ -497,6 +497,21 @@ LogicalResult MemorySlotPromotionAnalyzer::computeBlockingUses(
   if (failed(visitRegions(regionsToPropagateFrom, false)))
     return failure();
 
+  // A region with stores needs the reaching definition at each of its early
+  // exits, so the regions between an exit and that region are promoted too.
+  regionsToPropagateFrom.clear();
+  for (auto &[region, regionInfo] : regionsToPromote) {
+    if (!regionInfo.hasValueStores)
+      continue;
+    SmallVector<Operation *> exits;
+    cast<PromotableRegionOpInterface>(region->getParentOp())
+        .getEarlyExits(region, exits);
+    for (Operation *exit : exits)
+      regionsToPropagateFrom.push_back(exit->getParentRegion());
+  }
+  if (failed(visitRegions(regionsToPropagateFrom, false)))
+    return failure();
+
   return success();
 }
 

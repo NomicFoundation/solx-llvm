@@ -442,6 +442,21 @@ def PromotableRegionOpInterface
         "::mlir::OpBuilder &":$builder
       )
     >,
+    InterfaceMethod<[{
+        Appends to `exits` the terminators nested in `region` that leave the
+        operation from inside another region operation, such as a `break` in
+        an `if` in a loop.
+
+        When `region` has stores to the slot, the regions between each exit
+        and the operation are promoted as well, so `reachingAtBlockEnd` holds
+        the reaching definition at every exit in `finalizePromotion`.
+      }],
+      "void", "getEarlyExits",
+      (ins
+        "::mlir::Region *":$region,
+        "::llvm::SmallVectorImpl<::mlir::Operation *> &":$exits
+      ), [{}], [{ return; }]
+    >,
   ];
 }
 
