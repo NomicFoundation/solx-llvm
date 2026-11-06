@@ -3365,7 +3365,8 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
     Location loc = tryOp.getLoc();
     mlir::solgen::BuilderExt bExt(r, loc);
 
-    auto ifStatus = r.create<sol::IfOp>(loc, tryOp.getStatus());
+    auto ifStatus =
+        r.create<sol::IfOp>(loc, tryOp.getResultTypes(), tryOp.getStatus());
 
     //
     // Success region
@@ -3408,18 +3409,32 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
     }
 
     if (tryOp.getPanicRegion().empty() && tryOp.getErrorRegion().empty()) {
-      r.eraseOp(tryOp);
+      r.replaceOp(tryOp, ifStatus.getResults());
       return success();
     }
 
     r.setInsertionPointToStart(&ifStatus.getElseRegion().front());
 
-    // Generate a flag to check if we need to run the fallback. The flag will be
-    // set to false by any of the other clause.
-    auto boolAllocaTy = sol::PointerType::get(r.getContext(), r.getI1Type(),
-                                              sol::DataLocation::Stack);
-    auto runFallbackFlag = r.create<sol::AllocaOp>(loc, boolAllocaTy);
-    r.create<sol::StoreOp>(loc, bExt.genBool(true), runFallbackFlag);
+    // The ifs and the switch that select the panic or error clause yield
+    // whether one caught the failure, then its results. The paths where none
+    // did yield placeholders, which the fallback replaces.
+    SmallVector<Type> caughtTypes{r.getIntegerType(256)};
+    llvm::append_range(caughtTypes, tryOp.getResultTypes());
+    Value caught = bExt.genBool(true);
+    SmallVector<Value> uncaught{bExt.genBool(false)};
+    for (Type type : tryOp.getResultTypes())
+      uncaught.push_back(
+          r.create<LLVM::UndefOp>(loc, getTypeConverter()->convertType(type)));
+    auto yieldUncaught = [&](sol::IfOp ifOp) {
+      OpBuilder::InsertionGuard guard(r);
+      r.setInsertionPointToStart(&ifOp.getElseRegion().emplaceBlock());
+      r.create<sol::YieldOp>(loc, uncaught);
+    };
+    auto yieldCaught = [&](Region &clause) {
+      for (Block &block : clause)
+        if (auto yield = dyn_cast<sol::YieldOp>(block.getTerminator()))
+          r.modifyOpInPlace(yield, [&] { yield->insertOperands(0, caught); });
+    };
 
     // Generate an if op that checks if the returndata is large enough to hold
     // the selector.
@@ -3429,14 +3444,14 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
     auto returnDataSize = r.create<yul::ReturnDataSizeOp>(loc);
     auto selectorRetCond = bExt.genCmp(yul::CmpPredicate::ugt, returnDataSize,
                                        bExt.genI256Const(3));
-    auto ifSelectorRet = r.create<sol::IfOp>(loc, selectorRetCond);
+    auto ifSelectorRet = r.create<sol::IfOp>(loc, caughtTypes, selectorRetCond);
+    yieldUncaught(ifSelectorRet);
     auto fallbackPoint = r.saveInsertionPoint().getPoint();
 
     //
     // Selector region
     //
     r.setInsertionPointToStart(&ifSelectorRet.getThenRegion().emplaceBlock());
-    r.setInsertionPoint(r.create<sol::YieldOp>(loc));
 
     // Generate the selector extraction code.
     auto zero = bExt.genI256Const(0);
@@ -3461,10 +3476,12 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
         RankedTensorType::get(static_cast<int64_t>(switchSelectors.size()),
                               r.getIntegerType(256)),
         switchSelectors);
-    auto switchOp = r.create<sol::SwitchOp>(loc, selector, switchSelectorsAttr,
-                                            switchSelectors.size());
+    auto switchOp =
+        r.create<sol::SwitchOp>(loc, caughtTypes, selector, switchSelectorsAttr,
+                                switchSelectors.size());
+    r.create<sol::YieldOp>(loc, switchOp.getResults());
     r.setInsertionPointToStart(&switchOp.getDefaultRegion().emplaceBlock());
-    r.setInsertionPoint(r.create<sol::YieldOp>(loc));
+    r.create<sol::YieldOp>(loc, uncaught);
 
     //
     // Panic case region
@@ -3472,20 +3489,21 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
     if (!tryOp.getPanicRegion().empty()) {
       // FIXME: We should query for the case region using the attribute!
       r.setInsertionPointToStart(&switchOp.getCaseRegions()[0].emplaceBlock());
-      r.setInsertionPoint(r.create<sol::YieldOp>(loc));
 
       // Genereate an if op that checks if the returndata is large enough to
       // hold the panic code.
       auto panicRetCond = bExt.genCmp(yul::CmpPredicate::ugt, returnDataSize,
                                       bExt.genI256Const(0x23));
-      auto ifPanicRet = r.create<sol::IfOp>(loc, panicRetCond);
+      auto ifPanicRet = r.create<sol::IfOp>(loc, caughtTypes, panicRetCond);
+      r.create<sol::YieldOp>(loc, ifPanicRet.getResults());
+      yieldUncaught(ifPanicRet);
 
       // Inline the panic region.
       r.inlineRegionBefore(tryOp.getPanicRegion(), ifPanicRet.getThenRegion(),
                            ifPanicRet.getThenRegion().begin());
+      yieldCaught(ifPanicRet.getThenRegion());
       Block &thenEntry = ifPanicRet.getThenRegion().front();
       r.setInsertionPointToStart(&thenEntry);
-      r.create<sol::StoreOp>(loc, bExt.genBool(false), runFallbackFlag);
       // Replace the panic code block arg with the panic code at offset 4.
       BlockArgument blkArg = thenEntry.getArgument(0);
       r.create<yul::ReturnDataCopyOp>(blkArg.getLoc(), /*dst=*/zero,
@@ -3511,13 +3529,12 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
       unsigned errorCaseIdx = switchSelectors.size() == 2 ? 1 : 0;
       r.setInsertionPointToStart(
           &switchOp.getCaseRegions()[errorCaseIdx].emplaceBlock());
-      r.setInsertionPoint(r.create<sol::YieldOp>(loc));
 
       evm::Builder evmB(getModule(tryOp), r, loc);
 
       // Decode the ABI-encoded Error(string) like upstream's
-      // try_decode_error_message. Three nested guards; a failed one leaves
-      // runFallbackFlag set so the fallback clause runs:
+      // try_decode_error_message. Three nested guards; a failed one yields
+      // uncaught so the fallback clause runs:
       //
       // - 0x44 = 4 (selector) + 0x20 (offset) + 0x20 (length)
       // - 0x24 = 4 (selector) + 0x20 (offset)
@@ -3535,9 +3552,10 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
       // clang-format on
       Value sizeOk = bExt.genCmp(yul::CmpPredicate::uge, returnDataSize,
                                  bExt.genI256Const(0x44));
-      auto ifSizeOk = r.create<sol::IfOp>(loc, sizeOk);
+      auto ifSizeOk = r.create<sol::IfOp>(loc, caughtTypes, sizeOk);
+      r.create<sol::YieldOp>(loc, ifSizeOk.getResults());
+      yieldUncaught(ifSizeOk);
       r.setInsertionPointToStart(&ifSizeOk.getThenRegion().emplaceBlock());
-      r.setInsertionPoint(r.create<sol::YieldOp>(loc));
       Value u64Max = bExt.genI256Const(APInt::getLowBitsSet(256, 64));
       Value abiTupleSize =
           r.create<yul::SubOp>(loc, returnDataSize, bExt.genI256Const(4));
@@ -3553,9 +3571,10 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
           bExt.genCmp(yul::CmpPredicate::ule, offsetEnd, returnDataSize);
 
       Value offsetOk = r.create<yul::AndOp>(loc, offsetSmall, offsetInBounds);
-      auto ifOffsetOk = r.create<sol::IfOp>(loc, offsetOk);
+      auto ifOffsetOk = r.create<sol::IfOp>(loc, caughtTypes, offsetOk);
+      r.create<sol::YieldOp>(loc, ifOffsetOk.getResults());
+      yieldUncaught(ifOffsetOk);
       r.setInsertionPointToStart(&ifOffsetOk.getThenRegion().emplaceBlock());
-      r.setInsertionPoint(r.create<sol::YieldOp>(loc));
 
       Value errMsg = r.create<yul::AddOp>(loc, abiTuple, offset);
       Value length = r.create<yul::MLoadOp>(loc, errMsg);
@@ -3567,12 +3586,14 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
       Value lengthInBounds =
           bExt.genCmp(yul::CmpPredicate::ule, msgEnd, dataEnd);
       Value lengthOk = r.create<yul::AndOp>(loc, lengthSmall, lengthInBounds);
-      auto ifLengthOk = r.create<sol::IfOp>(loc, lengthOk);
+      auto ifLengthOk = r.create<sol::IfOp>(loc, caughtTypes, lengthOk);
+      r.create<sol::YieldOp>(loc, ifLengthOk.getResults());
+      yieldUncaught(ifLengthOk);
       r.inlineRegionBefore(tryOp.getErrorRegion(), ifLengthOk.getThenRegion(),
                            ifLengthOk.getThenRegion().begin());
+      yieldCaught(ifLengthOk.getThenRegion());
       Block &thenEntry = ifLengthOk.getThenRegion().front();
       r.setInsertionPointToStart(&thenEntry);
-      r.create<sol::StoreOp>(loc, bExt.genBool(false), runFallbackFlag);
       // The copy is reserved only once every guard passed, and only up to the
       // end of the reason.
       evmB.genFreePtrUpd(abiTuple, r.create<yul::SubOp>(loc, msgEnd, abiTuple));
@@ -3588,14 +3609,16 @@ struct TryOpLowering : public OpConversionPattern<sol::TryOp> {
     //
     Block *fallbackBlk = r.splitBlock(fallbackPoint->getBlock(), fallbackPoint);
     r.setInsertionPointAfter(ifSelectorRet);
-    auto runFallbackFlagLd = r.create<sol::LoadOp>(loc, runFallbackFlag);
-    auto ifRunFallback = r.create<sol::IfOp>(loc, runFallbackFlagLd);
-    ifRunFallback.getThenRegion().emplaceBlock();
-    r.inlineBlockBefore(fallbackBlk, &ifRunFallback.getThenRegion().front(),
-                        ifRunFallback.getThenRegion().front().begin());
-    r.create<sol::YieldOp>(loc);
+    auto ifCaught = r.create<sol::IfOp>(loc, tryOp.getResultTypes(),
+                                        ifSelectorRet.getResult(0));
+    r.create<sol::YieldOp>(loc, ifCaught.getResults());
+    r.setInsertionPointToStart(&ifCaught.getThenRegion().emplaceBlock());
+    r.create<sol::YieldOp>(loc, ifSelectorRet.getResults().drop_front());
+    ifCaught.getElseRegion().emplaceBlock();
+    r.inlineBlockBefore(fallbackBlk, &ifCaught.getElseRegion().front(),
+                        ifCaught.getElseRegion().front().begin());
 
-    r.eraseOp(tryOp);
+    r.replaceOp(tryOp, ifStatus.getResults());
     return success();
   }
 };
@@ -3842,8 +3865,12 @@ struct SwitchOpLowering : public OpConversionPattern<sol::SwitchOp> {
 
   LogicalResult matchAndRewrite(sol::SwitchOp switchOp, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
+    SmallVector<Type> resultTypes;
+    if (failed(getTypeConverter()->convertTypes(switchOp.getResultTypes(),
+                                                resultTypes)))
+      return failure();
     auto yulSwitchOp = r.create<yul::SwitchOp>(
-        switchOp.getLoc(), TypeRange{}, adaptor.getArg(), switchOp.getCases(),
+        switchOp.getLoc(), resultTypes, adaptor.getArg(), switchOp.getCases(),
         switchOp.getCaseRegions().size());
 
     r.inlineRegionBefore(switchOp.getDefaultRegion(),
@@ -3857,7 +3884,7 @@ struct SwitchOpLowering : public OpConversionPattern<sol::SwitchOp> {
       lowerSolRegionTerminatorsToYul(dstRegion, r);
     }
 
-    r.eraseOp(switchOp);
+    r.replaceOp(switchOp, yulSwitchOp.getResults());
     return success();
   }
 };

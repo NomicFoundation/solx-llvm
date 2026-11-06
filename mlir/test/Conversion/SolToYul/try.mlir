@@ -18,18 +18,30 @@ module {
     // CHECK:         yul.if %[[OK]] {
     // CHECK:           yul.func_call @use(%[[R]])
     // CHECK:         } else {
-    // CHECK:           %[[UNCAUGHT:.*]] = llvm.alloca
-    // CHECK:           yul.returndatacopy
-    // CHECK:           yul.switch
-    // CHECK:           case 1313373041 {
-    // CHECK:             llvm.store %{{.*}}, %[[UNCAUGHT]]
-    // CHECK:             %[[C4:.*]] = yul.constant 4
-    // CHECK:             %[[C32:.*]] = yul.constant 32
-    // CHECK:             yul.returndatacopy %[[ZERO:.*]], %[[C4]], %[[C32]]
-    // CHECK:             %[[CODE:.*]] = yul.mload %[[ZERO]]
-    // CHECK:             yul.func_call @use(%[[CODE]])
-    // CHECK:           %[[U:.*]] = llvm.load %[[UNCAUGHT]]
-    // CHECK:           yul.if %[[U]] {
+    // CHECK-NEXT:      %[[CAUGHT:.*]] = yul.constant 1
+    // CHECK-NEXT:      %[[UNCAUGHT:.*]] = yul.constant 0
+    // CHECK:           %[[SEL:.*]] = yul.if %{{.*}} -> i256 {
+    // CHECK:             yul.returndatacopy
+    // CHECK:             %[[CASE:.*]] = yul.switch %{{.*}} : i256 -> i256
+    // CHECK:             case 1313373041 {
+    // CHECK:               %[[PANIC:.*]] = yul.if %{{.*}} -> i256 {
+    // CHECK:                 %[[C4:.*]] = yul.constant 4
+    // CHECK:                 %[[C32:.*]] = yul.constant 32
+    // CHECK:                 yul.returndatacopy %[[ZERO:.*]], %[[C4]], %[[C32]]
+    // CHECK:                 %[[CODE:.*]] = yul.mload %[[ZERO]]
+    // CHECK:                 yul.func_call @use(%[[CODE]])
+    // CHECK-NEXT:            yul.yield %[[CAUGHT]] : i256
+    // CHECK-NEXT:          } else {
+    // CHECK-NEXT:            yul.yield %[[UNCAUGHT]] : i256
+    // CHECK:               yul.yield %[[PANIC]] : i256
+    // CHECK:             default {
+    // CHECK-NEXT:          yul.yield %[[UNCAUGHT]] : i256
+    // CHECK:             yul.yield %[[CASE]] : i256
+    // CHECK-NEXT:      } else {
+    // CHECK-NEXT:        yul.yield %[[UNCAUGHT]] : i256
+    // CHECK:           yul.if %[[SEL]] {
+    // CHECK-NEXT:        yul.yield
+    // CHECK-NEXT:      } else {
     // CHECK:             yul.returndatacopy
     // CHECK:             yul.revert
     // CHECK:         %[[S2:.*]] = yul.call %arg1,
@@ -37,12 +49,13 @@ module {
     // CHECK:         yul.if %[[OK2]] {
     // CHECK:           yul.func_call @use
     // CHECK:         } else {
+    // CHECK:           %[[SEL2:.*]] = yul.if %{{.*}} -> i256 {
     // CHECK:           case 1313373041 {
     // CHECK:             yul.func_call @use
     // CHECK:           case 147028384 {
     // CHECK:             %[[C68:.*]] = yul.constant 68
     // CHECK:             %[[SIZEOK:.*]] = yul.cmp uge, %[[RDS:.*]], %[[C68]]
-    // CHECK:             yul.if %[[SIZEOK]] {
+    // CHECK:             yul.if %[[SIZEOK]] -> i256 {
     // CHECK:               %[[U64:.*]] = yul.constant 18446744073709551615
     // CHECK:               %[[C4E:.*]] = yul.constant 4{{$}}
     // CHECK:               %[[TSIZE:.*]] = yul.sub %[[RDS]], %[[C4E]]
@@ -54,7 +67,7 @@ module {
     // CHECK:               %[[OFFEND:.*]] = yul.add %[[OFF]], %[[C36]]
     // CHECK:               %[[OFFIN:.*]] = yul.cmp ule, %[[OFFEND]], %[[RDS]]
     // CHECK:               %[[OFFOK:.*]] = yul.and %[[OFFSMALL]], %[[OFFIN]]
-    // CHECK:               yul.if %[[OFFOK]] {
+    // CHECK:               yul.if %[[OFFOK]] -> i256 {
     // CHECK:                 %[[MSG:.*]] = yul.add %[[TUPLE]], %[[OFF]]
     // CHECK:                 %[[LEN:.*]] = yul.mload %[[MSG]]
     // CHECK:                 %[[LENSMALL:.*]] = yul.cmp ule, %[[LEN]], %[[U64]]
@@ -63,13 +76,14 @@ module {
     // CHECK:                 %[[DATAEND:.*]] = yul.add %[[TUPLE]], %[[TSIZE]]
     // CHECK:                 %[[LENIN:.*]] = yul.cmp ule, %[[MSGEND]], %[[DATAEND]]
     // CHECK:                 %[[LENOK:.*]] = yul.and %[[LENSMALL]], %[[LENIN]]
-    // CHECK:                 yul.if %[[LENOK]] {
+    // CHECK:                 yul.if %[[LENOK]] -> i256 {
     // CHECK:                   %[[USED:.*]] = yul.sub %[[MSGEND]], %[[TUPLE]]
     // CHECK:                   %[[FREE:.*]] = yul.add %[[TUPLE]], %{{.*}}
     // CHECK:                   yul.mstore %c64_i256{{[_0-9]*}}, %[[FREE]]
     // CHECK:                   yul.func_call @useStr(%[[MSG]])
-    // CHECK:           %[[FB:.*]] = llvm.load
-    // CHECK:           yul.if %[[FB]] {
+    // CHECK:           yul.if %[[SEL2]] {
+    // CHECK-NEXT:        yul.yield
+    // CHECK-NEXT:      } else {
     // CHECK:             %[[N:.*]] = yul.returndatasize
     // CHECK:             %[[EMPTY:.*]] = yul.cmp eq, %[[N]], %{{.*}}
     // CHECK:             %[[BYTES:.*]] = yul.if %[[EMPTY]] -> i256 {
@@ -151,6 +165,61 @@ module {
         sol.return %c2_ui256 : ui256
       }
       sol.return %c0_ui256 : ui256
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
+    // The results leave the clause that ran: the success clause, the panic
+    // clause through the switch, or the fallback.
+    // CHECK-LABEL: yul.func @results : (i256, i256, i256) -> i256
+    // CHECK-NEXT:  ^bb0(%[[S:.*]]: i256, %[[A:.*]]: i256, %[[B:.*]]: i256):
+    // CHECK-NEXT:    %[[R:.*]] = yul.if %[[S]] -> i256 {
+    // CHECK-NEXT:      yul.yield %[[A]] : i256
+    // CHECK-NEXT:    } else {
+    // CHECK-NEXT:      %[[CAUGHT:.*]] = yul.constant 1
+    // CHECK-NEXT:      %[[UNCAUGHT:.*]] = yul.constant 0
+    // CHECK-NEXT:      %[[UNDEF:.*]] = llvm.mlir.undef : i256
+    // CHECK:           %[[SEL:.*]]:2 = yul.if %{{.*}} -> i256, i256 {
+    // CHECK:             %[[CASE:.*]]:2 = yul.switch %{{.*}} : i256 -> (i256, i256)
+    // CHECK-NEXT:        case 1313373041 {
+    // CHECK:               %[[PANIC:.*]]:2 = yul.if %{{.*}} -> i256, i256 {
+    // CHECK:                 %[[CODE:.*]] = yul.mload
+    // CHECK-NEXT:            yul.yield %[[CAUGHT]], %[[CODE]] : i256, i256
+    // CHECK-NEXT:          } else {
+    // CHECK-NEXT:            yul.yield %[[UNCAUGHT]], %[[UNDEF]] : i256, i256
+    // CHECK-NEXT:          }
+    // CHECK-NEXT:          yul.yield %[[PANIC]]#0, %[[PANIC]]#1 : i256, i256
+    // CHECK-NEXT:        }
+    // CHECK-NEXT:        default {
+    // CHECK-NEXT:          yul.yield %[[UNCAUGHT]], %[[UNDEF]] : i256, i256
+    // CHECK-NEXT:        }
+    // CHECK-NEXT:        yul.yield %[[CASE]]#0, %[[CASE]]#1 : i256, i256
+    // CHECK-NEXT:      } else {
+    // CHECK-NEXT:        yul.yield %[[UNCAUGHT]], %[[UNDEF]] : i256, i256
+    // CHECK-NEXT:      }
+    // CHECK-NEXT:      %[[F:.*]] = yul.if %[[SEL]]#0 -> i256 {
+    // CHECK-NEXT:        yul.yield %[[SEL]]#1 : i256
+    // CHECK-NEXT:      } else {
+    // CHECK-NEXT:        yul.yield %[[B]] : i256
+    // CHECK-NEXT:      }
+    // CHECK-NEXT:      yul.yield %[[F]] : i256
+    // CHECK-NEXT:    }
+    // CHECK-NEXT:    yul.func_return %[[R]] : i256
+    sol.func @results(%s: i1, %a: ui256, %b: ui256) -> ui256 {
+      %0 = sol.try %s -> ui256 {
+        sol.yield %a : ui256
+      } panic {
+      ^bb0(%code: ui256):
+        sol.yield %code : ui256
+      } error {
+      } fallback {
+        sol.yield %b : ui256
+      }
+      sol.return %0 : ui256
     }
   } {kind = #sol<ContractKind Contract>, runtime}
 }

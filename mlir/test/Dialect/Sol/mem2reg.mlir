@@ -146,4 +146,36 @@ sol.contract @C {
     %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
     sol.return %1 : ui256
   }
+
+  // A value stored in the clauses of a try leaves it as its result, and a
+  // clause that doesn't store yields the value before the try.
+  // CHECK-LABEL: sol.func @try(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[Y:[^:]*]]: ui256, %[[S:[^:]*]]: i1
+  // CHECK-NEXT:    %[[R:.*]] = sol.try %[[S]] -> ui256 {
+  // CHECK-NEXT:      sol.yield %[[Y]] : ui256
+  // CHECK-NEXT:    } panic {
+  // CHECK-NEXT:    ^bb0(%[[CODE:.*]]: ui256):
+  // CHECK-NEXT:      sol.yield %[[CODE]] : ui256
+  // CHECK-NEXT:    } error {
+  // CHECK-NEXT:    } fallback {
+  // CHECK-NEXT:      sol.yield %[[X]] : ui256
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:    sol.return %[[R]] : ui256
+  sol.func @try(%x: ui256, %y: ui256, %s: i1) -> ui256 {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.try %s {
+      sol.store %y, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.yield
+    } panic {
+    ^bb0(%code: ui256):
+      sol.store %code, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.yield
+    } error {
+    } fallback {
+      sol.yield
+    }
+    %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+    sol.return %1 : ui256
+  }
 } {kind = #sol<ContractKind Contract>, runtime}

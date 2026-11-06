@@ -689,7 +689,7 @@ void SwitchOp::getSuccessorRegions(RegionBranchPoint point,
                                    SmallVectorImpl<RegionSuccessor> &regions) {
   // All "case" regions branch back to the parent op.
   if (!point.isParent()) {
-    regions.push_back(RegionSuccessor());
+    regions.push_back(RegionSuccessor(getResults()));
     return;
   }
 
@@ -715,6 +715,8 @@ void SwitchOp::getRegionInvocationBounds(
 
 void SwitchOp::print(OpAsmPrinter &p) {
   p << ' ' << getArg() << " : " << getArg().getType();
+  if (!getResultTypes().empty())
+    p.printArrowTypeList(getResultTypes());
   p.printOptionalAttrDict((*this)->getAttrs(),
                           /*elidedAttrs=*/getCasesAttrName().getValue());
 
@@ -738,6 +740,7 @@ ParseResult SwitchOp::parse(OpAsmParser &p, OperationState &result) {
   IntegerType argTy;
   if (p.parseOperand(arg) || p.parseColon() || p.parseType(argTy) ||
       p.resolveOperand(arg, argTy, result.operands) ||
+      p.parseOptionalArrowTypeList(result.types) ||
       p.parseOptionalAttrDict(result.attributes))
     return failure();
 
@@ -783,6 +786,9 @@ LogicalResult SwitchOp::verify() {
       static_cast<int64_t>(getCaseRegions().size()))
     return emitOpError("expects case value count to match case region count");
 
+  for (Region *region : getRegions())
+    if (failed(verifyYieldedResults(*this, *region)))
+      return failure();
   return success();
 }
 
@@ -873,11 +879,20 @@ SmallVector<Region *> ForOp::getLoopRegions() { return {&getBody()}; }
 // TryOp
 //===----------------------------------------------------------------------===//
 
+LogicalResult TryOp::verify() {
+  if (getNumResults() != 0 && getSuccessRegion().empty())
+    return emitOpError("expects a success region yielding the results");
+  for (Region *region : getRegions())
+    if (failed(verifyYieldedResults(*this, *region)))
+      return failure();
+  return success();
+}
+
 void TryOp::getSuccessorRegions(RegionBranchPoint point,
                                 SmallVectorImpl<RegionSuccessor> &regions) {
   // All regions branch back to the parent op.
   if (!point.isParent()) {
-    regions.push_back(RegionSuccessor());
+    regions.push_back(RegionSuccessor(getResults()));
     return;
   }
 

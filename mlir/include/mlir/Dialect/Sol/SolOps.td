@@ -663,6 +663,7 @@ def Sol_SwitchOp : Sol_Op<"switch", [
                             ["getRegionInvocationBounds"]>
 ]> {
   let arguments = (ins AnyInteger:$arg, AnyIntElementsAttr:$cases);
+  let results = (outs Variadic<AnyType>:$results);
   let regions = (region MinSizedRegion<1>:$defaultRegion,
                         VariadicRegion<MinSizedRegion<1>>:$caseRegions);
 
@@ -709,16 +710,19 @@ def Sol_ForOp : Sol_Op<"for", [Sol_LoopOpInterface, NoRegionArguments,
 
 def Sol_TryOp : Sol_Op<"try",
   [DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+   DeclareOpInterfaceMethods<PromotableRegionOpInterface>,
    AutomaticAllocationScope]
 > {
   let regions = (region AnyRegion:$successRegion, AnyRegion:$panicRegion,
                         AnyRegion:$errorRegion, AnyRegion:$fallbackRegion);
   let arguments = (ins I1:$status);
+  let results = (outs Variadic<AnyType>:$results);
 
   let assemblyFormat = [{
-    $status $successRegion `panic` $panicRegion `error` $errorRegion
-      `fallback` $fallbackRegion attr-dict
+    $status (`->` type($results)^)? $successRegion `panic` $panicRegion
+      `error` $errorRegion `fallback` $fallbackRegion attr-dict
   }];
+  let hasVerifier = 1;
 }
 
 // TODO: We need a trait like "HasAncestor<ModifierOp>".

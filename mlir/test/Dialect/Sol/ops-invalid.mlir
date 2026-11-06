@@ -410,3 +410,18 @@ sol.contract @C {
     sol.return
   }
 } {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%s: i1, %x: ui256) {
+    // expected-error @below {{'sol.try' op expects a success region yielding the results}}
+    %0 = sol.try %s -> ui256 {
+    } panic {
+    } error {
+    } fallback {
+      sol.yield %x : ui256
+    }
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}

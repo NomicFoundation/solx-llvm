@@ -209,3 +209,45 @@ Value ScopeOp::finalizePromotion(
       ->getResults()
       .back();
 }
+
+//===----------------------------------------------------------------------===//
+// TryOp
+//===----------------------------------------------------------------------===//
+
+bool TryOp::isRegionPromotable(const MemorySlot &slot, Region *region,
+                               bool hasValueStores) {
+  return true;
+}
+
+void TryOp::setupPromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) {
+  // Each clause runs at most once, entered from before the op.
+  for (Region *region : getRegions())
+    regionsToProcess.insert({region, reachingDef});
+}
+
+Value TryOp::finalizePromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+    OpBuilder &builder) {
+  if (!hasValueStores)
+    return reachingDef;
+
+  IRRewriter rewriter(builder);
+  // A missing panic or error clause never runs, and a missing fallback
+  // reverts, but a missing success clause falls through.
+  for (Region *region : getRegions())
+    yieldSlotValue(*region, reachingDef, reachingAtBlockEnd);
+  if (getSuccessRegion().empty()) {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.createBlock(&getSuccessRegion());
+    YieldOp::create(rewriter, getLoc(), ValueRange{reachingDef});
+  }
+
+  SmallVector<Type> resultTypes(getResultTypes());
+  resultTypes.push_back(slot.elemType);
+  return memoryslot::replaceWithNewResults(rewriter, *this, resultTypes)
+      ->getResults()
+      .back();
+}
