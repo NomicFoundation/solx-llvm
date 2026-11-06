@@ -55,6 +55,21 @@ sol.contract @C {
     sol.return %1, %0 : !sol.fixedbytes<32>, !sol.string<Memory>
   }
 
+  // A literal written before it is hashed keeps the hash.
+  // CHECK-LABEL: sol.func @writtenLiteral(
+  // CHECK:         sol.store
+  // CHECK-NEXT:    "sol.keccak256"
+  sol.func @writtenLiteral() -> !sol.fixedbytes<32> {
+    %0 = sol.string_lit "abc" -> !sol.string<Memory>
+    %c0 = sol.constant 0 : ui8
+    %1 = sol.gep %0, %c0 : !sol.string<Memory>, ui8, !sol.ptr<!sol.byte, Memory>
+    %c120 = sol.constant 120 : ui8
+    %2 = sol.bytes_cast %c120 : ui8 to !sol.byte
+    sol.store %2, %1 : !sol.byte, !sol.ptr<!sol.byte, Memory>
+    %3 = "sol.keccak256"(%0) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
+    sol.return %3 : !sol.fixedbytes<32>
+  }
+
   // CHECK-LABEL: sol.func @argument(
   // CHECK-SAME:    %[[STRING:.*]]: !sol.string<Memory>
   // CHECK-NEXT:    %[[HASH:.*]] = "sol.keccak256"(%[[STRING]]) : (!sol.string<Memory>) -> !sol.fixedbytes<32>
@@ -241,6 +256,20 @@ sol.contract @C {
     %0 = sol.string_lit "openzeppelin.storage.ERC20" -> !sol.string<Memory>
     %1 = "sol.erc7201"(%0) : (!sol.string<Memory>) -> ui256
     sol.return %1, %0 : ui256, !sol.string<Memory>
+  }
+
+  // CHECK-LABEL: sol.func @erc7201WrittenLiteral(
+  // CHECK:         sol.store
+  // CHECK-NEXT:    "sol.erc7201"
+  sol.func @erc7201WrittenLiteral() -> ui256 {
+    %0 = sol.string_lit "example.main" -> !sol.string<Memory>
+    %c0 = sol.constant 0 : ui8
+    %1 = sol.gep %0, %c0 : !sol.string<Memory>, ui8, !sol.ptr<!sol.byte, Memory>
+    %c120 = sol.constant 120 : ui8
+    %2 = sol.bytes_cast %c120 : ui8 to !sol.byte
+    sol.store %2, %1 : !sol.byte, !sol.ptr<!sol.byte, Memory>
+    %3 = "sol.erc7201"(%0) : (!sol.string<Memory>) -> ui256
+    sol.return %3 : ui256
   }
 
   // CHECK-LABEL: sol.func @erc7201Argument(

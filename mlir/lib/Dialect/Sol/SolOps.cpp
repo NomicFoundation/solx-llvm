@@ -278,12 +278,23 @@ static APInt wordFromDigest(const std::array<uint8_t, 32> &digest) {
   return word;
 }
 
-// The hash of a string literal is known at compile time, so the literal needs
-// no memory and the hash no KECCAK256.
+static bool takesConstantString(OpOperand &use);
+
+/// Whether the memory of \p literal holds its bytes wherever it is read: every
+/// use only reads it, or returns it from the function.
+static bool isNeverWritten(StringLitOp literal) {
+  return llvm::all_of(literal->getUses(), [](OpOperand &use) {
+    return takesConstantString(use) ||
+           isa<Keccak256Op, Erc7201Op, ReturnOp>(use.getOwner());
+  });
+}
+
+// The hash of a string literal that is never written is known at compile time,
+// so the literal needs no memory and the hash no KECCAK256.
 LogicalResult Keccak256Op::canonicalize(Keccak256Op op,
                                         PatternRewriter &rewriter) {
   auto literal = op.getAddr().getDefiningOp<StringLitOp>();
-  if (!literal)
+  if (!literal || !isNeverWritten(literal))
     return failure();
 
   APInt hash = wordFromDigest(llvm::KECCAK::KECCAK_256(literal.getValue()));
@@ -298,11 +309,11 @@ LogicalResult Keccak256Op::canonicalize(Keccak256Op op,
 // Erc7201Op
 //===----------------------------------------------------------------------===//
 
-// The slot of a string literal namespace is known at compile time:
-// keccak256(keccak256(id) - 1) & ~0xff.
+// The slot of a string literal namespace that is never written is known at
+// compile time: keccak256(keccak256(id) - 1) & ~0xff.
 OpFoldResult Erc7201Op::fold(FoldAdaptor) {
   auto literal = getId().getDefiningOp<StringLitOp>();
-  if (!literal)
+  if (!literal || !isNeverWritten(literal))
     return {};
 
   APInt decremented =
