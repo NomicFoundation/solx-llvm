@@ -380,8 +380,7 @@ void AllocaOp::print(OpAsmPrinter &p) { printAllocationOp(*this, p); }
 
 namespace {
 static SideEffects::Resource *getValidationResource() {
-  static mlir::sol::ValidationResource resource;
-  return &resource;
+  return ValidationResource::get();
 }
 
 // Return true if the load may trap, i.e., if the loaded value
@@ -604,8 +603,78 @@ Speculation::Speculatability MapOp::getSpeculatability() {
 }
 
 //===----------------------------------------------------------------------===//
+// CmpOp
+//===----------------------------------------------------------------------===//
+
+void CmpOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (isa<EnumType>(getLhs().getType()))
+    effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                         getValidationResource());
+}
+
+Speculation::Speculatability CmpOp::getSpeculatability() {
+  return isa<EnumType>(getLhs().getType()) ? Speculation::NotSpeculatable
+                                           : Speculation::Speculatable;
+}
+
+//===----------------------------------------------------------------------===//
+// LengthOp
+//===----------------------------------------------------------------------===//
+
+void LengthOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  Type ty = getInp().getType();
+  DataLocation dataLoc = getDataLocation(ty);
+  if (!isDynamicallySized(ty) || dataLoc == DataLocation::CallData)
+    return;
+  effects.emplace_back(MemoryEffects::Read::get(), &getInpMutable(),
+                       getResource(dataLoc));
+  if (isa<StringType>(ty) && dataLoc == DataLocation::Storage)
+    effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                         getValidationResource());
+}
+
+Speculation::Speculatability LengthOp::getSpeculatability() {
+  Type ty = getInp().getType();
+  bool mayPanic =
+      isa<StringType>(ty) && getDataLocation(ty) == DataLocation::Storage;
+  return mayPanic ? Speculation::NotSpeculatable : Speculation::Speculatable;
+}
+
+/// Adds a read of the data each operand of an op that encodes its operands
+/// refers to.
+static void addOperandReads(
+    Operation *op,
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  for (OpOperand &operand : op->getOpOperands()) {
+    Type ty = operand.get().getType();
+    if (isa<PointerType, ArrayType, StringType, StructType>(ty))
+      effects.emplace_back(MemoryEffects::Read::get(), &operand,
+                           getResource(getDataLocation(ty)));
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // EmitOp
 //===----------------------------------------------------------------------===//
+
+// The log is ordered after every earlier one, its data is encoded above the
+// free memory pointer, and encoding a calldata operand may revert.
+void EmitOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                       LogResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), Attribute{},
+                       getResource(DataLocation::Memory));
+  effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                       getValidationResource());
+  addOperandReads(*this, effects);
+}
 
 /// Parses an emit op.
 ///
@@ -679,6 +748,38 @@ void EmitOp::print(OpAsmPrinter &p) {
                           {"indexedArgsCount", "signature"});
   if (!getArgs().empty())
     p << " : " << getArgs().getTypes();
+}
+
+//===----------------------------------------------------------------------===//
+// RevertOp
+//===----------------------------------------------------------------------===//
+
+// A reason or an error call is encoded above the free memory pointer.
+void RevertOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                       getValidationResource());
+  if (getSignature() || !getArgs().empty())
+    effects.emplace_back(MemoryEffects::Read::get(), Attribute{},
+                         getResource(DataLocation::Memory));
+  addOperandReads(*this, effects);
+}
+
+//===----------------------------------------------------------------------===//
+// RequireOp
+//===----------------------------------------------------------------------===//
+
+// A reason or an error call is encoded above the free memory pointer.
+void RequireOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                       getValidationResource());
+  if (getMsg() || !getArgs().empty())
+    effects.emplace_back(MemoryEffects::Read::get(), Attribute{},
+                         getResource(DataLocation::Memory));
+  addOperandReads(*this, effects);
 }
 
 //===----------------------------------------------------------------------===//

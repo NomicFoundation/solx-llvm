@@ -377,6 +377,11 @@ def Sol_RevertStringsAttr : EnumAttr<Sol_Dialect, Sol_RevertStrings,
 class Sol_Op<string mnemonic, list<Trait> traits = []> : Op<Sol_Dialect,
                                                             mnemonic, traits>;
 
+def Sol_ValidationResource : Resource<"::mlir::sol::ValidationResource">;
+
+// A write to the validation resource is a revert the op may raise.
+def Sol_MayRevert : MemoryEffects<[MemWrite<Sol_ValidationResource>]>;
+
 class Sol_IntArithOp<string mnemonic, list<Trait> traits = []> :
     Sol_Op<mnemonic, traits # [SameOperandsAndResultType]> {
   let arguments = (ins Sol_Int:$lhs, Sol_Int:$rhs);

@@ -119,6 +119,35 @@ sol.contract @C {
     sol.return %0, %1 : ui256, ui256
   }
 
+  // A memory length is read, so a write keeps the second, and the length of
+  // storage bytes may panic.
+  // CHECK-LABEL: sol.func @length(
+  // CHECK-COUNT-2: sol.length {{.*}} : !sol.string<Memory>
+  // CHECK-NOT:     sol.length {{.*}} : !sol.string<Memory>
+  // CHECK-COUNT-2: sol.length {{.*}} : !sol.string<Storage>
+  sol.func @length(%m: !sol.string<Memory>, %s: !sol.string<Storage>, %p: !sol.ptr<ui256, Memory>, %x: ui256) -> (ui256, ui256, ui256, ui256, ui256) {
+    %0 = sol.length %m : !sol.string<Memory>
+    %1 = sol.length %m : !sol.string<Memory>
+    sol.store %x, %p : ui256, !sol.ptr<ui256, Memory>
+    %2 = sol.length %m : !sol.string<Memory>
+    %3 = sol.length %s : !sol.string<Storage>
+    %4 = sol.length %s : !sol.string<Storage>
+    sol.return %0, %1, %2, %3, %4 : ui256, ui256, ui256, ui256, ui256
+  }
+
+  // An enum operand out of range panics.
+  // CHECK-LABEL: sol.func @cmp(
+  // CHECK:         sol.cmp lt, {{.*}} : ui8
+  // CHECK-NOT:     sol.cmp lt, {{.*}} : ui8
+  // CHECK-COUNT-2: sol.cmp lt, {{.*}} : !sol.enum<2>
+  sol.func @cmp(%a: ui8, %b: ui8, %e: !sol.enum<2>, %f: !sol.enum<2>) -> (i1, i1, i1, i1) {
+    %0 = sol.cmp lt, %a, %b : ui8
+    %1 = sol.cmp lt, %a, %b : ui8
+    %2 = sol.cmp lt, %e, %f : !sol.enum<2>
+    %3 = sol.cmp lt, %e, %f : !sol.enum<2>
+    sol.return %0, %1, %2, %3 : i1, i1, i1, i1
+  }
+
   // CHECK-LABEL: sol.func @assembly(
   // CHECK-COUNT-2: yul.gas
   // CHECK-COUNT-2: yul.msize

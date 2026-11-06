@@ -156,6 +156,10 @@ struct ValidationResource
   StringRef getName() final { return "<Validation>"; }
 };
 
+struct LogResource : public SideEffects::Resource::Base<LogResource> {
+  StringRef getName() final { return "<Log>"; }
+};
+
 mlir::SideEffects::Resource *getResource(DataLocation dataLoc);
 
 namespace detail {

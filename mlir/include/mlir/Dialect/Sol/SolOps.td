@@ -86,9 +86,8 @@ def Sol_ContractCastOp : Sol_Op<"contract_cast",
   let hasFolder = 1;
 }
 
-// This operation can panic.
 def Sol_EnumCastOp : Sol_Op<"enum_cast",
-  [DeclareOpInterfaceMethods<CastOpInterface>]
+  [Sol_MayRevert, DeclareOpInterfaceMethods<CastOpInterface>]
 >{
   let arguments = (ins Sol_Int:$inp);
   let results = (outs Sol_Int:$out);
@@ -120,7 +119,7 @@ def Sol_FixedBytes1Type: Type<
         "::llvm::cast<::mlir::sol::FixedBytesType>($_self).getSize() == 1">,
   "!sol.fixedbytes<1>">;
 
-def Sol_FixedBytesIndexOp : Sol_Op<"fixed_bytes_index"> {
+def Sol_FixedBytesIndexOp : Sol_Op<"fixed_bytes_index", [Sol_MayRevert]> {
   let summary = "Extracts the byte at the given index from a fixed-bytes value";
   let description = [{
     Yields `value[index]` as a `bytes1`: the index-th byte counted from the
@@ -136,23 +135,23 @@ def Sol_FixedBytesIndexOp : Sol_Op<"fixed_bytes_index"> {
   }];
 }
 
-// Checked arith ops are not speculatable, and neither are div and mod, which
-// panic on a zero divisor. The other unchecked ops are.
+// Checked arith ops may revert, and so do div and mod, which panic on a zero
+// divisor. The other unchecked ops are pure.
 
-def Sol_CAddOp : Sol_IntArithOp<"cadd", [Commutative]> {
+def Sol_CAddOp : Sol_IntArithOp<"cadd", [Commutative, Sol_MayRevert]> {
   let hasFolder = 1;
 }
-def Sol_CSubOp : Sol_IntArithOp<"csub"> {
+def Sol_CSubOp : Sol_IntArithOp<"csub", [Sol_MayRevert]> {
   let hasFolder = 1;
 }
-def Sol_CMulOp : Sol_IntArithOp<"cmul", [Commutative]> {
+def Sol_CMulOp : Sol_IntArithOp<"cmul", [Commutative, Sol_MayRevert]> {
   let hasFolder = 1;
 }
-def Sol_CDivOp : Sol_IntArithOp<"cdiv"> {
+def Sol_CDivOp : Sol_IntArithOp<"cdiv", [Sol_MayRevert]> {
   let hasFolder = 1;
   let hasCanonicalizer = 1;
 }
-def Sol_CExpOp : Sol_IntExpOp<"cexp">;
+def Sol_CExpOp : Sol_IntExpOp<"cexp", [Sol_MayRevert]>;
 
 def Sol_AddOp : Sol_UncheckedIntArithOp<"add", [Commutative]> {
   // TODO: folder, canonicalizer
@@ -163,10 +162,10 @@ def Sol_SubOp : Sol_UncheckedIntArithOp<"sub"> {
 def Sol_MulOp : Sol_UncheckedIntArithOp<"mul", [Commutative]> {
   // TODO: folder, canonicalizer
 }
-def Sol_DivOp : Sol_IntArithOp<"div"> {
+def Sol_DivOp : Sol_IntArithOp<"div", [Sol_MayRevert]> {
   // TODO: folder, canonicalizer
 }
-def Sol_ModOp : Sol_IntArithOp<"mod"> {
+def Sol_ModOp : Sol_IntArithOp<"mod", [Sol_MayRevert]> {
   // TODO: folder, canonicalizer
 }
 def Sol_ExpOp : Sol_IntExpOp<"exp", [Pure]> {
@@ -197,8 +196,9 @@ def Sol_NotOp : Sol_Op<"not", [Pure, SameOperandsAndResultType]> {
   let assemblyFormat = "$value attr-dict `:` type($result)";
 }
 
-def Sol_AddModOp : Sol_ModOp<"addmod">;
-def Sol_MulModOp : Sol_ModOp<"mulmod">;
+// A zero modulus panics.
+def Sol_AddModOp : Sol_ModOp<"addmod", [Sol_MayRevert]>;
+def Sol_MulModOp : Sol_ModOp<"mulmod", [Sol_MayRevert]>;
 
 def Sol_Keccak256Op : Sol_Op<"keccak256"> {
   let arguments = (ins Sol_StringType:$addr);
@@ -224,7 +224,12 @@ def Sol_EcrecoverOp : Sol_Op<"ecrecover"> {
   let results = (outs Sol_AddressType:$result);
 }
 
-def Sol_CmpOp : Sol_Op<"cmp", [Pure, SameTypeOperands]> {
+def Sol_CmpOp : Sol_Op<"cmp", [
+  SameTypeOperands, DeclareOpInterfaceMethods<ConditionallySpeculatable>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let description = [{
+    An enum operand out of the enum's range panics.
+  }];
   // TODO: Verifier:
   // - the predicate is eq or ne for ext-fn-ref type
   let arguments = (ins Sol_CmpPredicateAttr:$predicate,
@@ -504,7 +509,14 @@ def Sol_DataLocCastOp : Sol_Op<"data_loc_cast"> {
   let assemblyFormat = [{ $inp attr-dict `:` type($inp) `,` type($out) }];
 }
 
-def Sol_LengthOp : Sol_Op<"length"> {
+def Sol_LengthOp : Sol_Op<"length", [
+  DeclareOpInterfaceMethods<ConditionallySpeculatable>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let description = [{
+    A static array has a constant length and a calldata value carries its
+    length. Any other length is read from the operand's data location, and the
+    length of storage bytes or string panics on an invalid encoding.
+  }];
   let arguments = (ins AnyType:$inp);
   let results = (outs UI256:$len);
 
@@ -550,7 +562,9 @@ def Sol_DecodeOp : Sol_Op<"decode"> {
   let assemblyFormat = "$addr `:` type($addr) (`->` type($outs)^)? attr-dict";
 }
 
-def Sol_EmitOp : Sol_Op<"emit", [Sol_ConstantStringConsumerOpInterface]> {
+def Sol_EmitOp : Sol_Op<"emit", [
+  Sol_ConstantStringConsumerOpInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let arguments = (ins Variadic<AnyType>:$args, I8Attr:$indexedArgsCount,
                        OptionalAttr<StrAttr>:$signature);
 
@@ -592,7 +606,8 @@ def Sol_EmitOp : Sol_Op<"emit", [Sol_ConstantStringConsumerOpInterface]> {
 }
 
 def Sol_RevertOp : Sol_Op<"revert", [Terminator, DeclareOpInterfaceMethods<
-    Sol_ConstantStringConsumerOpInterface, ["takesConstantString"]>]> {
+    Sol_ConstantStringConsumerOpInterface, ["takesConstantString"]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   // $signature represents the error call's signature if $call is set,
   // otherwise the user-supplied reason string. It is absent for a plain
   // `revert()`.
@@ -603,13 +618,14 @@ def Sol_RevertOp : Sol_Op<"revert", [Terminator, DeclareOpInterfaceMethods<
       "($signature^)? (`(` $args^ `:` type($args) `)`)? attr-dict";
 }
 
-def Sol_AssertOp : Sol_Op<"assert"> {
+def Sol_AssertOp : Sol_Op<"assert", [Sol_MayRevert]> {
   let arguments = (ins I1:$cond);
   let assemblyFormat = "$cond attr-dict";
 }
 
 def Sol_RequireOp : Sol_Op<"require", [DeclareOpInterfaceMethods<
-    Sol_ConstantStringConsumerOpInterface, ["takesConstantString"]>]> {
+    Sol_ConstantStringConsumerOpInterface, ["takesConstantString"]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   // $msg represents the error call's signature if $call is set.
   let arguments = (ins I1:$cond, OptionalAttr<StrAttr>:$msg,
                        Variadic<AnyType>:$args, UnitAttr:$call);
