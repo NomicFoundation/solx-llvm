@@ -408,3 +408,126 @@ Value ForOp::finalizePromotion(
 void ForOp::getEarlyExits(Region *region, SmallVectorImpl<Operation *> &exits) {
   collectLoopExits(*this, region, exits);
 }
+
+//===----------------------------------------------------------------------===//
+// InlineAsmOp
+//===----------------------------------------------------------------------===//
+
+bool InlineAsmOp::isRegionPromotable(const MemorySlot &slot, Region *region,
+                                     bool hasValueStores) {
+  return true;
+}
+
+void InlineAsmOp::setupPromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) {
+  regionsToProcess.insert({&getBody(), reachingDef});
+}
+
+/// The body yields the slot's value at its end, unless it halts.
+Value InlineAsmOp::finalizePromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+    OpBuilder &builder) {
+  if (!hasValueStores)
+    return reachingDef;
+
+  IRRewriter rewriter(builder);
+  Block &body = getBody().front();
+  if (body.empty() || !body.back().hasTrait<OpTrait::IsTerminator>()) {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToEnd(&body);
+    YieldOp::create(rewriter, getLoc(), ValueRange{});
+  }
+  if (isa<YieldOp>(body.back()))
+    memoryslot::updateTerminator(&body, reachingDef, reachingAtBlockEnd);
+
+  SmallVector<Type> resultTypes(getResultTypes());
+  resultTypes.push_back(slot.elemType);
+  return memoryslot::replaceWithNewResults(rewriter, *this, resultTypes)
+      ->getResults()
+      .back();
+}
+
+//===----------------------------------------------------------------------===//
+// YulPtrCastOp, YulStorageSlotOp
+//===----------------------------------------------------------------------===//
+
+/// The Yul word inline assembly reads and writes the variable as, through the
+/// pointer `out`.
+static void exposeWord(Value out, SmallVectorImpl<MemorySlot> &newMemorySlots) {
+  newMemorySlots.push_back(
+      MemorySlot{out, IntegerType::get(out.getContext(), 256)});
+}
+
+/// Every use of the pointer `out` reads or writes the variable.
+static void blockUses(Value out, SmallVectorImpl<OpOperand *> &newBlockingUses) {
+  for (OpOperand &use : out.getUses())
+    newBlockingUses.push_back(&use);
+}
+
+void YulPtrCastOp::getPromotableSlotAliases(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    SmallVectorImpl<MemorySlot> &newMemorySlots) {
+  exposeWord(getOut(), newMemorySlots);
+}
+
+Value YulPtrCastOp::projectSlotValueToAliasValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value slotValue, OpBuilder &builder) {
+  return YulValCastOp::create(builder, getLoc(), aliasSlot.elemType, slotValue);
+}
+
+Value YulPtrCastOp::projectAliasValueToSlotValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value aliasValue, Value reachingDef,
+    OpBuilder &builder) {
+  return YulValCastOp::create(builder, getLoc(), parentSlot.elemType,
+                              aliasValue);
+}
+
+bool YulPtrCastOp::canUsesBeRemoved(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses,
+    SmallVectorImpl<OpOperand *> &newBlockingUses,
+    const DataLayout &dataLayout) {
+  blockUses(getOut(), newBlockingUses);
+  return true;
+}
+
+DeletionKind YulPtrCastOp::removeBlockingUses(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses, OpBuilder &builder) {
+  return DeletionKind::Delete;
+}
+
+void YulStorageSlotOp::getPromotableSlotAliases(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    SmallVectorImpl<MemorySlot> &newMemorySlots) {
+  exposeWord(getOut(), newMemorySlots);
+}
+
+Value YulStorageSlotOp::projectSlotValueToAliasValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value slotValue, OpBuilder &builder) {
+  return YulValCastOp::create(builder, getLoc(), aliasSlot.elemType, slotValue);
+}
+
+Value YulStorageSlotOp::projectAliasValueToSlotValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value aliasValue, Value reachingDef,
+    OpBuilder &builder) {
+  return YulValCastOp::create(builder, getLoc(), parentSlot.elemType,
+                              aliasValue);
+}
+
+bool YulStorageSlotOp::canUsesBeRemoved(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses,
+    SmallVectorImpl<OpOperand *> &newBlockingUses,
+    const DataLayout &dataLayout) {
+  blockUses(getOut(), newBlockingUses);
+  return true;
+}
+
+DeletionKind YulStorageSlotOp::removeBlockingUses(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses, OpBuilder &builder) {
+  return DeletionKind::Delete;
+}

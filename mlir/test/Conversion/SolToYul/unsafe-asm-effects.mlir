@@ -527,6 +527,29 @@ module {
 
 // -----
 
+// The same assignment once mem2reg makes the variable a result.
+
+#Contract = #sol<ContractKind Contract>
+#NonPayable = #sol<StateMutability NonPayable>
+
+// CHECK-LABEL: yul.object @MemoryResult_deployed {
+// CHECK-NEXT:    yul.func @__entry
+// CHECK-NEXT:    yul.constant 128
+module {
+  sol.contract @MemoryResult {
+    sol.func @f() attributes {id = 144 : i64, orig_fn_type = () -> (), selector = 638722032 : i32, state_mutability = #NonPayable} {
+      %0 = sol.inline_asm -> !sol.array<? x ui256, Memory> {
+        %c0_i256 = yul.constant 0
+        %1 = sol.yul_val_cast %c0_i256 : i256 -> !sol.array<? x ui256, Memory>
+        sol.yield %1 : !sol.array<? x ui256, Memory>
+      }
+      sol.return
+    }
+  } {kind = #Contract, runtime}
+}
+
+// -----
+
 #Contract = #sol<ContractKind Contract>
 #NonPayable = #sol<StateMutability NonPayable>
 

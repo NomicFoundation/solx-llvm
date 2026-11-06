@@ -105,22 +105,86 @@ StoreOp::removeBlockingUses(const MemorySlot &slot,
 }
 
 //===----------------------------------------------------------------------===//
+// Region ops
+//===----------------------------------------------------------------------===//
+
+/// The bridge of the dialect a slot that isn't a Yul value belongs to, which a
+/// Yul op carries the slot's value through, or null.
+static const BridgeInterface *getBridge(const MemorySlot &slot) {
+  if (isI256OrI256LLVMStruct(slot.elemType))
+    return nullptr;
+  return slot.ptr.getType().getDialect().getRegisteredInterface<BridgeInterface>();
+}
+
+/// Whether a Yul op can carry the slot's value out of a region that stores it.
+static bool isCarriable(const MemorySlot &slot) {
+  return isI256OrI256LLVMStruct(slot.elemType) || getBridge(slot);
+}
+
+/// The Yul value a Yul op carries for `value` of the slot.
+static Value toCarried(const MemorySlot &slot, Value value,
+                       OpBuilder &builder) {
+  if (const BridgeInterface *bridge = getBridge(slot))
+    return bridge->toYul(builder, value.getLoc(), value);
+  return value;
+}
+
+/// The slot's value that `carried` stands for.
+static Value fromCarried(const MemorySlot &slot, Value carried,
+                         OpBuilder &builder) {
+  if (const BridgeInterface *bridge = getBridge(slot))
+    return bridge->fromYul(builder, carried.getLoc(), carried, slot.elemType);
+  return carried;
+}
+
+/// Adds to the terminator of `block`, as a new last operand, what a Yul op
+/// carries for the slot's value at the end of the block, or `entry` when the
+/// block leaves it as it entered.
+static void carryAtEnd(const MemorySlot &slot, Block *block, Value entry,
+                       const DenseMap<Block *, Value> &reachingAtBlockEnd,
+                       OpBuilder &builder) {
+  Operation *terminator = block->getTerminator();
+  Value carried = entry;
+  if (Value reachingDef = reachingAtBlockEnd.lookup(block)) {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(terminator);
+    carried = toCarried(slot, reachingDef, builder);
+  }
+  terminator->insertOperands(terminator->getNumOperands(), {carried});
+}
+
+/// Carries the slot's value out of each block of `region` that yields. A block
+/// ending in another terminator leaves the region where nothing reads the slot
+/// again.
+static void yieldSlotValue(const MemorySlot &slot, Region &region, Value entry,
+                           const DenseMap<Block *, Value> &reachingAtBlockEnd,
+                           OpBuilder &builder) {
+  for (Block &block : region)
+    if (isa<YieldOp>(block.getTerminator()))
+      carryAtEnd(slot, &block, entry, reachingAtBlockEnd, builder);
+}
+
+/// Replaces `op` with one that also returns the carried value of the slot, of
+/// `carriedType`, and returns the slot's value after it.
+static Value addCarriedResult(const MemorySlot &slot, Operation *op,
+                              Type carriedType, OpBuilder &builder) {
+  IRRewriter rewriter(builder);
+  SmallVector<Type> resultTypes(op->getResultTypes());
+  resultTypes.push_back(carriedType);
+  Operation *newOp =
+      memoryslot::replaceWithNewResults(rewriter, op, resultTypes);
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointAfter(newOp);
+  return fromCarried(slot, newOp->getResults().back(), builder);
+}
+
+//===----------------------------------------------------------------------===//
 // IfOp
 //===----------------------------------------------------------------------===//
 
-/// Adds the slot's value at the end of each block of `region` that yields, as
-/// a new last operand. A block ending in another terminator leaves the region
-/// where nothing reads the slot again.
-static void yieldSlotValue(Region &region, Value reachingDef,
-                           const DenseMap<Block *, Value> &reachingAtBlockEnd) {
-  for (Block &block : region)
-    if (isa<YieldOp>(block.getTerminator()))
-      memoryslot::updateTerminator(&block, reachingDef, reachingAtBlockEnd);
-}
-
 bool IfOp::isRegionPromotable(const MemorySlot &slot, Region *region,
                               bool hasValueStores) {
-  return true;
+  return !hasValueStores || isCarriable(slot);
 }
 
 void IfOp::setupPromotion(
@@ -137,21 +201,17 @@ Value IfOp::finalizePromotion(
   if (!hasValueStores)
     return reachingDef;
 
-  IRRewriter rewriter(builder);
-  yieldSlotValue(getThenRegion(), reachingDef, reachingAtBlockEnd);
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(*this);
+  Value entry = toCarried(slot, reachingDef, builder);
+  yieldSlotValue(slot, getThenRegion(), entry, reachingAtBlockEnd, builder);
   if (getElseRegion().empty()) {
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.createBlock(&getElseRegion());
-    YieldOp::create(rewriter, getLoc(), ValueRange{reachingDef});
+    builder.createBlock(&getElseRegion());
+    YieldOp::create(builder, getLoc(), ValueRange{entry});
   } else {
-    yieldSlotValue(getElseRegion(), reachingDef, reachingAtBlockEnd);
+    yieldSlotValue(slot, getElseRegion(), entry, reachingAtBlockEnd, builder);
   }
-
-  SmallVector<Type> resultTypes(getResultTypes());
-  resultTypes.push_back(slot.elemType);
-  return memoryslot::replaceWithNewResults(rewriter, *this, resultTypes)
-      ->getResults()
-      .back();
+  return addCarriedResult(slot, *this, entry.getType(), builder);
 }
 
 //===----------------------------------------------------------------------===//
@@ -160,7 +220,7 @@ Value IfOp::finalizePromotion(
 
 bool SwitchOp::isRegionPromotable(const MemorySlot &slot, Region *region,
                                   bool hasValueStores) {
-  return true;
+  return !hasValueStores || isCarriable(slot);
 }
 
 void SwitchOp::setupPromotion(
@@ -177,15 +237,12 @@ Value SwitchOp::finalizePromotion(
   if (!hasValueStores)
     return reachingDef;
 
-  IRRewriter rewriter(builder);
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(*this);
+  Value entry = toCarried(slot, reachingDef, builder);
   for (Region *region : getRegions())
-    yieldSlotValue(*region, reachingDef, reachingAtBlockEnd);
-
-  SmallVector<Type> resultTypes(getResultTypes());
-  resultTypes.push_back(slot.elemType);
-  return memoryslot::replaceWithNewResults(rewriter, *this, resultTypes)
-      ->getResults()
-      .back();
+    yieldSlotValue(slot, *region, entry, reachingAtBlockEnd, builder);
+  return addCarriedResult(slot, *this, entry.getType(), builder);
 }
 
 //===----------------------------------------------------------------------===//
@@ -194,7 +251,7 @@ Value SwitchOp::finalizePromotion(
 
 bool ForOp::isRegionPromotable(const MemorySlot &slot, Region *region,
                                bool hasValueStores) {
-  return true;
+  return !hasValueStores || isCarriable(slot);
 }
 
 /// A slot stored in the loop is carried from one iteration to the next: an
@@ -208,10 +265,14 @@ void ForOp::setupPromotion(
     return;
   }
 
-  getInitArgsMutable().append(reachingDef);
-  for (Region &region : (*this)->getRegions())
-    regionsToProcess.insert(
-        {&region, region.addArgument(slot.elemType, slot.ptr.getLoc())});
+  OpBuilder builder(*this);
+  Value init = toCarried(slot, reachingDef, builder);
+  getInitArgsMutable().append(init);
+  for (Region &region : (*this)->getRegions()) {
+    Value carried = region.addArgument(init.getType(), slot.ptr.getLoc());
+    builder.setInsertionPointToStart(&region.front());
+    regionsToProcess.insert({&region, fromCarried(slot, carried, builder)});
+  }
 }
 
 /// Passes the slot's value at each exit of a region on: yul.condition to the
@@ -228,21 +289,16 @@ Value ForOp::finalizePromotion(
     Value carried = region.getArguments().back();
     for (Block &block : region)
       if (isa<ConditionOp, YieldOp>(block.getTerminator()))
-        memoryslot::updateTerminator(&block, carried, reachingAtBlockEnd);
+        carryAtEnd(slot, &block, carried, reachingAtBlockEnd, builder);
   }
   SmallVector<Operation *> exits;
   getEarlyExits(&getBody(), exits);
   for (Operation *exit : exits)
-    memoryslot::updateTerminator(exit->getBlock(),
-                                 getBody().getArguments().back(),
-                                 reachingAtBlockEnd);
+    carryAtEnd(slot, exit->getBlock(), getBody().getArguments().back(),
+               reachingAtBlockEnd, builder);
 
-  IRRewriter rewriter(builder);
-  SmallVector<Type> resultTypes(getResultTypes());
-  resultTypes.push_back(slot.elemType);
-  return memoryslot::replaceWithNewResults(rewriter, *this, resultTypes)
-      ->getResults()
-      .back();
+  return addCarriedResult(slot, *this, getInitArgs().back().getType(),
+                          builder);
 }
 
 /// The yul.break and yul.continue ops below `region` that exit this loop.

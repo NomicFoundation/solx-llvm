@@ -13,9 +13,11 @@
 #ifndef MLIR_DIALECT_YUL_YUL_H_
 #define MLIR_DIALECT_YUL_YUL_H_
 
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
+#include "mlir/IR/DialectInterface.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Types.h"
@@ -44,6 +46,20 @@ struct StorageResource : public SideEffects::Resource::Base<StorageResource> {
 // TODO: Can we replace ValidationResource with this?
 struct ExternalResource : public SideEffects::Resource::Base<ExternalResource> {
   StringRef getName() final { return "<External>"; }
+};
+
+/// Implemented by a dialect whose values inline assembly reads and writes, so a
+/// Yul op carries such a value across its regions as the Yul value it reads as.
+class BridgeInterface : public DialectInterface::Base<BridgeInterface> {
+public:
+  BridgeInterface(Dialect *dialect) : Base(dialect) {}
+
+  /// The Yul value `value` reads as.
+  virtual Value toYul(OpBuilder &builder, Location loc, Value value) const = 0;
+
+  /// The value of `type` that Yul writes as `yulValue`.
+  virtual Value fromYul(OpBuilder &builder, Location loc, Value yulValue,
+                        Type type) const = 0;
 };
 } // namespace mlir::yul
 

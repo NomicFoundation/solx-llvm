@@ -27,6 +27,29 @@ module {
 
 module {
   sol.contract @C {
+    // The values the body yields replace the results.
+    // CHECK-LABEL: yul.func @results : (i256) -> i256
+    // CHECK-NEXT:  ^bb0(%[[X:.*]]: i256):
+    // CHECK-NEXT:    %[[ONE:.*]] = yul.constant 1
+    // CHECK-NEXT:    %[[SUM:.*]] = yul.add %[[X]], %[[ONE]]
+    // CHECK-NEXT:    yul.func_return %[[SUM]] : i256
+    sol.func @results(%x: ui256) -> ui256 {
+      %0 = sol.inline_asm -> ui256 {
+        %c1 = yul.constant 1
+        %1 = sol.yul_val_cast %x : ui256 -> i256
+        %2 = yul.add %1, %c1
+        %3 = sol.yul_val_cast %2 : i256 -> ui256
+        sol.yield %3 : ui256
+      }
+      sol.return %0 : ui256
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
     // d.offset / d.length are the fields of the {offset, length} calldata slot.
     // CHECK-LABEL: yul.func @calldataMembers : (!llvm.struct<(i256, i256)>) -> (i256, i256)
     // CHECK:       ^bb0(%[[ARG:.*]]: !llvm.struct<(i256, i256)>):

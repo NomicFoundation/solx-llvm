@@ -59,6 +59,23 @@ struct SolOpAsmDialectInterface : public OpAsmDialectInterface {
   }
 };
 
+/// Inline assembly reads a Solidity variable as one Yul word and writes it back
+/// as one.
+struct SolBridgeInterface : public yul::BridgeInterface {
+  using BridgeInterface::BridgeInterface;
+
+  Value toYul(OpBuilder &builder, Location loc, Value value) const override {
+    return YulValCastOp::create(builder, loc,
+                                IntegerType::get(builder.getContext(), 256),
+                                value);
+  }
+
+  Value fromYul(OpBuilder &builder, Location loc, Value yulValue,
+                Type type) const override {
+    return YulValCastOp::create(builder, loc, type, yulValue);
+  }
+};
+
 } // namespace
 
 void SolDialect::initialize() {
@@ -77,7 +94,7 @@ void SolDialect::initialize() {
 #include "mlir/Dialect/Sol/SolOpsAttributes.cpp.inc"
       >();
 
-  addInterfaces<SolOpAsmDialectInterface>();
+  addInterfaces<SolOpAsmDialectInterface, SolBridgeInterface>();
 }
 
 Operation *SolDialect::materializeConstant(OpBuilder &builder, Attribute val,

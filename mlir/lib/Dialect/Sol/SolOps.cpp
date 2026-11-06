@@ -625,6 +625,30 @@ void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
 }
 
 //===----------------------------------------------------------------------===//
+// InlineAsmOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult InlineAsmOp::verify() {
+  Block &body = getBody().front();
+  if (getNumResults() != 0 &&
+      (body.empty() || !body.back().hasTrait<OpTrait::IsTerminator>()))
+    return emitOpError("expects a body with results to end in sol.yield or a "
+                       "halt");
+  return verifyYieldedResults(*this, getBody());
+}
+
+//===----------------------------------------------------------------------===//
+// YulValCastOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult YulValCastOp::verify() {
+  if (yul::isI256OrI256LLVMStruct(getSrc().getType()) ==
+      yul::isI256OrI256LLVMStruct(getOut().getType()))
+    return emitOpError("expects exactly one side to be a Yul value");
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // LeaveOp
 //===----------------------------------------------------------------------===//
 

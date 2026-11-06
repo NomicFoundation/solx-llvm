@@ -639,7 +639,7 @@ def Sol_ConditionOp : Sol_Op<"condition", [
 
 def Sol_YieldOp : Sol_Op<"yield", [ReturnLike, Terminator,
   ParentOneOf<["IfOp", "SwitchOp", "TryOp", "WhileOp", "DoWhileOp", "ForOp",
-               "ScopeOp", "ModifierInvocationOp"]>]
+               "ScopeOp", "ModifierInvocationOp", "InlineAsmOp"]>]
 > {
   let arguments = (ins Variadic<AnyType>:$ins);
 
@@ -1497,37 +1497,66 @@ def Sol_ConcatOp : Sol_Op<"concat", [Sol_ConstantStringConsumerOpInterface]> {
   let hasCanonicalizeMethod = 1;
 }
 
-def Sol_InlineAsmOp : Sol_Op<"inline_asm", [NoTerminator, SingleBlock,
-                                             SymbolTable]> {
+def Sol_InlineAsmOp : Sol_Op<"inline_asm", [
+  NoTerminator, SingleBlock, SymbolTable,
+  DeclareOpInterfaceMethods<PromotableRegionOpInterface>
+]> {
   // A separate SymbolTable is required: For instance, lookups expect symbol
   // defs to be immediately nested within the symbol table op, so we can't use
   // the parent symbol table.
   let summary = "Region wrapping an inline-assembly body";
+  let description = [{
+    The results are the Solidity variables the body assigns, yielded at its
+    end. A body that halts yields none.
+  }];
   let arguments = (ins OptionalAttr<UnitAttr>:$memory_safe);
+  let results = (outs Variadic<AnyType>:$results);
   let regions = (region SizedRegion<1>:$body);
-  let assemblyFormat = "attr-dict-with-keyword $body";
+  let assemblyFormat = "(`->` type($results)^)? attr-dict-with-keyword $body";
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
 // Inline-asm bridge ops (Sol -> Yul boundary)
 //===----------------------------------------------------------------------===//
 
-def Sol_YulPtrCastOp : Sol_Op<"yul_ptr_cast", [Pure]> {
+def Sol_YulPtrCastOp : Sol_Op<"yul_ptr_cast", [Pure,
+  DeclareOpInterfaceMethods<PromotableOpInterface,
+                            ["canUsesBeRemoved", "removeBlockingUses"]>,
+  DeclareOpInterfaceMethods<PromotableAliaserInterface,
+                            ["getPromotableSlotAliases",
+                             "projectSlotValueToAliasValue",
+                             "projectAliasValueToSlotValue"]>]> {
   let summary = "Reinterpret a sol.ptr<*, Stack> as a yul.ptr";
+  let description = [{
+    Inline assembly reads and writes the variable through it as one Yul word,
+    so mem2reg promotes the variable through it.
+  }];
   let arguments = (ins Sol_AnyStackPtr:$src);
   let results = (outs Sol_YulPtr:$out);
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";
 }
 
 def Sol_YulValCastOp : Sol_Op<"yul_val_cast", [Pure]> {
-  let summary = "Reinterpret a sol value as its yul i256 word";
+  let summary = "Reinterpret a sol value as its yul value, or back";
   let arguments = (ins AnyType:$src);
-  let results = (outs I256:$out);
+  let results = (outs AnyType:$out);
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";
+  let hasVerifier = 1;
 }
 
-def Sol_YulStorageSlotOp : Sol_Op<"yul_storage_slot", [Pure]> {
+def Sol_YulStorageSlotOp : Sol_Op<"yul_storage_slot", [Pure,
+  DeclareOpInterfaceMethods<PromotableOpInterface,
+                            ["canUsesBeRemoved", "removeBlockingUses"]>,
+  DeclareOpInterfaceMethods<PromotableAliaserInterface,
+                            ["getPromotableSlotAliases",
+                             "projectSlotValueToAliasValue",
+                             "projectAliasValueToSlotValue"]>]> {
   let summary = "yul.ptr to the slot field of a local storage ref alloca";
+  let description = [{
+    The slot is the whole storage reference, so mem2reg promotes the variable
+    through it as through sol.yul_ptr_cast.
+  }];
   let arguments = (ins Sol_StorageRefStackPtr:$src);
   let results = (outs Sol_YulPtr:$out);
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";

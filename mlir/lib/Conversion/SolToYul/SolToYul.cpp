@@ -4567,10 +4567,15 @@ struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
   }
 
   /// Whether `op` is memory-unsafe: not annotated memory-safe, and its body
-  /// has a memory effect.
+  /// has a memory effect. A result of memory type is an assignment to a
+  /// Solidity memory variable that mem2reg promoted.
   static bool isMemoryUnsafe(sol::InlineAsmOp op) {
     if (op.getMemorySafe())
       return false;
+    if (llvm::any_of(op.getResultTypes(), [](Type type) {
+          return sol::getDataLocation(type) == sol::DataLocation::Memory;
+        }))
+      return true;
     return op.getBody()
         .walk([](Operation *inner) {
           return hasMemoryEffects(inner) ? WalkResult::interrupt()
@@ -4620,11 +4625,21 @@ struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
     for (yul::FuncOp fn : fns)
       r.moveOpBefore(fn, &destBlock, destBlock.begin());
 
-    // The Solidity code after a body that halts is unreachable.
-    if (!block.empty() && block.back().hasTrait<OpTrait::IsTerminator>())
+    // The values the body yields are the results. The Solidity code after a
+    // body that halts is unreachable.
+    SmallVector<Value> results;
+    Operation *last = block.empty() ? nullptr : &block.back();
+    if (auto yield = dyn_cast_or_null<sol::YieldOp>(last)) {
+      llvm::append_range(results, yield.getIns());
+      r.eraseOp(yield);
+    } else if (last && last->hasTrait<OpTrait::IsTerminator>()) {
       r.eraseBlock(r.splitBlock(op->getBlock(), std::next(op->getIterator())));
+    }
     r.inlineBlockBefore(&block, op);
-    r.eraseOp(op);
+    if (results.empty())
+      r.eraseOp(op);
+    else
+      r.replaceOp(op, results);
     return success();
   }
 };

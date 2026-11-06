@@ -450,3 +450,37 @@ sol.contract @C {
     sol.return
   }
 } {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%x: ui256) {
+    // expected-error @below {{'sol.inline_asm' op expects a body with results to end in sol.yield or a halt}}
+    %0 = sol.inline_asm -> ui256 {
+      %c0 = yul.constant 0
+    }
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%x: ui256) {
+    %0 = sol.inline_asm -> ui256 {
+      // expected-error @below {{'sol.yield' op expects the result types of its parent}}
+      sol.yield
+    }
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%x: ui256) {
+    // expected-error @below {{'sol.yul_val_cast' op expects exactly one side to be a Yul value}}
+    %0 = sol.yul_val_cast %x : ui256 -> ui256
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}
