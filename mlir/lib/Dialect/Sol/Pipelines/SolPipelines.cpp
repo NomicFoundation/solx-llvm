@@ -27,6 +27,8 @@ void mlir::sol::buildSolToYulPipeline(OpPassManager &pm) {
   pm.nest<ContractOp>().nest<FuncOp>().addPass(createMem2Reg());
   pm.nest<ContractOp>().nest<FuncOp>().addPass(createCanonicalizerPass());
   pm.nest<ContractOp>().nest<FuncOp>().addPass(createCSEPass());
+  pm.nest<ContractOp>().nest<FuncOp>().addPass(
+      createLoopInvariantCodeMotionPass());
   pm.addPass(createConvertSolToYulPass());
   pm.nest<yul::ObjectOp>().nest<yul::FuncOp>().addPass(
       createCanonicalizerPass());

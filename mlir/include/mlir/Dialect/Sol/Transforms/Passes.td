@@ -17,6 +17,18 @@ def ModifierInliningPass : Pass<"sol-inline-modifiers", "ModuleOp"> {
 
 def LoopInvariantCodeMotionPass : Pass<"sol-licm"> {
   let summary = "Loop invariant code motion for the Sol dialect";
+  let description = [{
+    Moves the loop-invariant storage and transient addresses of Sol loops out
+    of them, and keeps the slots a loop accesses through loop-invariant
+    addresses in values the loop carries, stored back after it only if the
+    loop wrote them.
+  }];
+  let statistics = [
+    Statistic<"numHoisted", "hoisted",
+              "Number of address ops moved out of loops">,
+    Statistic<"numPromoted", "promoted",
+              "Number of storage and transient slots kept in values">
+  ];
 }
 
 #endif
