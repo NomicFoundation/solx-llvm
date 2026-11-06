@@ -1,4 +1,5 @@
 add_mlir_dialect_library(MLIRYulDialect
+  MemorySlot.cpp
   YulBase.cpp
   YulOps.cpp
 
@@ -12,4 +13,6 @@ add_mlir_dialect_library(MLIRYulDialect
 
   LINK_LIBS PUBLIC
   MLIRLLVMDialect
+  MLIRMemorySlotInterfaces
+  MLIRMemorySlotUtils
   )

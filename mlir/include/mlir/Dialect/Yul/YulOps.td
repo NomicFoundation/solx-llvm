@@ -16,6 +16,7 @@ include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
+include "mlir/Interfaces/MemorySlotInterfaces.td"
 
 def Yul_FuncOp : Yul_Op<"func", [AutomaticAllocationScope,
                                   CallableOpInterface,
@@ -297,7 +298,8 @@ def Yul_YieldOp : Yul_Op<"yield", [ReturnLike, Terminator,
 
 def Yul_IfOp : Yul_Op<"if",
   [AutomaticAllocationScope, NoRegionArguments,
-   DeclareOpInterfaceMethods<RegionBranchOpInterface>]
+   DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+   DeclareOpInterfaceMethods<PromotableRegionOpInterface>]
 > {
   let arguments = (ins I256:$cond);
   let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
@@ -318,7 +320,8 @@ def Yul_IfOp : Yul_Op<"if",
 def Yul_SwitchOp : Yul_Op<"switch", [
   AutomaticAllocationScope, NoRegionArguments,
   DeclareOpInterfaceMethods<RegionBranchOpInterface,
-                            ["getRegionInvocationBounds"]>
+                            ["getRegionInvocationBounds"]>,
+  DeclareOpInterfaceMethods<PromotableRegionOpInterface>
 ]> {
   let arguments = (ins I256:$arg, SignlessIntElementsAttr<256>:$cases);
   let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
@@ -357,8 +360,10 @@ def Yul_DoWhileOp : Yul_WhileOpBase<"do"> {
   }];
 }
 
-def Yul_ForOp : Yul_Op<"for", [Yul_LoopOpInterface,
-                               AutomaticAllocationScope]> {
+def Yul_ForOp : Yul_Op<"for", [
+  Yul_LoopOpInterface, AutomaticAllocationScope,
+  DeclareOpInterfaceMethods<PromotableRegionOpInterface, ["getEarlyExits"]>
+]> {
   let arguments = (ins Variadic<I256OrI256LLVMStruct>:$initArgs,
                        OptionalAttr<UnitAttr>:$full_unroll);
   let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
@@ -926,20 +931,27 @@ def Yul_LinkerSymbolOp : Yul_Op<"linkersymbol"> {
   let assemblyFormat = "$name attr-dict";
 }
 
-def Yul_AllocaOp : Yul_Op<"alloca"> {
+def Yul_AllocaOp : Yul_Op<"alloca", [
+  DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]
+> {
   let summary = "Yul-local i256 allocation";
   let results = (outs Yul_PtrType:$out);
   let assemblyFormat = "attr-dict `:` type($out)";
 }
 
-def Yul_LoadOp : Yul_Op<"load", [MemoryEffects<[MemRead]>]> {
+def Yul_LoadOp : Yul_Op<"load", [
+  MemoryEffects<[MemRead]>,
+  DeclareOpInterfaceMethods<PromotableMemOpInterface>]
+> {
   let summary = "Load i256 from a yul pointer";
   let arguments = (ins Yul_PtrType:$ptr);
   let results = (outs I256:$out);
   let assemblyFormat = "$ptr attr-dict `:` type($ptr) `->` type($out)";
 }
 
-def Yul_StoreOp : Yul_Op<"store"> {
+def Yul_StoreOp : Yul_Op<"store", [
+  DeclareOpInterfaceMethods<PromotableMemOpInterface>]
+> {
   let summary = "Store i256 through a yul pointer";
   let arguments = (ins I256:$val, Yul_PtrType:$ptr);
   let assemblyFormat = "$val `,` $ptr attr-dict `:` type($val) `,` type($ptr)";
