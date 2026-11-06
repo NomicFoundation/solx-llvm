@@ -14,6 +14,7 @@ include "SolInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
+include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
@@ -237,7 +238,9 @@ def Sol_CmpOp : Sol_Op<"cmp", [Pure, SameTypeOperands]> {
   // TODO: folder, canonicalizer
 }
 
-def Sol_AllocaOp : Sol_Op<"alloca"> {
+def Sol_AllocaOp : Sol_Op<"alloca", [
+  DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]
+> {
   let arguments = (ins TypeAttr:$alloc_type);
   let results = (outs Res<Sol_PtrType, "",
                           [MemAlloc<AutomaticAllocationScopeResource>]>:$addr);
@@ -435,7 +438,8 @@ def Sol_DeleteOp : Sol_Op<"delete"> {
 
 def Sol_LoadOp : Sol_Op<"load", [
   DeclareOpInterfaceMethods<ConditionallySpeculatable>,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+  DeclareOpInterfaceMethods<PromotableMemOpInterface>]
 >{
   let arguments = (ins Sol_RefType:$addr);
   let results = (outs AnyType:$out);
@@ -467,7 +471,8 @@ def Sol_LibAddrOp : Sol_Op<"lib_addr", [Pure]> {
 }
 
 def Sol_StoreOp : Sol_Op<"store", [
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+  DeclareOpInterfaceMethods<PromotableMemOpInterface>]
 >{
   let arguments = (ins AnyType:$val, Sol_RefType:$addr);
 

@@ -24,6 +24,7 @@ void mlir::sol::buildSolToYulPipeline(OpPassManager &pm) {
   // The canonicalizers run per function; there is little to canonicalize
   // outside one.
   pm.addPass(createModifierInliningPass());
+  pm.nest<ContractOp>().nest<FuncOp>().addPass(createMem2Reg());
   pm.nest<ContractOp>().nest<FuncOp>().addPass(createCanonicalizerPass());
   pm.addPass(createConvertSolToYulPass());
   pm.nest<yul::ObjectOp>().nest<yul::FuncOp>().addPass(

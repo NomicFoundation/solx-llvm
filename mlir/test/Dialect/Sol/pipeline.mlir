@@ -4,6 +4,11 @@
 // CHECK-NEXT:   sol-inline-modifiers,
 // CHECK-NEXT:   sol.contract(
 // CHECK-NEXT:     sol.func(
+// CHECK-NEXT:       mem2reg{{{.*}}}
+// CHECK-NEXT:     )
+// CHECK-NEXT:   ),
+// CHECK-NEXT:   sol.contract(
+// CHECK-NEXT:     sol.func(
 // CHECK-NEXT:       canonicalize{{{.*}}}
 // CHECK-NEXT:     )
 // CHECK-NEXT:   ),
