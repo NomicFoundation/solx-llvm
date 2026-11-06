@@ -367,3 +367,46 @@ sol.contract @C {
     sol.return %0 : !sol.constant_string
   }
 } {kind = #Contract, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%c: i1, %x: ui256) {
+    // expected-error @below {{'sol.if' op expects an else region yielding the results}}
+    %0 = sol.if %c -> ui256 {
+      sol.yield %x : ui256
+    } else {
+    }
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%c: i1, %x: ui256) {
+    %0 = sol.if %c -> ui256 {
+      // expected-error @below {{'sol.yield' op expects the result types of its parent}}
+      sol.yield
+    } else {
+      sol.yield %x : ui256
+    }
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%c: i1, %x: ui256) {
+    // expected-error @below {{'sol.scope' op expects no sol.leave when it has results}}
+    %0 = sol.scope -> ui256 {
+      sol.if %c {
+        sol.leave
+      } else {
+      }
+      sol.yield %x : ui256
+    }
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}

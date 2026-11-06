@@ -236,9 +236,10 @@ def Yul_ScopeOp : Yul_Op<"scope",
    DeclareOpInterfaceMethods<RegionBranchOpInterface>]
 > {
   let summary = "A block that yul.leave_scope exits";
+  let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
   let regions = (region SizedRegion<1>:$bodyRegion);
 
-  let assemblyFormat = "$bodyRegion attr-dict";
+  let assemblyFormat = "(`->` type($results)^)? $bodyRegion attr-dict";
 }
 
 def Yul_LeaveScopeOp : Yul_Op<"leave_scope", [Terminator]> {

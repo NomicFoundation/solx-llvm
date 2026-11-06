@@ -11,13 +11,13 @@ module {
   // CHECK:           %[[NA:.*]] = yul.add %arg0,
   // CHECK:           yul.scope {
   // CHECK-NEXT:        yul.scope {
-  // CHECK-NEXT:          yul.leave_scope
+  // CHECK-NEXT:          yul.yield
   // CHECK-NEXT:        }
   // CHECK-NEXT:        yul.func_call @inner(%[[NA]]) : (i256) -> ()
-  // CHECK-NEXT:        yul.leave_scope
+  // CHECK-NEXT:        yul.yield
   // CHECK-NEXT:      }
   // CHECK-NEXT:      yul.func_call @outer(%arg0) : (i256) -> ()
-  // CHECK-NEXT:      yul.leave_scope
+  // CHECK-NEXT:      yul.yield
   // CHECK:         yul.func_return
   sol.contract @C {
     sol.func @outer(%arg0: ui256) {
@@ -66,9 +66,9 @@ module {
   // CHECK:             %[[Y:.*]] = yul.shr
   // CHECK:             llvm.store %[[X]], %[[R0]] {
   // CHECK:             llvm.store %[[Y]], %[[R1]] {
-  // CHECK-NEXT:        yul.leave_scope
+  // CHECK-NEXT:        yul.yield
   // CHECK:           yul.sstore
-  // CHECK:           yul.leave_scope
+  // CHECK:           yul.yield
   // CHECK:         %[[V0:.*]] = llvm.load %[[R0]] {
   // CHECK:         %[[V1:.*]] = llvm.load %[[R1]] {
   // CHECK:         yul.func_return %[[V0]], %[[V1]] : i256, i256

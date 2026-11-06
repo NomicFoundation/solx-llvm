@@ -63,4 +63,87 @@ sol.contract @C {
     %3 = sol.load %2 : !sol.ptr<!sol.string<Memory>, Stack>, !sol.string<Memory>
     sol.return %1, %3 : !sol.address, !sol.string<Memory>
   }
+  // A value stored in both branches leaves the if as its result.
+  // CHECK-LABEL: sol.func @branches(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[Y:[^:]*]]: ui256, %[[Z:[^:]*]]: ui256, %[[C:[^:]*]]: i1
+  // CHECK-NEXT:    %[[R:.*]] = sol.if %[[C]] -> ui256 {
+  // CHECK-NEXT:      sol.yield %[[Y]] : ui256
+  // CHECK-NEXT:    } else {
+  // CHECK-NEXT:      sol.yield %[[Z]] : ui256
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:    sol.return %[[R]] : ui256
+  sol.func @branches(%x: ui256, %y: ui256, %z: ui256, %c: i1) -> ui256 {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.if %c {
+      sol.store %y, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.yield
+    } else {
+      sol.store %z, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.yield
+    }
+    %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+    sol.return %1 : ui256
+  }
+
+  // An if without an else gets one that yields the value before the if.
+  // CHECK-LABEL: sol.func @thenOnly(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[Y:[^:]*]]: ui256, %[[C:[^:]*]]: i1
+  // CHECK-NEXT:    %[[R:.*]] = sol.if %[[C]] -> ui256 {
+  // CHECK-NEXT:      sol.yield %[[Y]] : ui256
+  // CHECK-NEXT:    } else {
+  // CHECK-NEXT:      sol.yield %[[X]] : ui256
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:    sol.return %[[R]] : ui256
+  sol.func @thenOnly(%x: ui256, %y: ui256, %c: i1) -> ui256 {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.if %c {
+      sol.store %y, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.yield
+    } else {
+    }
+    %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+    sol.return %1 : ui256
+  }
+
+  // A branch that returns yields nothing.
+  // CHECK-LABEL: sol.func @earlyReturn(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[Y:[^:]*]]: ui256, %[[C:[^:]*]]: i1
+  // CHECK-NEXT:    %[[R:.*]] = sol.if %[[C]] -> ui256 {
+  // CHECK-NEXT:      sol.return %[[Y]] : ui256
+  // CHECK-NEXT:    } else {
+  // CHECK-NEXT:      sol.yield %[[X]] : ui256
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:    sol.return %[[R]] : ui256
+  sol.func @earlyReturn(%x: ui256, %y: ui256, %c: i1) -> ui256 {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.if %c {
+      sol.store %y, %0 : ui256, !sol.ptr<ui256, Stack>
+      %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+      sol.return %1 : ui256
+    } else {
+    }
+    %2 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+    sol.return %2 : ui256
+  }
+
+  // A value stored in a scope leaves it as its result.
+  // CHECK-LABEL: sol.func @scope(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[Y:[^:]*]]: ui256
+  // CHECK-NEXT:    %[[R:.*]] = sol.scope -> ui256 {
+  // CHECK-NEXT:      sol.yield %[[Y]] : ui256
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:    sol.return %[[R]] : ui256
+  sol.func @scope(%x: ui256, %y: ui256) -> ui256 {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.scope {
+      sol.store %y, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.yield
+    }
+    %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+    sol.return %1 : ui256
+  }
 } {kind = #sol<ContractKind Contract>, runtime}

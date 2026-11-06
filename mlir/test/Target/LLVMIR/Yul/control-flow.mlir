@@ -328,6 +328,15 @@
 // CHECK-NEXT: store i256 0, ptr addrspace(5) %[[V6]], align 1
 // CHECK-NEXT: ret void
 // CHECK-NEXT: }
+// CHECK-LABEL: define private i256 @scope_result(
+// CHECK-SAME: i256 %[[V0:[0-9]+]]) #{{[0-9]+}} {
+// CHECK-NEXT: %[[V2:[0-9]+]] = inttoptr i256 %[[V0]] to ptr addrspace(5)
+// CHECK-NEXT: %[[V3:[0-9]+]] = load i256, ptr addrspace(5) %[[V2]], align 1
+// CHECK-NEXT: br label %[[V4:[0-9]+]]
+// CHECK: [[V4]]:
+// CHECK-NEXT: %[[V5:[0-9]+]] = phi i256 [ %[[V3]], %{{[0-9]+}} ]
+// CHECK-NEXT: ret i256 %[[V5]]
+// CHECK-NEXT: }
 // CHECK-LABEL: define private i256 @early_return(
 // CHECK-SAME: i256 %[[V0:[0-9]+]]) #{{[0-9]+}} {
 // CHECK-NEXT: %[[V2:[0-9]+]] = icmp ne i256 %[[V0]], 0
@@ -751,6 +760,15 @@ module {
       }
       yul.sstore %n, %c0
       yul.func_return
+    }
+
+    yul.func @scope_result : (i256) -> i256 {
+    ^bb0(%n: i256):
+      %0 = yul.scope -> i256 {
+        %1 = yul.sload %n
+        yul.yield %1 : i256
+      }
+      yul.func_return %0 : i256
     }
 
     yul.func @early_return : (i256) -> i256 {

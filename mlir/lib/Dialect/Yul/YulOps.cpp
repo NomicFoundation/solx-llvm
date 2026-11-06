@@ -453,7 +453,7 @@ LogicalResult FuncOp::verify() {
 void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
                                   SmallVectorImpl<RegionSuccessor> &regions) {
   if (!point.isParent()) {
-    regions.push_back(RegionSuccessor());
+    regions.push_back(RegionSuccessor(getResults()));
     return;
   }
   regions.push_back(RegionSuccessor(&getBodyRegion()));

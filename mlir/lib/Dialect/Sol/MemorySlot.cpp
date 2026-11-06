@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Sol/Utils.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
+#include "mlir/Interfaces/Utils/MemorySlotUtils.h"
 
 using namespace mlir;
 using namespace mlir::sol;
@@ -115,4 +116,96 @@ StoreOp::removeBlockingUses(const MemorySlot &slot,
                             OpBuilder &builder, Value reachingDefinition,
                             const DataLayout &dataLayout) {
   return DeletionKind::Delete;
+}
+
+//===----------------------------------------------------------------------===//
+// IfOp
+//===----------------------------------------------------------------------===//
+
+/// Adds the slot's value at the end of each block of `region` that yields, as
+/// a new last operand. A block ending in another terminator leaves the region
+/// where nothing reads the slot again.
+static void yieldSlotValue(Region &region, Value reachingDef,
+                           const DenseMap<Block *, Value> &reachingAtBlockEnd) {
+  for (Block &block : region)
+    if (isa<YieldOp>(block.getTerminator()))
+      memoryslot::updateTerminator(&block, reachingDef, reachingAtBlockEnd);
+}
+
+bool IfOp::isRegionPromotable(const MemorySlot &slot, Region *region,
+                              bool hasValueStores) {
+  return true;
+}
+
+void IfOp::setupPromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) {
+  regionsToProcess.insert({&getThenRegion(), reachingDef});
+  regionsToProcess.insert({&getElseRegion(), reachingDef});
+}
+
+Value IfOp::finalizePromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+    OpBuilder &builder) {
+  if (!hasValueStores)
+    return reachingDef;
+
+  IRRewriter rewriter(builder);
+  yieldSlotValue(getThenRegion(), reachingDef, reachingAtBlockEnd);
+  if (getElseRegion().empty()) {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.createBlock(&getElseRegion());
+    YieldOp::create(rewriter, getLoc(), ValueRange{reachingDef});
+  } else {
+    yieldSlotValue(getElseRegion(), reachingDef, reachingAtBlockEnd);
+  }
+
+  SmallVector<Type> resultTypes(getResultTypes());
+  resultTypes.push_back(slot.elemType);
+  return memoryslot::replaceWithNewResults(rewriter, *this, resultTypes)
+      ->getResults()
+      .back();
+}
+
+//===----------------------------------------------------------------------===//
+// ScopeOp
+//===----------------------------------------------------------------------===//
+
+bool ScopeOp::isRegionPromotable(const MemorySlot &slot, Region *region,
+                                 bool hasValueStores) {
+  // A sol.leave carries no value, so a slot stored inside a scope that one
+  // exits stays in memory.
+  if (!hasValueStores)
+    return true;
+  return !getBodyRegion()
+              .walk([&](LeaveOp leave) {
+                return leave->getParentOfType<ScopeOp>() == *this
+                           ? WalkResult::interrupt()
+                           : WalkResult::advance();
+              })
+              .wasInterrupted();
+}
+
+void ScopeOp::setupPromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) {
+  regionsToProcess.insert({&getBodyRegion(), reachingDef});
+}
+
+Value ScopeOp::finalizePromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+    OpBuilder &builder) {
+  if (!hasValueStores)
+    return reachingDef;
+
+  IRRewriter rewriter(builder);
+  yieldSlotValue(getBodyRegion(), reachingDef, reachingAtBlockEnd);
+
+  SmallVector<Type> resultTypes(getResultTypes());
+  resultTypes.push_back(slot.elemType);
+  return memoryslot::replaceWithNewResults(rewriter, *this, resultTypes)
+      ->getResults()
+      .back();
 }

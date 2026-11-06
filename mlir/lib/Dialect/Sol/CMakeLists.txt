@@ -21,6 +21,7 @@ add_mlir_dialect_library(MLIRSolDialect
 
   LINK_LIBS PUBLIC
   MLIRMemorySlotInterfaces
+  MLIRMemorySlotUtils
   # Bridge ops (sol.ptr_cast, sol.selector, ...) produce !yul.ptr.
   MLIRYulDialect
   # DI attributes, used by DebugInfo.cpp.

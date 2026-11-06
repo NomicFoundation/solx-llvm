@@ -161,7 +161,12 @@ private:
       OpBuilder retB(ret);
       for (auto [val, slot] : llvm::zip(ret.getOperands(), retSlots))
         retB.create<sol::StoreOp>(ret.getLoc(), val, slot);
-      retB.create<sol::LeaveOp>(ret.getLoc());
+      // At the end of one of the scope's own blocks the return falls through,
+      // and only a scope without sol.leave can yield results.
+      if (ret->getParentRegion() == &scope.getBodyRegion())
+        retB.create<sol::YieldOp>(ret.getLoc());
+      else
+        retB.create<sol::LeaveOp>(ret.getLoc());
       ret.erase();
     }
 

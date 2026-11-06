@@ -426,7 +426,8 @@ LogicalResult ObjectTranslation::emitLoop(yul::LoopOpInterface op,
 LogicalResult ObjectTranslation::emitScope(yul::ScopeOp op,
                                            bool &fallsThrough) {
   Region &region = op.getBodyRegion();
-  Dest &exit = newDest({}, {});
+  Dest &exit = newDest(op->getResultTypes(),
+                       SmallVector<Location>(op->getNumResults(), op.getLoc()));
   scopes.push_back(&exit);
   if (failed(emitBlock(region.front(), &exit)))
     return failure();
@@ -434,7 +435,7 @@ LogicalResult ObjectTranslation::emitScope(yul::ScopeOp op,
 
   fallsThrough = exit.block;
   if (fallsThrough)
-    continueAt(exit, {});
+    continueAt(exit, op->getResults());
   return success();
 }
 

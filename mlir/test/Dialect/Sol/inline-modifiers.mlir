@@ -38,10 +38,10 @@ module {
 // CHECK:           sol.scope {
 // CHECK:             %[[C42:.*]] = sol.constant 42 : ui256
 // CHECK:             sol.store %[[C42]], %[[SLOT]]
-// CHECK-NEXT:        sol.leave
+// CHECK-NEXT:        sol.yield
 // CHECK:           }
 // CHECK:           sol.load %[[PARAM]]
-// CHECK:           sol.leave
+// CHECK:           sol.yield
 // CHECK:         }
 // CHECK:         %[[RES:.*]] = sol.load %[[SLOT]]
 // CHECK-NEXT:    sol.return %[[RES]]
@@ -86,11 +86,11 @@ module {
 // CHECK:             sol.constant 222
 // CHECK:             sol.scope {
 // CHECK:               sol.constant 333
-// CHECK:               sol.leave
+// CHECK:               sol.yield
 // CHECK:             }
-// CHECK:             sol.leave
+// CHECK:             sol.yield
 // CHECK:           }
-// CHECK:           sol.leave
+// CHECK:           sol.yield
 // CHECK:         }
 // CHECK-NEXT:    sol.return
 
@@ -140,7 +140,7 @@ module {
 // CHECK:               sol.constant 9
 // CHECK:             }
 // CHECK:           }
-// CHECK:           sol.leave
+// CHECK:           sol.yield
 // CHECK:         }
 
 // -----
@@ -171,7 +171,7 @@ module {
 // CHECK:         sol.store %[[ZERO]], %[[SLOT]]
 // CHECK:         sol.scope {
 // CHECK-NEXT:      sol.constant 5
-// CHECK-NEXT:      sol.leave
+// CHECK-NEXT:      sol.yield
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %[[RES:.*]] = sol.load %[[SLOT]]
 // CHECK-NEXT:    sol.return %[[RES]]
@@ -204,13 +204,13 @@ module {
 // CHECK:       sol.func @f() -> ui256
 // CHECK:         sol.scope {
 // CHECK:           sol.constant 5
-// CHECK-NEXT:      sol.leave
+// CHECK-NEXT:      sol.yield
 // CHECK:         }
 
 // -----
 
 // Unreachable post-return blocks are cloned along with the body; each return
-// is rewritten to stores to the shared slots followed by a leave.
+// is rewritten to stores to the shared slots followed by a yield.
 
 module {
   sol.contract @PostReturnBlocks {
@@ -238,11 +238,11 @@ module {
 // CHECK:           sol.scope {
 // CHECK:             %[[C1:.*]] = sol.constant 1 : ui256
 // CHECK:             sol.store %[[C1]], %[[SLOT]]
-// CHECK-NEXT:        sol.leave
+// CHECK-NEXT:        sol.yield
 // CHECK:           ^bb1:
 // CHECK:             %[[C2:.*]] = sol.constant 2 : ui256
 // CHECK:             sol.store %[[C2]], %[[SLOT]]
-// CHECK-NEXT:        sol.leave
+// CHECK-NEXT:        sol.yield
 // CHECK:           }
 // CHECK:         }
 
@@ -282,7 +282,7 @@ module {
 // CHECK:             %[[C2:.*]] = sol.constant 2 : ui8
 // CHECK:             sol.store %[[C1]], %[[SLOT0]]
 // CHECK:             sol.store %[[C2]], %[[SLOT1]]
-// CHECK-NEXT:        sol.leave
+// CHECK-NEXT:        sol.yield
 // CHECK:           }
 // CHECK:         }
 // CHECK:         %[[RES0:.*]] = sol.load %[[SLOT0]]
@@ -337,11 +337,11 @@ module {
 // CHECK:               }
 // CHECK:               %[[C3:.*]] = sol.constant 3 : ui256
 // CHECK-NEXT:          sol.store %[[C3]], %[[SLOT]]
-// CHECK-NEXT:          sol.leave
+// CHECK-NEXT:          sol.yield
 // CHECK:             }
 // CHECK:             sol.yield
 // CHECK:           }
-// CHECK:           sol.leave
+// CHECK:           sol.yield
 // CHECK:         }
 // CHECK:         %[[RES:.*]] = sol.load %[[SLOT]]
 // CHECK-NEXT:    sol.return %[[RES]]
@@ -375,14 +375,14 @@ module {
 // CHECK:           sol.scope {
 // CHECK:             %[[A:.*]] = sol.constant 9 : ui256
 // CHECK-NEXT:        sol.store %[[A]], %[[SLOT]]
-// CHECK-NEXT:        sol.leave
+// CHECK-NEXT:        sol.yield
 // CHECK:           }
 // CHECK:           sol.scope {
 // CHECK:             %[[B:.*]] = sol.constant 9 : ui256
 // CHECK-NEXT:        sol.store %[[B]], %[[SLOT]]
-// CHECK-NEXT:        sol.leave
+// CHECK-NEXT:        sol.yield
 // CHECK:           }
-// CHECK:           sol.leave
+// CHECK:           sol.yield
 // CHECK:         }
 // CHECK:         %[[RES:.*]] = sol.load %[[SLOT]]
 // CHECK-NEXT:    sol.return %[[RES]]
@@ -426,9 +426,9 @@ module {
 // CHECK:           sol.scope {
 // CHECK:             %[[V:.*]] = sol.load %[[R]]
 // CHECK-NEXT:        sol.store %[[V]], %[[SLOT]]
-// CHECK-NEXT:        sol.leave
+// CHECK-NEXT:        sol.yield
 // CHECK:           }
-// CHECK:           sol.leave
+// CHECK:           sol.yield
 // CHECK:         }
 // CHECK:         %[[RES:.*]] = sol.load %[[SLOT]]
 // CHECK-NEXT:    sol.return %[[RES]]

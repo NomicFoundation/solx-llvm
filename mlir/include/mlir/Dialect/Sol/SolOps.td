@@ -639,12 +639,22 @@ def Sol_YieldOp : Sol_Op<"yield", [ReturnLike, Terminator,
 
 def Sol_IfOp : Sol_Op<"if",
   [DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+   DeclareOpInterfaceMethods<PromotableRegionOpInterface>,
    AutomaticAllocationScope, NoRegionArguments]
 > {
   let arguments = (ins I1:$cond);
+  let results = (outs Variadic<AnyType>:$results);
   let regions = (region MinSizedRegion<1>:$thenRegion, AnyRegion:$elseRegion);
 
-  let assemblyFormat = "$cond $thenRegion `else` $elseRegion attr-dict";
+  let builders = [
+    OpBuilder<(ins "Value":$cond), [{
+      build($_builder, $_state, TypeRange{}, cond);
+    }]>,
+  ];
+
+  let assemblyFormat =
+      "$cond (`->` type($results)^)? $thenRegion `else` $elseRegion attr-dict";
+  let hasVerifier = 1;
 }
 
 def Sol_SwitchOp : Sol_Op<"switch", [
@@ -743,12 +753,23 @@ def Sol_ModifierInvocationOp : Sol_Op<"modifier_invocation", [SingleBlock]> {
 
 def Sol_ScopeOp : Sol_Op<"scope",
   [DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+   DeclareOpInterfaceMethods<PromotableRegionOpInterface>,
    AutomaticAllocationScope, NoRegionArguments]
 > {
   let summary = "A block that sol.leave exits";
+  let description = [{
+    The results are yielded at the end of the body. A scope with results has
+    no sol.leave, which carries none.
+  }];
+  let results = (outs Variadic<AnyType>:$results);
   let regions = (region MinSizedRegion<1>:$bodyRegion);
 
-  let assemblyFormat = "$bodyRegion attr-dict";
+  let builders = [
+    OpBuilder<(ins), [{ build($_builder, $_state, TypeRange{}); }]>,
+  ];
+
+  let assemblyFormat = "(`->` type($results)^)? $bodyRegion attr-dict";
+  let hasVerifier = 1;
 }
 
 // TODO: Verifier should check if a sol.scope is an ancestor.

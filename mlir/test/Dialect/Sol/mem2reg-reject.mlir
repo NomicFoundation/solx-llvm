@@ -21,21 +21,25 @@ sol.contract @C {
     sol.return %2 : ui256
   }
 
-  // A store inside an if needs the if to carry the value.
-  // CHECK-LABEL: sol.func @branch(
+  // A sol.leave exits the scope early, and it carries no value.
+  // CHECK-LABEL: sol.func @nestedLeave(
   // CHECK-NEXT:    %[[SLOT:.*]] = sol.alloca : !sol.ptr<ui256, Stack>
   // CHECK-NEXT:    sol.store %{{.*}}, %[[SLOT]]
-  // CHECK-NEXT:    sol.if
-  // CHECK-NEXT:      sol.store %{{.*}}, %[[SLOT]]
+  // CHECK-NEXT:    sol.scope {
+  // CHECK:           sol.leave
+  // CHECK:           sol.store %{{.*}}, %[[SLOT]]
   // CHECK:         %[[V:.*]] = sol.load %[[SLOT]]
   // CHECK-NEXT:    sol.return %[[V]]
-  sol.func @branch(%x: ui256, %y: ui256, %c: i1) -> ui256 {
+  sol.func @nestedLeave(%x: ui256, %y: ui256, %c: i1) -> ui256 {
     %0 = sol.alloca : !sol.ptr<ui256, Stack>
     sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
-    sol.if %c {
+    sol.scope {
+      sol.if %c {
+        sol.leave
+      } else {
+      }
       sol.store %y, %0 : ui256, !sol.ptr<ui256, Stack>
       sol.yield
-    } else {
     }
     %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
     sol.return %1 : ui256

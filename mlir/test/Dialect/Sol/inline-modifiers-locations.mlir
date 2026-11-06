@@ -5,7 +5,7 @@
 // and store, the scope wrapping the original body, the closing loads and the
 // return - is at line 0. Everything cloned from the source keeps its own
 // location. A layer's scope uses its invocation's location, and a `return`
-// gives its location to both the store of its operands and the sol.leave that
+// gives its location to both the store of its operands and the sol.yield that
 // exits the layer. An inline assembly function cloned with its modifier gets a
 // subprogram of its own on every clone.
 
@@ -46,10 +46,10 @@ module {
 // CHECK:           sol.scope {
 // CHECK:             sol.constant 42 {{.*}} loc("Modified.sol":9:9)
 // CHECK:             sol.store {{.*}} loc("Modified.sol":9:9)
-// CHECK-NEXT:        sol.leave loc("Modified.sol":9:9)
+// CHECK-NEXT:        sol.yield loc("Modified.sol":9:9)
 // The scope wrapping the original body, which has no invocation.
 // CHECK:           } loc("Modified.sol":0:0)
-// CHECK:           sol.leave loc("Modified.sol":6:7)
+// CHECK:           sol.yield loc("Modified.sol":6:7)
 // The modifier's layer, at its invocation.
 // CHECK:         } loc("Modified.sol":8:30)
 // CHECK:         sol.load {{.*}} loc("Modified.sol":0:0)

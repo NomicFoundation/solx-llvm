@@ -594,14 +594,40 @@ void CodeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, resTy, contAddr);
 }
 
+/// Checks that every sol.yield ending a block of `region` yields the results of
+/// `op`.
+static LogicalResult verifyYieldedResults(Operation *op, Region &region) {
+  for (Block &block : region) {
+    auto yield =
+        dyn_cast_or_null<YieldOp>(block.empty() ? nullptr : &block.back());
+    if (yield &&
+        TypeRange(yield.getIns().getTypes()) != TypeRange(op->getResultTypes()))
+      return yield.emitOpError("expects the result types of its parent");
+  }
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // ScopeOp
 //===----------------------------------------------------------------------===//
 
+LogicalResult ScopeOp::verify() {
+  if (getNumResults() != 0) {
+    WalkResult leaves = getBodyRegion().walk([&](LeaveOp leave) {
+      return leave->getParentOfType<ScopeOp>() == *this
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    if (leaves.wasInterrupted())
+      return emitOpError("expects no sol.leave when it has results");
+  }
+  return verifyYieldedResults(*this, getBodyRegion());
+}
+
 void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
                                   SmallVectorImpl<RegionSuccessor> &regions) {
   if (!point.isParent()) {
-    regions.push_back(RegionSuccessor());
+    regions.push_back(RegionSuccessor(getResults()));
     return;
   }
   regions.push_back(RegionSuccessor(&getBodyRegion()));
@@ -610,6 +636,14 @@ void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
 //===----------------------------------------------------------------------===//
 // IfOp
 //===----------------------------------------------------------------------===//
+
+LogicalResult IfOp::verify() {
+  if (getNumResults() != 0 && getElseRegion().empty())
+    return emitOpError("expects an else region yielding the results");
+  if (failed(verifyYieldedResults(*this, getThenRegion())))
+    return failure();
+  return verifyYieldedResults(*this, getElseRegion());
+}
 
 /// Given the region at `index`, or the parent operation if `index` is None,
 /// return the successor regions. These are the regions that may be selected
@@ -620,7 +654,7 @@ void IfOp::getSuccessorRegions(RegionBranchPoint point,
                                SmallVectorImpl<RegionSuccessor> &regions) {
   // The "then" and the "else" region branch back to the parent operation.
   if (!point.isParent()) {
-    regions.push_back(RegionSuccessor());
+    regions.push_back(RegionSuccessor(getResults()));
     return;
   }
 

@@ -3762,10 +3762,13 @@ static void lowerSolRegionTerminatorsToYul(Region &region,
   for (Block &block : region) {
     Operation *terminator = block.getTerminator();
     if (auto yieldOp = dyn_cast<sol::YieldOp>(terminator)) {
-      assert(yieldOp.getIns().empty() &&
-             "Yul structured control flow does not support yielded values yet");
+      SmallVector<Value> operands;
+      for (Value operand : yieldOp.getIns()) {
+        Value remapped = r.getRemappedValue(operand);
+        operands.push_back(remapped ? remapped : operand);
+      }
       r.setInsertionPoint(yieldOp);
-      r.replaceOpWithNewOp<yul::YieldOp>(yieldOp);
+      r.replaceOpWithNewOp<yul::YieldOp>(yieldOp, operands);
     } else if (auto conditionOp = dyn_cast<sol::ConditionOp>(terminator)) {
       r.setInsertionPoint(conditionOp);
       Value cond = conditionOp.getCondition();
@@ -3787,11 +3790,15 @@ struct ScopeOpLowering : public OpConversionPattern<sol::ScopeOp> {
 
   LogicalResult matchAndRewrite(sol::ScopeOp op, OpAdaptor,
                                 ConversionPatternRewriter &r) const override {
-    auto yulScopeOp = r.create<yul::ScopeOp>(op.getLoc());
+    SmallVector<Type> resultTypes;
+    if (failed(getTypeConverter()->convertTypes(op.getResultTypes(),
+                                                resultTypes)))
+      return failure();
+    auto yulScopeOp = r.create<yul::ScopeOp>(op.getLoc(), resultTypes);
     r.inlineRegionBefore(op.getBodyRegion(), yulScopeOp.getBodyRegion(),
                          yulScopeOp.getBodyRegion().end());
     lowerSolRegionTerminatorsToYul(yulScopeOp.getBodyRegion(), r);
-    r.eraseOp(op);
+    r.replaceOp(op, yulScopeOp.getResults());
     return success();
   }
 };
@@ -3812,10 +3819,12 @@ struct IfOpLowering : public OpConversionPattern<sol::IfOp> {
   LogicalResult matchAndRewrite(sol::IfOp ifOp, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
     Location loc = ifOp.getLoc();
-    assert(ifOp->getResults().empty() &&
-           "Yul structured control flow does not support results yet");
+    SmallVector<Type> resultTypes;
+    if (failed(getTypeConverter()->convertTypes(ifOp.getResultTypes(),
+                                                resultTypes)))
+      return failure();
 
-    auto yulIfOp = r.create<yul::IfOp>(loc, TypeRange{}, adaptor.getCond());
+    auto yulIfOp = r.create<yul::IfOp>(loc, resultTypes, adaptor.getCond());
     r.inlineRegionBefore(ifOp.getThenRegion(), yulIfOp.getThenRegion(),
                          yulIfOp.getThenRegion().end());
     lowerSolRegionTerminatorsToYul(yulIfOp.getThenRegion(), r);
@@ -3823,7 +3832,7 @@ struct IfOpLowering : public OpConversionPattern<sol::IfOp> {
                          yulIfOp.getElseRegion().end());
     lowerSolRegionTerminatorsToYul(yulIfOp.getElseRegion(), r);
 
-    r.eraseOp(ifOp);
+    r.replaceOp(ifOp, yulIfOp.getResults());
     return success();
   }
 };
