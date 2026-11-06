@@ -114,6 +114,10 @@ struct EVMSHA3ConstFoldingPass : PassInfoMixin<EVMSHA3ConstFoldingPass> {
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
 };
 
+struct EVMSHA3ValueNumberingPass : PassInfoMixin<EVMSHA3ValueNumberingPass> {
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+};
+
 struct EVMCorrelatedValuePropagationPass
     : PassInfoMixin<EVMCorrelatedValuePropagationPass> {
   EVMCorrelatedValuePropagationPass() = default;

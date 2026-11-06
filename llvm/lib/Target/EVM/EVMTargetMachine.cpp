@@ -166,6 +166,8 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
         if (Level.getSizeLevel() || Level.getSpeedupLevel() > 1)
           PM.addPass(MergeIdenticalBBPass());
 
+        PM.addPass(EVMSHA3ValueNumberingPass());
+
         // Don't run this pass if optimizing for size, since result of SHA3
         // calls will be replaced with a 32-byte constant, thus PUSH32 will
         // be emitted. This will increase code size.
@@ -217,6 +219,10 @@ void EVMTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
          ArrayRef<PassBuilder::PipelineElement>) {
         if (PassName == "evm-sha3-constant-folding") {
           PM.addPass(EVMSHA3ConstFoldingPass());
+          return true;
+        }
+        if (PassName == "evm-sha3-value-numbering") {
+          PM.addPass(EVMSHA3ValueNumberingPass());
           return true;
         }
         if (PassName == "evm-correlated-propagation") {

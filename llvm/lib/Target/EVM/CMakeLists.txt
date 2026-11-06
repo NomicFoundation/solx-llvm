@@ -66,6 +66,7 @@ add_llvm_target(EVMCodeGen
   EVMRegisterInfo.cpp
   EVMSelectionDAGInfo.cpp
   EVMSHA3ConstFolding.cpp
+  EVMSHA3ValueNumbering.cpp
   EVMSingleUseExpression.cpp
   EVMSplitCriticalEdges.cpp
   EVMStackModel.cpp
