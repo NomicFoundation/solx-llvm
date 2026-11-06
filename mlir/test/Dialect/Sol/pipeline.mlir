@@ -12,6 +12,11 @@
 // CHECK-NEXT:       canonicalize{{{.*}}}
 // CHECK-NEXT:     )
 // CHECK-NEXT:   ),
+// CHECK-NEXT:   sol.contract(
+// CHECK-NEXT:     sol.func(
+// CHECK-NEXT:       cse
+// CHECK-NEXT:     )
+// CHECK-NEXT:   ),
 // CHECK-NEXT:   convert-sol-to-yul,
 // CHECK-NEXT:   yul.object(
 // CHECK-NEXT:     yul.func(

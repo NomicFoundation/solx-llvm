@@ -374,7 +374,14 @@ def Sol_AddrOfOp : Sol_Op<"addr_of", [Pure]> {
   let assemblyFormat = "$var attr-dict `:` type($addr)";
 }
 
-def Sol_GepOp : Sol_Op<"gep"> {
+def Sol_GepOp : Sol_Op<"gep", [
+  DeclareOpInterfaceMethods<ConditionallySpeculatable>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let description = [{
+    An address into a stack slot, a struct member, or an in-range constant
+    index into a static array has no effects. Any other index is bounds
+    checked, and a dynamic array or bytes base is read for its length.
+  }];
   let arguments = (ins AnyType:$baseAddr, Sol_Int:$idx,
                        UnitAttr:$no_panic_bounds);
   let results = (outs AnyTypeOf<[Sol_RefType, Sol_MappingType]>:$addr);
@@ -401,7 +408,16 @@ def Sol_GepOp : Sol_Op<"gep"> {
   }];
 }
 
-def Sol_MapOp : Sol_Op<"map"> {
+def Sol_MapOp : Sol_Op<"map", [
+  DeclareOpInterfaceMethods<ConditionallySpeculatable>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let description = [{
+    The slot of a value-type key is a function of the key and the mapping's
+    slot alone. The hash input written to scratch memory is not modeled, since
+    Solidity keeps scratch memory only within one statement. An enum key may
+    panic in its cleanup. A bytes or string key is read, copied above the free
+    pointer, and checked when it is in storage.
+  }];
   let arguments = (ins AnyType:$mapping, AnyType:$key);
   let results = (outs AnyType:$addr);
 
@@ -1046,13 +1062,13 @@ def CallOp : Sol_Op<"call", [CallOpInterface]> {
   }];
 }
 
-def Sol_ThisOp : Sol_Op<"this"> {
+def Sol_ThisOp : Sol_Op<"this", [Pure]> {
   let results = (outs Sol_ContractType:$addr);
 
   let assemblyFormat = "attr-dict `:` qualified(type($addr))";
 }
 
-def Sol_CallerOp : Sol_Op<"caller"> {
+def Sol_CallerOp : Sol_Op<"caller", [Pure]> {
   let summary = "Returns the caller address";
   let results = (outs Sol_AddressType:$addr);
 
@@ -1075,7 +1091,7 @@ def Sol_GasPriceOp : Sol_Op<"gasprice"> {
   let assemblyFormat = "attr-dict `:` type($val)";
 }
 
-def Sol_CallValueOp : Sol_Op<"callvalue"> {
+def Sol_CallValueOp : Sol_Op<"callvalue", [Pure]> {
   let summary =
       "Returns the amount of wei sent with the current call (msg.value)";
   let results = (outs UI256:$val);
@@ -1083,7 +1099,7 @@ def Sol_CallValueOp : Sol_Op<"callvalue"> {
   let assemblyFormat = "attr-dict `:` type($val)";
 }
 
-def Sol_SigOp : Sol_Op<"sig"> {
+def Sol_SigOp : Sol_Op<"sig", [Pure]> {
   let summary = "Returns the first four bytes of the calldata (msg.sig)";
   let results = (outs Sol_FixedBytesType:$val);
 
@@ -1346,7 +1362,11 @@ def Sol_CodeOp : Sol_Op<"code"> {
   }];
 }
 
-def Sol_CodeHashOp : Sol_Op<"code_hash", [Pure]> {
+def Sol_CodeHashOp : Sol_Op<"code_hash"> {
+  let description = [{
+    A call, `new` or a value transfer can change an address's code hash, so
+    the op has no effect interface.
+  }];
   let arguments = (ins Sol_AddressType:$contAddr);
   let results = (outs UI256:$out);
 

@@ -439,8 +439,12 @@ def Yul_CallerOp : Yul_Op<"caller", [Pure]> {
   let assemblyFormat = "attr-dict";
 }
 
-def Yul_GasOp : Yul_Op<"gas", [Pure]> {
+def Yul_GasOp : Yul_Op<"gas"> {
   let summary = "Represents the `gas` call in yul";
+  let description = [{
+    The remaining gas falls with every instruction, so the op has no effect
+    interface and two reads are never merged.
+  }];
   let results = (outs I256:$out);
   let assemblyFormat = "attr-dict";
 }
@@ -582,8 +586,13 @@ def Yul_MCopyOp : Yul_Op<"mcopy", [MemoryEffects<[MemRead<Yul_MemoryResource>,
   let assemblyFormat = "$dst `,` $src `,` $size attr-dict";
 }
 
-def Yul_MSizeOp : Yul_Op<"msize", [MemoryEffects<[MemRead<Yul_MemoryResource>]>]> {
+def Yul_MSizeOp : Yul_Op<"msize", [MemoryEffects<[MemRead<Yul_MemoryResource>,
+    MemWrite<Yul_MemoryResource>]>]> {
   let summary = "Represents the `msize` call in yul";
+  let description = [{
+    Any memory access, a read included, can grow the memory size. The write
+    orders the op against every memory access.
+  }];
   let results = (outs I256:$out);
   let assemblyFormat = "attr-dict";
 }
@@ -613,8 +622,11 @@ def Yul_CallDataCopyOp : Yul_Op<"calldatacopy", [MemoryEffects<[MemWrite<Yul_Mem
   let assemblyFormat = "$dst `,` $src `,` $size attr-dict";
 }
 
-def Yul_ReturnDataSizeOp : Yul_Op<"returndatasize", [Pure]> {
+def Yul_ReturnDataSizeOp : Yul_Op<"returndatasize"> {
   let summary = "Represents the `returndatasize` call in yul";
+  let description = [{
+    Every call replaces the return data, so the op has no effect interface.
+  }];
   let results = (outs I256:$out);
   let assemblyFormat = "attr-dict";
 }
@@ -687,15 +699,23 @@ def Yul_ExtCodeCopyOp : Yul_Op<"extcodecopy", [MemoryEffects<[MemWrite<Yul_Memor
   let assemblyFormat = "$addr `,` $dst `,` $src `,` $size attr-dict";
 }
 
-def Yul_ExtCodeSizeOp : Yul_Op<"extcodesize", [Pure]> {
+def Yul_ExtCodeSizeOp : Yul_Op<"extcodesize"> {
   let summary = "Represents the `extcodesize` call in yul";
+  let description = [{
+    A call or a create can change an account's code, so the op has no effect
+    interface.
+  }];
   let arguments = (ins I256:$addr);
   let results = (outs I256:$out);
   let assemblyFormat = "$addr attr-dict";
 }
 
-def Yul_ExtCodeHashOp : Yul_Op<"extcodehash", [Pure]> {
+def Yul_ExtCodeHashOp : Yul_Op<"extcodehash"> {
   let summary = "Represents the `extcodehash` call in yul";
+  let description = [{
+    A call, a create or a value transfer can change an account's code hash,
+    so the op has no effect interface.
+  }];
   let arguments = (ins I256:$addr);
   let results = (outs I256:$out);
   let assemblyFormat = "$addr attr-dict";

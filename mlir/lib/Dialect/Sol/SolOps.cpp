@@ -505,6 +505,104 @@ void GepOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         idx, /*no_panic_bounds=*/false);
 }
 
+namespace {
+/// The effects of a gep's lowering: the bounds check may revert, and a
+/// dynamic base is read for its length. A calldata element with dynamic
+/// content also reads and validates its offset word.
+struct GepEffects {
+  bool readsBase = false;
+  bool mayRevert = false;
+};
+
+GepEffects getGepEffects(GepOp op) {
+  Type baseTy = op.getBaseAddr().getType();
+  DataLocation dataLoc = getDataLocation(baseTy);
+  GepEffects effects;
+  if (dataLoc == DataLocation::Stack)
+    return effects;
+
+  auto readsCallDataOffset = [&](Type eltTy) {
+    if (dataLoc == DataLocation::CallData && hasDynamicallySizedElt(eltTy))
+      effects.readsBase = effects.mayRevert = true;
+  };
+
+  if (auto structTy = dyn_cast<StructType>(baseTy)) {
+    auto idxAttr = cast<ConstantOp>(op.getIdx().getDefiningOp()).getValue();
+    readsCallDataOffset(
+        structTy.getMemberTypes()[cast<IntegerAttr>(idxAttr).getUInt()]);
+    return effects;
+  }
+
+  if (auto arrTy = dyn_cast<ArrayType>(baseTy)) {
+    APInt idx;
+    if (arrTy.isDynSized() || !matchPattern(op.getIdx(), m_ConstantInt(&idx)) ||
+        idx.zext(256).uge(arrTy.getSize()))
+      effects.mayRevert = true;
+    if (arrTy.isDynSized())
+      effects.readsBase = true;
+    readsCallDataOffset(arrTy.getEltType());
+    return effects;
+  }
+
+  effects.readsBase = effects.mayRevert = true;
+  return effects;
+}
+} // namespace
+
+void GepOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  GepEffects gepEffects = getGepEffects(*this);
+  if (gepEffects.readsBase)
+    effects.emplace_back(
+        MemoryEffects::Read::get(), &getBaseAddrMutable(),
+        getResource(getDataLocation(getBaseAddr().getType())));
+  if (gepEffects.mayRevert)
+    effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                         getValidationResource());
+}
+
+Speculation::Speculatability GepOp::getSpeculatability() {
+  return getGepEffects(*this).mayRevert ? Speculation::NotSpeculatable
+                                        : Speculation::Speculatable;
+}
+
+//===----------------------------------------------------------------------===//
+// MapOp
+//===----------------------------------------------------------------------===//
+
+void MapOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  Type keyTy = getKey().getType();
+  if (isa<EnumType>(keyTy)) {
+    effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                         getValidationResource());
+    return;
+  }
+  if (!isa<StringType>(keyTy))
+    return;
+
+  // The key is copied above the free pointer, which is read from memory.
+  DataLocation keyLoc = getDataLocation(keyTy);
+  effects.emplace_back(MemoryEffects::Read::get(), &getKeyMutable(),
+                       getResource(keyLoc));
+  if (keyLoc != DataLocation::Memory)
+    effects.emplace_back(MemoryEffects::Read::get(), Attribute{},
+                         getResource(DataLocation::Memory));
+  if (keyLoc == DataLocation::Storage)
+    effects.emplace_back(MemoryEffects::Write::get(), Attribute{},
+                         getValidationResource());
+}
+
+Speculation::Speculatability MapOp::getSpeculatability() {
+  Type keyTy = getKey().getType();
+  bool mayPanic = isa<EnumType>(keyTy) ||
+                  (isa<StringType>(keyTy) &&
+                   getDataLocation(keyTy) == DataLocation::Storage);
+  return mayPanic ? Speculation::NotSpeculatable : Speculation::Speculatable;
+}
+
 //===----------------------------------------------------------------------===//
 // EmitOp
 //===----------------------------------------------------------------------===//
