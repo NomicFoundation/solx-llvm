@@ -641,10 +641,19 @@ LogicalResult InlineAsmOp::verify() {
 // YulValCastOp
 //===----------------------------------------------------------------------===//
 
+/// Whether `values` is one Sol value and `words` the Yul words it reads as.
+static bool isValueAndWords(TypeRange values, TypeRange words) {
+  auto isWord = [](Type type) { return type.isSignlessInteger(256); };
+  return values.size() == 1 && !isWord(values.front()) &&
+         llvm::all_of(words, isWord) &&
+         words.size() == getYulWordCount(values.front());
+}
+
 LogicalResult YulValCastOp::verify() {
-  if (yul::isI256OrI256LLVMStruct(getSrc().getType()) ==
-      yul::isI256OrI256LLVMStruct(getOut().getType()))
-    return emitOpError("expects exactly one side to be a Yul value");
+  if (!isValueAndWords(getSrc().getTypes(), getOut().getTypes()) &&
+      !isValueAndWords(getOut().getTypes(), getSrc().getTypes()))
+    return emitOpError("expects a Sol value on one side and the Yul words it "
+                       "reads as on the other");
   return success();
 }
 

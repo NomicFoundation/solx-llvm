@@ -49,16 +49,20 @@ struct ExternalResource : public SideEffects::Resource::Base<ExternalResource> {
 };
 
 /// Implemented by a dialect whose values inline assembly reads and writes, so a
-/// Yul op carries such a value across its regions as the Yul value it reads as.
+/// Yul op carries such a value across its regions as the words it reads as.
 class BridgeInterface : public DialectInterface::Base<BridgeInterface> {
 public:
   BridgeInterface(Dialect *dialect) : Base(dialect) {}
 
-  /// The Yul value `value` reads as.
-  virtual Value toYul(OpBuilder &builder, Location loc, Value value) const = 0;
+  /// The number of words a value of `type` reads as.
+  virtual unsigned getWordCount(Type type) const = 0;
 
-  /// The value of `type` that Yul writes as `yulValue`.
-  virtual Value fromYul(OpBuilder &builder, Location loc, Value yulValue,
+  /// The words `value` reads as.
+  virtual SmallVector<Value> toYul(OpBuilder &builder, Location loc,
+                                   Value value) const = 0;
+
+  /// The value of `type` that `words` write.
+  virtual Value fromYul(OpBuilder &builder, Location loc, ValueRange words,
                         Type type) const = 0;
 };
 } // namespace mlir::yul

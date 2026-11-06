@@ -475,7 +475,7 @@ void YulPtrCastOp::getPromotableSlotAliases(
 Value YulPtrCastOp::projectSlotValueToAliasValue(
     OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
     const MemorySlot &aliasSlot, Value slotValue, OpBuilder &builder) {
-  return YulValCastOp::create(builder, getLoc(), aliasSlot.elemType, slotValue);
+  return YulValCastOp::create(builder, getLoc(), slotValue).getOut().front();
 }
 
 Value YulPtrCastOp::projectAliasValueToSlotValue(
@@ -483,7 +483,9 @@ Value YulPtrCastOp::projectAliasValueToSlotValue(
     const MemorySlot &aliasSlot, Value aliasValue, Value reachingDef,
     OpBuilder &builder) {
   return YulValCastOp::create(builder, getLoc(), parentSlot.elemType,
-                              aliasValue);
+                              aliasValue)
+      .getOut()
+      .front();
 }
 
 bool YulPtrCastOp::canUsesBeRemoved(
@@ -508,7 +510,7 @@ void YulStorageSlotOp::getPromotableSlotAliases(
 Value YulStorageSlotOp::projectSlotValueToAliasValue(
     OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
     const MemorySlot &aliasSlot, Value slotValue, OpBuilder &builder) {
-  return YulValCastOp::create(builder, getLoc(), aliasSlot.elemType, slotValue);
+  return YulValCastOp::create(builder, getLoc(), slotValue).getOut().front();
 }
 
 Value YulStorageSlotOp::projectAliasValueToSlotValue(
@@ -516,7 +518,9 @@ Value YulStorageSlotOp::projectAliasValueToSlotValue(
     const MemorySlot &aliasSlot, Value aliasValue, Value reachingDef,
     OpBuilder &builder) {
   return YulValCastOp::create(builder, getLoc(), parentSlot.elemType,
-                              aliasValue);
+                              aliasValue)
+      .getOut()
+      .front();
 }
 
 bool YulStorageSlotOp::canUsesBeRemoved(
@@ -529,5 +533,176 @@ bool YulStorageSlotOp::canUsesBeRemoved(
 
 DeletionKind YulStorageSlotOp::removeBlockingUses(
     const SmallPtrSetImpl<OpOperand *> &blockingUses, OpBuilder &builder) {
+  return DeletionKind::Delete;
+}
+
+//===----------------------------------------------------------------------===//
+// YulCallDataOffsetOp, YulCallDataLengthOp, YulSelectorOp, YulFuncAddrOp
+//===----------------------------------------------------------------------===//
+
+/// Word `index` of the variable's value, which inline assembly reads.
+static Value extractWord(Location loc, Value slotValue, unsigned index,
+                         OpBuilder &builder) {
+  return YulValCastOp::create(builder, loc, slotValue).getOut()[index];
+}
+
+/// The variable's value with word `index` replaced by the one inline assembly
+/// writes.
+static Value insertWord(Location loc, Value reachingDef, Value word,
+                        unsigned index, OpBuilder &builder) {
+  SmallVector<Value> words =
+      llvm::to_vector_of<Value>(
+          YulValCastOp::create(builder, loc, reachingDef).getOut());
+  words[index] = word;
+  return YulValCastOp::create(builder, loc, reachingDef.getType(), words)
+      .getOut()
+      .front();
+}
+
+void YulCallDataOffsetOp::getPromotableSlotAliases(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    SmallVectorImpl<MemorySlot> &newMemorySlots) {
+  exposeWord(getOut(), newMemorySlots);
+}
+
+Value YulCallDataOffsetOp::projectSlotValueToAliasValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value slotValue, OpBuilder &builder) {
+  return extractWord(getLoc(), slotValue, 0, builder);
+}
+
+Value YulCallDataOffsetOp::projectAliasValueToSlotValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value aliasValue, Value reachingDef,
+    OpBuilder &builder) {
+  return insertWord(getLoc(), reachingDef, aliasValue, 0, builder);
+}
+
+bool YulCallDataOffsetOp::canUsesBeRemoved(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses,
+    SmallVectorImpl<OpOperand *> &newBlockingUses,
+    const DataLayout &dataLayout) {
+  blockUses(getOut(), newBlockingUses);
+  return true;
+}
+
+DeletionKind YulCallDataOffsetOp::removeBlockingUses(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses, OpBuilder &builder) {
+  return DeletionKind::Delete;
+}
+
+void YulCallDataLengthOp::getPromotableSlotAliases(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    SmallVectorImpl<MemorySlot> &newMemorySlots) {
+  exposeWord(getOut(), newMemorySlots);
+}
+
+Value YulCallDataLengthOp::projectSlotValueToAliasValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value slotValue, OpBuilder &builder) {
+  return extractWord(getLoc(), slotValue, 1, builder);
+}
+
+Value YulCallDataLengthOp::projectAliasValueToSlotValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value aliasValue, Value reachingDef,
+    OpBuilder &builder) {
+  return insertWord(getLoc(), reachingDef, aliasValue, 1, builder);
+}
+
+bool YulCallDataLengthOp::canUsesBeRemoved(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses,
+    SmallVectorImpl<OpOperand *> &newBlockingUses,
+    const DataLayout &dataLayout) {
+  blockUses(getOut(), newBlockingUses);
+  return true;
+}
+
+DeletionKind YulCallDataLengthOp::removeBlockingUses(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses, OpBuilder &builder) {
+  return DeletionKind::Delete;
+}
+
+void YulFuncAddrOp::getPromotableSlotAliases(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    SmallVectorImpl<MemorySlot> &newMemorySlots) {
+  exposeWord(getOut(), newMemorySlots);
+}
+
+Value YulFuncAddrOp::projectSlotValueToAliasValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value slotValue, OpBuilder &builder) {
+  return extractWord(getLoc(), slotValue, 0, builder);
+}
+
+Value YulFuncAddrOp::projectAliasValueToSlotValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value aliasValue, Value reachingDef,
+    OpBuilder &builder) {
+  return insertWord(getLoc(), reachingDef, aliasValue, 0, builder);
+}
+
+bool YulFuncAddrOp::canUsesBeRemoved(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses,
+    SmallVectorImpl<OpOperand *> &newBlockingUses,
+    const DataLayout &dataLayout) {
+  blockUses(getOut(), newBlockingUses);
+  return true;
+}
+
+DeletionKind YulFuncAddrOp::removeBlockingUses(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses, OpBuilder &builder) {
+  return DeletionKind::Delete;
+}
+
+void YulSelectorOp::getPromotableSlotAliases(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    SmallVectorImpl<MemorySlot> &newMemorySlots) {
+  exposeWord(getOut(), newMemorySlots);
+}
+
+Value YulSelectorOp::projectSlotValueToAliasValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value slotValue, OpBuilder &builder) {
+  return extractWord(getLoc(), slotValue, 1, builder);
+}
+
+Value YulSelectorOp::projectAliasValueToSlotValue(
+    OpOperand &aliasedSlotPointerOperand, const MemorySlot &parentSlot,
+    const MemorySlot &aliasSlot, Value aliasValue, Value reachingDef,
+    OpBuilder &builder) {
+  return insertWord(getLoc(), reachingDef, aliasValue, 1, builder);
+}
+
+bool YulSelectorOp::canUsesBeRemoved(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses,
+    SmallVectorImpl<OpOperand *> &newBlockingUses,
+    const DataLayout &dataLayout) {
+  blockUses(getOut(), newBlockingUses);
+  return true;
+}
+
+DeletionKind YulSelectorOp::removeBlockingUses(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses, OpBuilder &builder) {
+  return DeletionKind::Delete;
+}
+
+//===----------------------------------------------------------------------===//
+// YulStorageOffsetOp
+//===----------------------------------------------------------------------===//
+
+/// The offset of a storage reference is 0, whatever the variable holds.
+bool YulStorageOffsetOp::canUsesBeRemoved(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses,
+    SmallVectorImpl<OpOperand *> &newBlockingUses,
+    const DataLayout &dataLayout) {
+  return true;
+}
+
+DeletionKind YulStorageOffsetOp::removeBlockingUses(
+    const SmallPtrSetImpl<OpOperand *> &blockingUses, OpBuilder &builder) {
+  Type word = getOut().getType();
+  getOut().replaceAllUsesWith(yul::ConstantOp::create(
+      builder, getLoc(), word, builder.getIntegerAttr(word, 0)));
   return DeletionKind::Delete;
 }

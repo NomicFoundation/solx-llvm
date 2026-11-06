@@ -479,8 +479,18 @@ sol.contract @C {
 
 sol.contract @C {
   sol.func @f(%x: ui256) {
-    // expected-error @below {{'sol.yul_val_cast' op expects exactly one side to be a Yul value}}
+    // expected-error @below {{'sol.yul_val_cast' op expects a Sol value on one side and the Yul words it reads as on the other}}
     %0 = sol.yul_val_cast %x : ui256 -> ui256
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%s: !sol.string<CallData>) {
+    // expected-error @below {{'sol.yul_val_cast' op expects a Sol value on one side and the Yul words it reads as on the other}}
+    %0 = sol.yul_val_cast %s : !sol.string<CallData> -> i256
     sol.return
   }
 } {kind = #sol<ContractKind Contract>, runtime}

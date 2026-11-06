@@ -59,20 +59,24 @@ struct SolOpAsmDialectInterface : public OpAsmDialectInterface {
   }
 };
 
-/// Inline assembly reads a Solidity variable as one Yul word and writes it back
-/// as one.
+/// Inline assembly reads a Solidity variable as its Yul words and writes it
+/// back as them.
 struct SolBridgeInterface : public yul::BridgeInterface {
   using BridgeInterface::BridgeInterface;
 
-  Value toYul(OpBuilder &builder, Location loc, Value value) const override {
-    return YulValCastOp::create(builder, loc,
-                                IntegerType::get(builder.getContext(), 256),
-                                value);
+  unsigned getWordCount(Type type) const override {
+    return getYulWordCount(type);
   }
 
-  Value fromYul(OpBuilder &builder, Location loc, Value yulValue,
+  SmallVector<Value> toYul(OpBuilder &builder, Location loc,
+                           Value value) const override {
+    return llvm::to_vector_of<Value>(
+        YulValCastOp::create(builder, loc, value).getOut());
+  }
+
+  Value fromYul(OpBuilder &builder, Location loc, ValueRange words,
                 Type type) const override {
-    return YulValCastOp::create(builder, loc, type, yulValue);
+    return YulValCastOp::create(builder, loc, type, words).getOut().front();
   }
 };
 
@@ -220,6 +224,14 @@ bool mlir::sol::isStackPtrToDynCallData(Type type) {
 
 bool mlir::sol::isStackPtrToExtFuncRef(Type type) {
   return isa_and_nonnull<ExtFuncRefType>(getStackPointee(type));
+}
+
+unsigned mlir::sol::getYulWordCount(Type type) {
+  if (isa<ExtFuncRefType>(type) ||
+      (getDataLocation(type) == DataLocation::CallData &&
+       isDynamicallySized(type)))
+    return 2;
+  return 1;
 }
 
 bool mlir::sol::isLeftAligned(Type ty) {

@@ -4644,7 +4644,41 @@ struct InlineAsmOpLowering : public OpConversionPattern<sol::InlineAsmOp> {
   }
 };
 
-// sol.yul_ptr_cast / sol.yul_val_cast / sol.yul_storage_slot
+// sol.yul_val_cast: a one-word value is its word, and a two-word one the
+// struct its type converts to, split into or joined from its words.
+struct YulValCastOpLowering : public OpConversionPattern<sol::YulValCastOp> {
+  using OpConversionPattern<sol::YulValCastOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(sol::YulValCastOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &r) const override {
+    ValueRange src = adaptor.getSrc();
+    Location loc = op.getLoc();
+    if (src.size() == op.getOut().size()) {
+      r.replaceOp(op, src);
+      return success();
+    }
+    if (src.size() == 1) {
+      SmallVector<Value> words;
+      for (int64_t index : llvm::seq<int64_t>(op.getOut().size()))
+        words.push_back(r.create<LLVM::ExtractValueOp>(
+            loc, r.getIntegerType(256), src.front(),
+            r.getDenseI64ArrayAttr({index})));
+      r.replaceOp(op, words);
+      return success();
+    }
+    Type structTy =
+        getTypeConverter()->convertType(op.getOut().front().getType());
+    Value joined = r.create<LLVM::UndefOp>(loc, structTy);
+    for (auto [index, word] : llvm::enumerate(src))
+      joined = r.create<LLVM::InsertValueOp>(
+          loc, joined, word,
+          r.getDenseI64ArrayAttr({static_cast<int64_t>(index)}));
+    r.replaceOp(op, joined);
+    return success();
+  }
+};
+
+// sol.yul_ptr_cast / sol.yul_storage_slot
 template <typename OpT>
 struct IdentityCastLowering : public OpConversionPattern<OpT> {
   using OpConversionPattern<OpT>::OpConversionPattern;
@@ -4743,8 +4777,7 @@ struct StateVarFieldLowering : public OpConversionPattern<OpT> {
 void evm::populateInlineAsmPats(RewritePatternSet &pats,
                                 TypeConverter &tyConv) {
   pats.add<InlineAsmOpLowering, IdentityCastLowering<sol::YulPtrCastOp>,
-           IdentityCastLowering<sol::YulValCastOp>,
-           IdentityCastLowering<sol::YulStorageSlotOp>,
+           YulValCastOpLowering, IdentityCastLowering<sol::YulStorageSlotOp>,
            CallDataMemberLowering<sol::YulCallDataOffsetOp, 0>,
            CallDataMemberLowering<sol::YulCallDataLengthOp, 1>,
            ExtFuncMemberLowering<sol::YulFuncAddrOp, 0>,

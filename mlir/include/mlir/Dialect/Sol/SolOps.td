@@ -1538,9 +1538,28 @@ def Sol_YulPtrCastOp : Sol_Op<"yul_ptr_cast", [Pure,
 }
 
 def Sol_YulValCastOp : Sol_Op<"yul_val_cast", [Pure]> {
-  let summary = "Reinterpret a sol value as its yul value, or back";
-  let arguments = (ins AnyType:$src);
-  let results = (outs AnyType:$out);
+  let summary = "Reinterpret a sol value as its yul words, or back";
+  let description = [{
+    A dynamically-sized calldata reference and an external function reference
+    are two words. Any other value is one.
+  }];
+  let arguments = (ins Variadic<AnyType>:$src);
+  let results = (outs Variadic<AnyType>:$out);
+
+  let builders = [
+    // The words `src` reads as.
+    OpBuilder<(ins "Value":$src), [{
+      $_state.addOperands(src);
+      $_state.addTypes(SmallVector<Type>(getYulWordCount(src.getType()),
+                                         $_builder.getIntegerType(256)));
+    }]>,
+    // The value of `out` that `words` write.
+    OpBuilder<(ins "Type":$out, "ValueRange":$words), [{
+      $_state.addOperands(words);
+      $_state.addTypes(out);
+    }]>,
+  ];
+
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";
   let hasVerifier = 1;
 }
@@ -1562,35 +1581,61 @@ def Sol_YulStorageSlotOp : Sol_Op<"yul_storage_slot", [Pure,
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";
 }
 
-def Sol_YulCallDataOffsetOp : Sol_Op<"yul_calldata_offset", [Pure]> {
+def Sol_YulCallDataOffsetOp : Sol_Op<"yul_calldata_offset", [Pure,
+  DeclareOpInterfaceMethods<PromotableOpInterface,
+                            ["canUsesBeRemoved", "removeBlockingUses"]>,
+  DeclareOpInterfaceMethods<PromotableAliaserInterface,
+                            ["getPromotableSlotAliases",
+                             "projectSlotValueToAliasValue",
+                             "projectAliasValueToSlotValue"]>]> {
   let summary = "yul.ptr to the offset field of a calldata dynamic ref alloca";
   let arguments = (ins Sol_DynCallDataStackPtr:$src);
   let results = (outs Sol_YulPtr:$out);
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";
 }
 
-def Sol_YulCallDataLengthOp : Sol_Op<"yul_calldata_length", [Pure]> {
+def Sol_YulCallDataLengthOp : Sol_Op<"yul_calldata_length", [Pure,
+  DeclareOpInterfaceMethods<PromotableOpInterface,
+                            ["canUsesBeRemoved", "removeBlockingUses"]>,
+  DeclareOpInterfaceMethods<PromotableAliaserInterface,
+                            ["getPromotableSlotAliases",
+                             "projectSlotValueToAliasValue",
+                             "projectAliasValueToSlotValue"]>]> {
   let summary = "yul.ptr to the length field of a calldata dynamic ref alloca";
   let arguments = (ins Sol_DynCallDataStackPtr:$src);
   let results = (outs Sol_YulPtr:$out);
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";
 }
 
-def Sol_YulSelectorOp : Sol_Op<"yul_selector", [Pure]> {
+def Sol_YulSelectorOp : Sol_Op<"yul_selector", [Pure,
+  DeclareOpInterfaceMethods<PromotableOpInterface,
+                            ["canUsesBeRemoved", "removeBlockingUses"]>,
+  DeclareOpInterfaceMethods<PromotableAliaserInterface,
+                            ["getPromotableSlotAliases",
+                             "projectSlotValueToAliasValue",
+                             "projectAliasValueToSlotValue"]>]> {
   let summary = "yul.ptr to the selector field of an ext_func_ref alloca";
   let arguments = (ins Sol_ExtFuncRefStackPtr:$src);
   let results = (outs Sol_YulPtr:$out);
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";
 }
 
-def Sol_YulFuncAddrOp : Sol_Op<"yul_address_of", [Pure]> {
+def Sol_YulFuncAddrOp : Sol_Op<"yul_address_of", [Pure,
+  DeclareOpInterfaceMethods<PromotableOpInterface,
+                            ["canUsesBeRemoved", "removeBlockingUses"]>,
+  DeclareOpInterfaceMethods<PromotableAliaserInterface,
+                            ["getPromotableSlotAliases",
+                             "projectSlotValueToAliasValue",
+                             "projectAliasValueToSlotValue"]>]> {
   let summary = "yul.ptr to the address field of an ext_func_ref alloca";
   let arguments = (ins Sol_ExtFuncRefStackPtr:$src);
   let results = (outs Sol_YulPtr:$out);
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($out)";
 }
 
-def Sol_YulStorageOffsetOp : Sol_Op<"yul_storage_offset", [Pure]> {
+def Sol_YulStorageOffsetOp : Sol_Op<"yul_storage_offset", [Pure,
+  DeclareOpInterfaceMethods<PromotableOpInterface,
+                            ["canUsesBeRemoved", "removeBlockingUses"]>]> {
   let summary = "Read `.offset` of a local storage ref (always 0 for ref types)";
   let arguments = (ins Sol_StorageRefStackPtr:$src);
   let results = (outs I256:$out);

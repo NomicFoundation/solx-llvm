@@ -77,6 +77,11 @@ bool isStackPtrToDynCallData(Type type);
 /// reference type.
 bool isStackPtrToExtFuncRef(Type type);
 
+/// The number of Yul words inline assembly reads a value of `type` as: two for
+/// a dynamically-sized calldata reference or an external function reference,
+/// one otherwise.
+unsigned getYulWordCount(Type type);
+
 /// Returns the element type of a non mapping reference type.
 Type getEltType(Type ty, Index structTyIdx = 0);
 

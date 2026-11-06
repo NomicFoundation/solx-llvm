@@ -50,6 +50,32 @@ module {
 
 module {
   sol.contract @C {
+    // A two-word value splits into the fields of the struct its type converts
+    // to, and joins back into one.
+    // CHECK-LABEL: yul.func @words : (!llvm.struct<(i256, i256)>, i256) -> !llvm.struct<(i256, i256)>
+    // CHECK-NEXT:  ^bb0(%[[S:.*]]: !llvm.struct<(i256, i256)>, %[[N:.*]]: i256):
+    // CHECK-NEXT:    %[[O:.*]] = llvm.extractvalue %[[S]][0] : !llvm.struct<(i256, i256)>
+    // CHECK-NEXT:    %{{.*}} = llvm.extractvalue %[[S]][1] : !llvm.struct<(i256, i256)>
+    // CHECK-NEXT:    %[[U:.*]] = llvm.mlir.undef : !llvm.struct<(i256, i256)>
+    // CHECK-NEXT:    %[[J0:.*]] = llvm.insertvalue %[[O]], %[[U]][0] : !llvm.struct<(i256, i256)>
+    // CHECK-NEXT:    %[[J1:.*]] = llvm.insertvalue %[[N]], %[[J0]][1] : !llvm.struct<(i256, i256)>
+    // CHECK-NEXT:    yul.func_return %[[J1]] : !llvm.struct<(i256, i256)>
+    sol.func @words(%s: !sol.string<CallData>, %n: ui256) -> !sol.string<CallData> {
+      %0 = sol.inline_asm -> !sol.string<CallData> {
+        %1 = sol.yul_val_cast %n : ui256 -> i256
+        %2:2 = sol.yul_val_cast %s : !sol.string<CallData> -> i256, i256
+        %3 = sol.yul_val_cast %2#0, %1 : i256, i256 -> !sol.string<CallData>
+        sol.yield %3 : !sol.string<CallData>
+      }
+      sol.return %0 : !sol.string<CallData>
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+module {
+  sol.contract @C {
     // d.offset / d.length are the fields of the {offset, length} calldata slot.
     // CHECK-LABEL: yul.func @calldataMembers : (!llvm.struct<(i256, i256)>) -> (i256, i256)
     // CHECK:       ^bb0(%[[ARG:.*]]: !llvm.struct<(i256, i256)>):
