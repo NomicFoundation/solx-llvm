@@ -608,14 +608,15 @@ SmallVector<Region *> DoWhileOp::getLoopRegions() { return {&getBody()}; }
 OperandRange DoWhileOp::getEntrySuccessorOperands(RegionBranchPoint point) {
   assert(point == getBody() &&
          "yul.do entry successor is expected to be the body region");
-  auto operandEnd = (*this)->operand_end();
-  return OperandRange(operandEnd, operandEnd);
+  return getInitArgs();
 }
 
-MutableArrayRef<OpOperand> DoWhileOp::getInitsMutable() { return {}; }
+MutableArrayRef<OpOperand> DoWhileOp::getInitsMutable() {
+  return (*this)->getOpOperands();
+}
 
 Block::BlockArgListType DoWhileOp::getRegionIterArgs() {
-  return Block::BlockArgListType();
+  return getBody().front().getArguments();
 }
 
 std::optional<MutableArrayRef<OpOperand>> DoWhileOp::getYieldedValuesMutable() {

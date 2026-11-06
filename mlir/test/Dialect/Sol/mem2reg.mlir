@@ -178,4 +178,136 @@ sol.contract @C {
     %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
     sol.return %1 : ui256
   }
+
+  // A sol.leave nested in an if carries the value out of the scope.
+  // CHECK-LABEL: sol.func @nestedLeave(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[Y:[^:]*]]: ui256, %[[C:[^:]*]]: i1
+  // CHECK-NEXT:    %[[R:.*]] = sol.scope -> ui256 {
+  // CHECK-NEXT:      sol.if %[[C]] {
+  // CHECK-NEXT:        sol.leave %[[X]] : ui256
+  // CHECK-NEXT:      } else {
+  // CHECK-NEXT:      }
+  // CHECK-NEXT:      sol.yield %[[Y]] : ui256
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:    sol.return %[[R]] : ui256
+  sol.func @nestedLeave(%x: ui256, %y: ui256, %c: i1) -> ui256 {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.scope {
+      sol.if %c {
+        sol.leave
+      } else {
+      }
+      sol.store %y, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.yield
+    }
+    %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+    sol.return %1 : ui256
+  }
+
+  // A value stored in a loop is carried from one iteration to the next, and
+  // leaves through the condition.
+  // CHECK-LABEL: sol.func @whileLoop(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[N:[^:]*]]: ui256
+  // CHECK-NEXT:    %[[R:.*]] = sol.while %[[X]] : ui256 -> ui256 {
+  // CHECK-NEXT:    ^bb0(%[[I:.*]]: ui256):
+  // CHECK-NEXT:      %[[LT:.*]] = sol.cmp lt, %[[I]], %[[N]] : ui256
+  // CHECK-NEXT:      sol.condition %[[LT]], %[[I]] : ui256
+  // CHECK-NEXT:    } do {
+  // CHECK-NEXT:    ^bb0(%[[J:.*]]: ui256):
+  // CHECK-NEXT:      %[[ONE:.*]] = sol.constant 1 : ui256
+  // CHECK-NEXT:      %[[NEXT:.*]] = sol.add %[[J]], %[[ONE]] : ui256
+  // CHECK-NEXT:      sol.yield %[[NEXT]] : ui256
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:    sol.return %[[R]] : ui256
+  sol.func @whileLoop(%x: ui256, %n: ui256) -> ui256 {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.while {
+      %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+      %2 = sol.cmp lt, %1, %n : ui256
+      sol.condition %2
+    } do {
+      %3 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+      %c1 = sol.constant 1 : ui256
+      %4 = sol.add %3, %c1 : ui256
+      sol.store %4, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.yield
+    }
+    %5 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+    sol.return %5 : ui256
+  }
+
+  // A break or continue in a region that doesn't use the slot carries the
+  // value there.
+  // CHECK-LABEL: sol.func @exits(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[B:[^:]*]]: i1, %[[K:[^:]*]]: i1
+  // CHECK-NEXT:    %[[R:.*]] = sol.for %[[X]] : ui256 -> ui256 cond {
+  // CHECK-NEXT:    ^bb0(%[[I:.*]]: ui256):
+  // CHECK-NEXT:      sol.condition %[[B]], %[[I]] : ui256
+  // CHECK-NEXT:    } body {
+  // CHECK-NEXT:    ^bb0(%[[J:.*]]: ui256):
+  // CHECK-NEXT:      sol.if %[[B]] {
+  // CHECK-NEXT:        sol.break %[[J]] : ui256
+  // CHECK-NEXT:      } else {
+  // CHECK-NEXT:      }
+  // CHECK-NEXT:      %[[ONE:.*]] = sol.constant 1 : ui256
+  // CHECK-NEXT:      %[[NEXT:.*]] = sol.add %[[J]], %[[ONE]] : ui256
+  // CHECK-NEXT:      sol.if %[[K]] {
+  // CHECK-NEXT:        sol.continue %[[NEXT]] : ui256
+  // CHECK-NEXT:      } else {
+  // CHECK-NEXT:      }
+  // CHECK-NEXT:      sol.yield %[[NEXT]] : ui256
+  // CHECK-NEXT:    } step {
+  // CHECK-NEXT:    ^bb0(%[[S:.*]]: ui256):
+  // CHECK-NEXT:      sol.yield %[[S]] : ui256
+  // CHECK-NEXT:    }
+  // CHECK-NEXT:    sol.return %[[R]] : ui256
+  sol.func @exits(%x: ui256, %b: i1, %k: i1) -> ui256 {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.for cond {
+      sol.condition %b
+    } body {
+      sol.if %b {
+        sol.break
+      } else {
+      }
+      %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+      %c1 = sol.constant 1 : ui256
+      %2 = sol.add %1, %c1 : ui256
+      sol.store %2, %0 : ui256, !sol.ptr<ui256, Stack>
+      sol.if %k {
+        sol.continue
+      } else {
+      }
+      sol.yield
+    } step {
+      sol.yield
+    }
+    %3 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+    sol.return %3 : ui256
+  }
+
+  // A slot only loaded in a loop isn't carried.
+  // CHECK-LABEL: sol.func @loadOnly(
+  // CHECK-SAME:    %[[X:[^:]*]]: ui256, %[[B:[^:]*]]: i1, %[[P:[^:]*]]: !sol.ptr<ui256, Storage>
+  // CHECK-NEXT:    sol.do {
+  // CHECK-NEXT:      sol.store %[[X]], %[[P]]
+  // CHECK-NEXT:      sol.yield
+  // CHECK-NEXT:    } while {
+  // CHECK-NEXT:      sol.condition %[[B]]
+  // CHECK-NEXT:    }
+  sol.func @loadOnly(%x: ui256, %b: i1, %p: !sol.ptr<ui256, Storage>) {
+    %0 = sol.alloca : !sol.ptr<ui256, Stack>
+    sol.store %x, %0 : ui256, !sol.ptr<ui256, Stack>
+    sol.do {
+      %1 = sol.load %0 : !sol.ptr<ui256, Stack>, ui256
+      sol.store %1, %p : ui256, !sol.ptr<ui256, Storage>
+      sol.yield
+    } while {
+      sol.condition %b
+    }
+    sol.return
+  }
 } {kind = #sol<ContractKind Contract>, runtime}

@@ -17,7 +17,8 @@ include "mlir/Interfaces/LoopLikeInterface.td"
 //
 // Loops in solidity are C-style loops.
 def Sol_LoopOpInterface : OpInterface<"LoopOpInterface", [
-  DeclareOpInterfaceMethods<RegionBranchOpInterface>,
+  DeclareOpInterfaceMethods<RegionBranchOpInterface,
+                            ["getEntrySuccessorOperands"]>,
   DeclareOpInterfaceMethods<LoopLikeOpInterface>
 ]> {
   let cppNamespace = "::mlir::sol";

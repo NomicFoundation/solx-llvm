@@ -3782,28 +3782,29 @@ struct RevertOpLowering : public OpConversionPattern<sol::RevertOp> {
 
 static void lowerSolRegionTerminatorsToYul(Region &region,
                                            ConversionPatternRewriter &r) {
+  auto remapped = [&](ValueRange values) {
+    SmallVector<Value> result;
+    for (Value value : values) {
+      Value remappedValue = r.getRemappedValue(value);
+      result.push_back(remappedValue ? remappedValue : value);
+    }
+    return result;
+  };
   for (Block &block : region) {
     Operation *terminator = block.getTerminator();
+    r.setInsertionPoint(terminator);
     if (auto yieldOp = dyn_cast<sol::YieldOp>(terminator)) {
-      SmallVector<Value> operands;
-      for (Value operand : yieldOp.getIns()) {
-        Value remapped = r.getRemappedValue(operand);
-        operands.push_back(remapped ? remapped : operand);
-      }
-      r.setInsertionPoint(yieldOp);
-      r.replaceOpWithNewOp<yul::YieldOp>(yieldOp, operands);
+      r.replaceOpWithNewOp<yul::YieldOp>(yieldOp, remapped(yieldOp.getIns()));
     } else if (auto conditionOp = dyn_cast<sol::ConditionOp>(terminator)) {
-      r.setInsertionPoint(conditionOp);
-      Value cond = conditionOp.getCondition();
-      if (Value remappedCond = r.getRemappedValue(cond))
-        cond = remappedCond;
-      r.replaceOpWithNewOp<yul::ConditionOp>(conditionOp, cond, ValueRange{});
+      r.replaceOpWithNewOp<yul::ConditionOp>(
+          conditionOp, remapped(conditionOp.getCondition()).front(),
+          remapped(conditionOp.getArgs()));
     } else if (auto breakOp = dyn_cast<sol::BreakOp>(terminator)) {
-      r.setInsertionPoint(breakOp);
-      r.replaceOpWithNewOp<yul::BreakOp>(breakOp);
+      r.replaceOpWithNewOp<yul::BreakOp>(breakOp,
+                                         remapped(breakOp.getValues()));
     } else if (auto continueOp = dyn_cast<sol::ContinueOp>(terminator)) {
-      r.setInsertionPoint(continueOp);
-      r.replaceOpWithNewOp<yul::ContinueOp>(continueOp);
+      r.replaceOpWithNewOp<yul::ContinueOp>(continueOp,
+                                            remapped(continueOp.getValues()));
     }
   }
 }
@@ -3829,9 +3830,9 @@ struct ScopeOpLowering : public OpConversionPattern<sol::ScopeOp> {
 struct LeaveOpLowering : public OpConversionPattern<sol::LeaveOp> {
   using OpConversionPattern<sol::LeaveOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(sol::LeaveOp op, OpAdaptor,
+  LogicalResult matchAndRewrite(sol::LeaveOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &r) const override {
-    r.replaceOpWithNewOp<yul::LeaveScopeOp>(op);
+    r.replaceOpWithNewOp<yul::LeaveScopeOp>(op, adaptor.getValues());
     return success();
   }
 };
@@ -3895,43 +3896,36 @@ struct LoopOpInterfaceLowering
   using OpInterfaceConversionPattern<
       sol::LoopOpInterface>::OpInterfaceConversionPattern;
 
-  LogicalResult matchAndRewrite(sol::LoopOpInterface op, ArrayRef<Value>,
+  LogicalResult matchAndRewrite(sol::LoopOpInterface op,
+                                ArrayRef<Value> initArgs,
                                 ConversionPatternRewriter &r) const override {
     Operation *rawOp = op.getOperation();
-    if (auto forOp = dyn_cast<sol::ForOp>(rawOp)) {
-      auto yulForOp =
-          r.create<yul::ForOp>(forOp.getLoc(), TypeRange{}, ValueRange{});
-      r.inlineRegionBefore(forOp.getCond(), yulForOp.getCond(),
-                           yulForOp.getCond().end());
-      lowerSolRegionTerminatorsToYul(yulForOp.getCond(), r);
-      r.inlineRegionBefore(forOp.getBody(), yulForOp.getBody(),
-                           yulForOp.getBody().end());
-      lowerSolRegionTerminatorsToYul(yulForOp.getBody(), r);
-      r.inlineRegionBefore(forOp.getStep(), yulForOp.getStep(),
-                           yulForOp.getStep().end());
-      lowerSolRegionTerminatorsToYul(yulForOp.getStep(), r);
-    } else if (auto whileOp = dyn_cast<sol::WhileOp>(rawOp)) {
-      auto yulWhileOp =
-          r.create<yul::WhileOp>(whileOp.getLoc(), TypeRange{}, ValueRange{});
-      r.inlineRegionBefore(whileOp.getCond(), yulWhileOp.getCond(),
-                           yulWhileOp.getCond().end());
-      lowerSolRegionTerminatorsToYul(yulWhileOp.getCond(), r);
-      r.inlineRegionBefore(whileOp.getBody(), yulWhileOp.getBody(),
-                           yulWhileOp.getBody().end());
-      lowerSolRegionTerminatorsToYul(yulWhileOp.getBody(), r);
-    } else if (auto doWhileOp = dyn_cast<sol::DoWhileOp>(rawOp)) {
-      auto yulDoWhileOp = r.create<yul::DoWhileOp>(doWhileOp.getLoc());
-      r.inlineRegionBefore(doWhileOp.getBody(), yulDoWhileOp.getBody(),
-                           yulDoWhileOp.getBody().end());
-      lowerSolRegionTerminatorsToYul(yulDoWhileOp.getBody(), r);
-      r.inlineRegionBefore(doWhileOp.getCond(), yulDoWhileOp.getCond(),
-                           yulDoWhileOp.getCond().end());
-      lowerSolRegionTerminatorsToYul(yulDoWhileOp.getCond(), r);
-    } else {
+    SmallVector<Type> resultTypes;
+    if (failed(getTypeConverter()->convertTypes(rawOp->getResultTypes(),
+                                                resultTypes)))
+      return failure();
+
+    // The regions move into the Yul loop in the same order, and their
+    // arguments, the carried values, take the converted types.
+    Operation *yulOp;
+    if (isa<sol::ForOp>(rawOp))
+      yulOp = r.create<yul::ForOp>(rawOp->getLoc(), initArgs);
+    else if (isa<sol::WhileOp>(rawOp))
+      yulOp = r.create<yul::WhileOp>(rawOp->getLoc(), resultTypes, initArgs);
+    else if (isa<sol::DoWhileOp>(rawOp))
+      yulOp = r.create<yul::DoWhileOp>(rawOp->getLoc(), resultTypes, initArgs);
+    else
       llvm_unreachable("unexpected Sol loop op");
+
+    for (auto [solRegion, yulRegion] :
+         llvm::zip_equal(rawOp->getRegions(), yulOp->getRegions())) {
+      r.inlineRegionBefore(solRegion, yulRegion, yulRegion.end());
+      if (failed(r.convertRegionTypes(&yulRegion, *getTypeConverter())))
+        return failure();
+      lowerSolRegionTerminatorsToYul(yulRegion, r);
     }
 
-    r.eraseOp(rawOp);
+    r.replaceOp(rawOp, yulOp->getResults());
     return success();
   }
 };

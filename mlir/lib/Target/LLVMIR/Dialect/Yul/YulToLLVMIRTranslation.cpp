@@ -603,7 +603,7 @@ LogicalResult ObjectTranslation::emitOp(Operation &op, bool &fallsThrough) {
         return success();
       })
       .Case([&](yul::LeaveScopeOp op) {
-        branch(*scopes.back(), {});
+        branch(*scopes.back(), op->getOperands());
         fallsThrough = false;
         return success();
       })

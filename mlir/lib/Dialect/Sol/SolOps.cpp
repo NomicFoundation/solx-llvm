@@ -612,15 +612,6 @@ static LogicalResult verifyYieldedResults(Operation *op, Region &region) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult ScopeOp::verify() {
-  if (getNumResults() != 0) {
-    WalkResult leaves = getBodyRegion().walk([&](LeaveOp leave) {
-      return leave->getParentOfType<ScopeOp>() == *this
-                 ? WalkResult::interrupt()
-                 : WalkResult::advance();
-    });
-    if (leaves.wasInterrupted())
-      return emitOpError("expects no sol.leave when it has results");
-  }
   return verifyYieldedResults(*this, getBodyRegion());
 }
 
@@ -631,6 +622,19 @@ void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
     return;
   }
   regions.push_back(RegionSuccessor(&getBodyRegion()));
+}
+
+//===----------------------------------------------------------------------===//
+// LeaveOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LeaveOp::verify() {
+  auto scope = (*this)->getParentOfType<ScopeOp>();
+  if (!scope)
+    return emitOpError("expects a parent sol.scope");
+  if (TypeRange(getValues().getTypes()) != TypeRange(scope.getResultTypes()))
+    return emitOpError("expects the result types of its scope");
+  return success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -806,8 +810,7 @@ void ConditionOp::getSuccessorRegions(
 
 MutableOperandRange
 ConditionOp::getMutableSuccessorOperands(RegionBranchPoint point) {
-  // No values are yielded to the successor region.
-  return MutableOperandRange(getOperation(), 0, 0);
+  return getArgsMutable();
 }
 
 //===----------------------------------------------------------------------===//
@@ -842,9 +845,49 @@ void LoopOpInterface::getLoopOpSuccessorRegions(
   }
 }
 
+/// Checks that a loop's init args and region arguments have the types of its
+/// results, the values it carries.
+static LogicalResult verifyCarriedValues(Operation *loop) {
+  TypeRange carried = loop->getResultTypes();
+  if (TypeRange(loop->getOperandTypes()) != carried)
+    return loop->emitOpError("expects init args of its result types");
+  for (Region &region : loop->getRegions())
+    if (TypeRange(region.front().getArgumentTypes()) != carried)
+      return loop->emitOpError("expects region arguments of its result types");
+  return success();
+}
+
+/// Checks that a sol.break or sol.continue carries what its loop carries.
+static LogicalResult verifyLoopExit(Operation *exit) {
+  auto loop = exit->getParentOfType<LoopOpInterface>();
+  if (!loop)
+    return exit->emitOpError("expects a parent loop");
+  if (TypeRange(exit->getOperandTypes()) != TypeRange(loop->getResultTypes()))
+    return exit->emitOpError("expects the result types of its loop");
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// BreakOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult BreakOp::verify() { return verifyLoopExit(*this); }
+
+//===----------------------------------------------------------------------===//
+// ContinueOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ContinueOp::verify() { return verifyLoopExit(*this); }
+
 //===----------------------------------------------------------------------===//
 // WhileOp
 //===----------------------------------------------------------------------===//
+
+LogicalResult WhileOp::verify() { return verifyCarriedValues(*this); }
+
+OperandRange WhileOp::getEntrySuccessorOperands(RegionBranchPoint point) {
+  return getInitArgs();
+}
 
 void WhileOp::getSuccessorRegions(RegionBranchPoint point,
                                   SmallVectorImpl<RegionSuccessor> &regions) {
@@ -857,6 +900,12 @@ SmallVector<Region *> WhileOp::getLoopRegions() { return {&getBody()}; }
 // DoWhileOp
 //===----------------------------------------------------------------------===//
 
+LogicalResult DoWhileOp::verify() { return verifyCarriedValues(*this); }
+
+OperandRange DoWhileOp::getEntrySuccessorOperands(RegionBranchPoint point) {
+  return getInitArgs();
+}
+
 void DoWhileOp::getSuccessorRegions(RegionBranchPoint point,
                                     SmallVectorImpl<RegionSuccessor> &regions) {
   LoopOpInterface::getLoopOpSuccessorRegions(*this, point, regions);
@@ -867,6 +916,12 @@ SmallVector<Region *> DoWhileOp::getLoopRegions() { return {&getBody()}; }
 //===----------------------------------------------------------------------===//
 // ForOp
 //===----------------------------------------------------------------------===//
+
+LogicalResult ForOp::verify() { return verifyCarriedValues(*this); }
+
+OperandRange ForOp::getEntrySuccessorOperands(RegionBranchPoint point) {
+  return getInitArgs();
+}
 
 void ForOp::getSuccessorRegions(RegionBranchPoint point,
                                 SmallVectorImpl<RegionSuccessor> &regions) {

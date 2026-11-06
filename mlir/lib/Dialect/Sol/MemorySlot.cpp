@@ -174,17 +174,15 @@ Value IfOp::finalizePromotion(
 
 bool ScopeOp::isRegionPromotable(const MemorySlot &slot, Region *region,
                                  bool hasValueStores) {
-  // A sol.leave carries no value, so a slot stored inside a scope that one
-  // exits stays in memory.
-  if (!hasValueStores)
-    return true;
-  return !getBodyRegion()
-              .walk([&](LeaveOp leave) {
-                return leave->getParentOfType<ScopeOp>() == *this
-                           ? WalkResult::interrupt()
-                           : WalkResult::advance();
-              })
-              .wasInterrupted();
+  return true;
+}
+
+void ScopeOp::getEarlyExits(Region *region,
+                            SmallVectorImpl<Operation *> &exits) {
+  region->walk([&](LeaveOp leave) {
+    if (leave->getParentOfType<ScopeOp>() == *this)
+      exits.push_back(leave);
+  });
 }
 
 void ScopeOp::setupPromotion(
@@ -202,6 +200,11 @@ Value ScopeOp::finalizePromotion(
 
   IRRewriter rewriter(builder);
   yieldSlotValue(getBodyRegion(), reachingDef, reachingAtBlockEnd);
+  SmallVector<Operation *> exits;
+  getEarlyExits(&getBodyRegion(), exits);
+  for (Operation *exit : exits)
+    memoryslot::updateTerminator(exit->getBlock(), reachingDef,
+                                 reachingAtBlockEnd);
 
   SmallVector<Type> resultTypes(getResultTypes());
   resultTypes.push_back(slot.elemType);
@@ -250,4 +253,158 @@ Value TryOp::finalizePromotion(
   return memoryslot::replaceWithNewResults(rewriter, *this, resultTypes)
       ->getResults()
       .back();
+}
+
+//===----------------------------------------------------------------------===//
+// Loops
+//===----------------------------------------------------------------------===//
+
+/// The sol.break and sol.continue ops below `region` that exit `loop`.
+static void collectLoopExits(Operation *loop, Region *region,
+                             SmallVectorImpl<Operation *> &exits) {
+  region->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (op != loop && isa<LoopOpInterface>(op))
+      return WalkResult::skip();
+    if (isa<BreakOp, ContinueOp>(op))
+      exits.push_back(op);
+    return WalkResult::advance();
+  });
+}
+
+/// A slot stored in the loop is carried from one iteration to the next: an
+/// init arg, then an argument of each region.
+template <typename LoopOp>
+static void
+setupLoopPromotion(LoopOp loop, const MemorySlot &slot, Value reachingDef,
+                   bool hasValueStores,
+                   llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) {
+  if (!hasValueStores) {
+    for (Region &region : loop->getRegions())
+      regionsToProcess.insert({&region, reachingDef});
+    return;
+  }
+
+  loop.getInitArgsMutable().append(reachingDef);
+  for (Region &region : loop->getRegions())
+    regionsToProcess.insert(
+        {&region, region.addArgument(slot.elemType, slot.ptr.getLoc())});
+}
+
+/// Passes the slot's value at each exit of a region on: sol.condition to the
+/// body and the loop's results, sol.yield to the next region, sol.break to
+/// the results and sol.continue to the next iteration.
+template <typename LoopOp>
+static Value
+finalizeLoopPromotion(LoopOp loop, const MemorySlot &slot, Value reachingDef,
+                      bool hasValueStores,
+                      const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+                      OpBuilder &builder) {
+  if (!hasValueStores)
+    return reachingDef;
+
+  for (Region &region : loop->getRegions()) {
+    Value carried = region.getArguments().back();
+    for (Block &block : region)
+      if (isa<ConditionOp, YieldOp>(block.getTerminator()))
+        memoryslot::updateTerminator(&block, carried, reachingAtBlockEnd);
+  }
+  SmallVector<Operation *> exits;
+  collectLoopExits(loop, &loop.getBody(), exits);
+  for (Operation *exit : exits)
+    memoryslot::updateTerminator(exit->getBlock(),
+                                 loop.getBody().getArguments().back(),
+                                 reachingAtBlockEnd);
+
+  IRRewriter rewriter(builder);
+  SmallVector<Type> resultTypes(loop->getResultTypes());
+  resultTypes.push_back(slot.elemType);
+  return memoryslot::replaceWithNewResults(rewriter, loop, resultTypes)
+      ->getResults()
+      .back();
+}
+
+//===----------------------------------------------------------------------===//
+// WhileOp
+//===----------------------------------------------------------------------===//
+
+bool WhileOp::isRegionPromotable(const MemorySlot &slot, Region *region,
+                                 bool hasValueStores) {
+  return true;
+}
+
+void WhileOp::setupPromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) {
+  setupLoopPromotion(*this, slot, reachingDef, hasValueStores,
+                     regionsToProcess);
+}
+
+Value WhileOp::finalizePromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+    OpBuilder &builder) {
+  return finalizeLoopPromotion(*this, slot, reachingDef, hasValueStores,
+                               reachingAtBlockEnd, builder);
+}
+
+void WhileOp::getEarlyExits(Region *region,
+                            SmallVectorImpl<Operation *> &exits) {
+  collectLoopExits(*this, region, exits);
+}
+
+//===----------------------------------------------------------------------===//
+// DoWhileOp
+//===----------------------------------------------------------------------===//
+
+bool DoWhileOp::isRegionPromotable(const MemorySlot &slot, Region *region,
+                                   bool hasValueStores) {
+  return true;
+}
+
+void DoWhileOp::setupPromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) {
+  setupLoopPromotion(*this, slot, reachingDef, hasValueStores,
+                     regionsToProcess);
+}
+
+Value DoWhileOp::finalizePromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+    OpBuilder &builder) {
+  return finalizeLoopPromotion(*this, slot, reachingDef, hasValueStores,
+                               reachingAtBlockEnd, builder);
+}
+
+void DoWhileOp::getEarlyExits(Region *region,
+                              SmallVectorImpl<Operation *> &exits) {
+  collectLoopExits(*this, region, exits);
+}
+
+//===----------------------------------------------------------------------===//
+// ForOp
+//===----------------------------------------------------------------------===//
+
+bool ForOp::isRegionPromotable(const MemorySlot &slot, Region *region,
+                               bool hasValueStores) {
+  return true;
+}
+
+void ForOp::setupPromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    llvm::SmallMapVector<Region *, Value, 2> &regionsToProcess) {
+  setupLoopPromotion(*this, slot, reachingDef, hasValueStores,
+                     regionsToProcess);
+}
+
+Value ForOp::finalizePromotion(
+    const MemorySlot &slot, Value reachingDef, bool hasValueStores,
+    const llvm::DenseMap<Block *, Value> &reachingAtBlockEnd,
+    OpBuilder &builder) {
+  return finalizeLoopPromotion(*this, slot, reachingDef, hasValueStores,
+                               reachingAtBlockEnd, builder);
+}
+
+void ForOp::getEarlyExits(Region *region, SmallVectorImpl<Operation *> &exits) {
+  collectLoopExits(*this, region, exits);
 }

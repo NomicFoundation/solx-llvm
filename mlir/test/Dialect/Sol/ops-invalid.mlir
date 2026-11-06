@@ -398,13 +398,12 @@ sol.contract @C {
 // -----
 
 sol.contract @C {
-  sol.func @f(%c: i1, %x: ui256) {
-    // expected-error @below {{'sol.scope' op expects no sol.leave when it has results}}
-    %0 = sol.scope -> ui256 {
-      sol.if %c {
-        sol.leave
-      } else {
-      }
+  sol.func @f(%s: i1, %x: ui256) {
+    // expected-error @below {{'sol.try' op expects a success region yielding the results}}
+    %0 = sol.try %s -> ui256 {
+    } panic {
+    } error {
+    } fallback {
       sol.yield %x : ui256
     }
     sol.return
@@ -414,13 +413,39 @@ sol.contract @C {
 // -----
 
 sol.contract @C {
-  sol.func @f(%s: i1, %x: ui256) {
-    // expected-error @below {{'sol.try' op expects a success region yielding the results}}
-    %0 = sol.try %s -> ui256 {
-    } panic {
-    } error {
-    } fallback {
+  sol.func @f(%c: i1, %x: ui256) {
+    // expected-error @below {{'sol.while' op expects region arguments of its result types}}
+    %0 = sol.while %x : ui256 -> ui256 {
+      sol.condition %c, %x : ui256
+    } do {
       sol.yield %x : ui256
+    }
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%c: i1) {
+    sol.while {
+      sol.condition %c
+    } do {
+      %x = sol.constant 1 : ui256
+      // expected-error @below {{'sol.break' op expects the result types of its loop}}
+      sol.break %x : ui256
+    }
+    sol.return
+  }
+} {kind = #sol<ContractKind Contract>, runtime}
+
+// -----
+
+sol.contract @C {
+  sol.func @f(%x: ui256) {
+    sol.scope {
+      // expected-error @below {{'sol.leave' op expects the result types of its scope}}
+      sol.leave %x : ui256
     }
     sol.return
   }

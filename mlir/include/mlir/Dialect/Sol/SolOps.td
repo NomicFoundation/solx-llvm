@@ -603,15 +603,28 @@ def Sol_RequireOp : Sol_Op<"require", [DeclareOpInterfaceMethods<
   }];
 }
 
-// TODO: Implement verifiers for sol.break and sol.continue that checks if it
-// has an ancestor loop op.
+// The operands of sol.break and sol.continue are the values the loop carries.
 
 def Sol_BreakOp : Sol_Op<"break", [Terminator]> {
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins Variadic<AnyType>:$values);
+
+  let builders = [
+    OpBuilder<(ins), [{ /* nothing to do */ }]>,
+  ];
+
+  let assemblyFormat = "($values^ `:` type($values))? attr-dict";
+  let hasVerifier = 1;
 }
 
 def Sol_ContinueOp : Sol_Op<"continue", [Terminator]> {
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins Variadic<AnyType>:$values);
+
+  let builders = [
+    OpBuilder<(ins), [{ /* nothing to do */ }]>,
+  ];
+
+  let assemblyFormat = "($values^ `:` type($values))? attr-dict";
+  let hasVerifier = 1;
 }
 
 def Sol_ConditionOp : Sol_Op<"condition", [
@@ -619,9 +632,9 @@ def Sol_ConditionOp : Sol_Op<"condition", [
   DeclareOpInterfaceMethods<RegionBranchTerminatorOpInterface,
                             ["getSuccessorRegions"]>]
 > {
-  let arguments = (ins I1:$condition);
+  let arguments = (ins I1:$condition, Variadic<AnyType>:$args);
 
-  let assemblyFormat = "$condition attr-dict";
+  let assemblyFormat = "$condition (`,` $args^ `:` type($args))? attr-dict";
 }
 
 def Sol_YieldOp : Sol_Op<"yield", [ReturnLike, Terminator,
@@ -671,32 +684,51 @@ def Sol_SwitchOp : Sol_Op<"switch", [
   let hasVerifier = 1;
 }
 
+// A loop's init args, results and region arguments are the values it carries
+// from one iteration to the next.
+
 class Sol_WhileOpBase<string mnemonic> : Sol_Op<mnemonic, [
-  Sol_LoopOpInterface, NoRegionArguments, AutomaticAllocationScope
-]>;
+  Sol_LoopOpInterface, AutomaticAllocationScope,
+  DeclareOpInterfaceMethods<PromotableRegionOpInterface, ["getEarlyExits"]>
+]> {
+  let arguments = (ins Variadic<AnyType>:$initArgs);
+  let results = (outs Variadic<AnyType>:$results);
+  let hasVerifier = 1;
+}
 
 def Sol_WhileOp : Sol_WhileOpBase<"while"> {
   let regions = (region SizedRegion<1>:$cond, MinSizedRegion<1>:$body);
 
-  let assemblyFormat = "$cond `do` $body attr-dict";
+  let assemblyFormat = [{
+    ($initArgs^ `:` type($initArgs))? (`->` type($results)^)? $cond `do` $body
+      attr-dict
+  }];
 }
 
 def Sol_DoWhileOp : Sol_WhileOpBase<"do"> {
   let regions = (region MinSizedRegion<1>:$body, SizedRegion<1>:$cond);
 
-  let assemblyFormat = "$body `while` $cond attr-dict";
+  let assemblyFormat = [{
+    ($initArgs^ `:` type($initArgs))? (`->` type($results)^)? $body `while`
+      $cond attr-dict
+  }];
 
   let extraClassDeclaration = [{
     Region &getEntry() { return getBody(); }
   }];
 }
 
-def Sol_ForOp : Sol_Op<"for", [Sol_LoopOpInterface, NoRegionArguments,
-                               AutomaticAllocationScope]> {
+def Sol_ForOp : Sol_Op<"for", [
+  Sol_LoopOpInterface, AutomaticAllocationScope,
+  DeclareOpInterfaceMethods<PromotableRegionOpInterface, ["getEarlyExits"]>
+]> {
+  let arguments = (ins Variadic<AnyType>:$initArgs);
+  let results = (outs Variadic<AnyType>:$results);
   let regions = (region SizedRegion<1>:$cond, MinSizedRegion<1>:$body,
                         SizedRegion<1>:$step);
 
   let assemblyFormat = [{
+    ($initArgs^ `:` type($initArgs))? (`->` type($results)^)?
     `cond` $cond
     `body` $body
     `step` $step
@@ -706,6 +738,7 @@ def Sol_ForOp : Sol_Op<"for", [Sol_LoopOpInterface, NoRegionArguments,
   let extraClassDeclaration = [{
     mlir::Region *maybeGetStep() { return &getStep(); }
   }];
+  let hasVerifier = 1;
 }
 
 def Sol_TryOp : Sol_Op<"try",
@@ -757,13 +790,13 @@ def Sol_ModifierInvocationOp : Sol_Op<"modifier_invocation", [SingleBlock]> {
 
 def Sol_ScopeOp : Sol_Op<"scope",
   [DeclareOpInterfaceMethods<RegionBranchOpInterface>,
-   DeclareOpInterfaceMethods<PromotableRegionOpInterface>,
+   DeclareOpInterfaceMethods<PromotableRegionOpInterface, ["getEarlyExits"]>,
    AutomaticAllocationScope, NoRegionArguments]
 > {
   let summary = "A block that sol.leave exits";
   let description = [{
-    The results are yielded at the end of the body. A scope with results has
-    no sol.leave, which carries none.
+    The results are yielded at the end of the body or carried by a sol.leave
+    that exits it early.
   }];
   let results = (outs Variadic<AnyType>:$results);
   let regions = (region MinSizedRegion<1>:$bodyRegion);
@@ -779,7 +812,14 @@ def Sol_ScopeOp : Sol_Op<"scope",
 // TODO: Verifier should check if a sol.scope is an ancestor.
 def Sol_LeaveOp : Sol_Op<"leave", [Terminator]> {
   let summary = "Exit the nearest enclosing sol.scope";
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins Variadic<AnyType>:$values);
+
+  let builders = [
+    OpBuilder<(ins), [{ /* nothing to do */ }]>,
+  ];
+
+  let assemblyFormat = "($values^ `:` type($values))? attr-dict";
+  let hasVerifier = 1;
 }
 
 // TODO: Modifiers doesn't return anything and it can't be external. Should we

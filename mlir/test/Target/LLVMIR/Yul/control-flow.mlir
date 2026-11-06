@@ -337,6 +337,32 @@
 // CHECK-NEXT: %[[V5:[0-9]+]] = phi i256 [ %[[V3]], %{{[0-9]+}} ]
 // CHECK-NEXT: ret i256 %[[V5]]
 // CHECK-NEXT: }
+// CHECK-LABEL: define private i256 @scope_leave_result(
+// CHECK-SAME: i256 %[[V0:[0-9]+]], i256 %[[V1:[0-9]+]]) #{{[0-9]+}} {
+// CHECK-NEXT: %[[V3:[0-9]+]] = icmp ne i256 %[[V0]], 0
+// CHECK-NEXT: br i1 %[[V3]], label %[[V4:[0-9]+]], label %[[V5:[0-9]+]]
+// CHECK: [[V4]]:
+// CHECK-NEXT: br label %[[V6:[0-9]+]]
+// CHECK: [[V5]]:
+// CHECK-NEXT: br label %[[V6]]
+// CHECK: [[V6]]:
+// CHECK-NEXT: %[[V7:[0-9]+]] = phi i256 [ %[[V0]], %[[V4]] ], [ %[[V1]], %[[V5]] ]
+// CHECK-NEXT: ret i256 %[[V7]]
+// CHECK-NEXT: }
+// CHECK-LABEL: define private i256 @do_carried(
+// CHECK-SAME: i256 %[[V0:[0-9]+]]) #{{[0-9]+}} {
+// CHECK-NEXT: br label %[[V2:[0-9]+]]
+// CHECK: [[V2]]:
+// CHECK-NEXT: %[[V3:[0-9]+]] = phi i256 [ %[[V0]], %{{[0-9]+}} ], [ %[[V5:[0-9]+]], %[[V4:[0-9]+]] ]
+// CHECK-NEXT: br label %[[V4]]
+// CHECK: [[V4]]:
+// CHECK-NEXT: %[[V5]] = phi i256 [ %[[V3]], %[[V2]] ]
+// CHECK-NEXT: %[[V6:[0-9]+]] = icmp ne i256 %[[V5]], 0
+// CHECK-NEXT: br i1 %[[V6]], label %[[V2]], label %[[V7:[0-9]+]]
+// CHECK: [[V7]]:
+// CHECK-NEXT: %[[V8:[0-9]+]] = phi i256 [ %[[V5]], %[[V4]] ]
+// CHECK-NEXT: ret i256 %[[V8]]
+// CHECK-NEXT: }
 // CHECK-LABEL: define private i256 @early_return(
 // CHECK-SAME: i256 %[[V0:[0-9]+]]) #{{[0-9]+}} {
 // CHECK-NEXT: %[[V2:[0-9]+]] = icmp ne i256 %[[V0]], 0
@@ -767,6 +793,30 @@ module {
       %0 = yul.scope -> i256 {
         %1 = yul.sload %n
         yul.yield %1 : i256
+      }
+      yul.func_return %0 : i256
+    }
+
+    yul.func @scope_leave_result : (i256, i256) -> i256 {
+    ^bb0(%n: i256, %m: i256):
+      %0 = yul.scope -> i256 {
+        yul.if %n {
+          yul.leave_scope %n : i256
+        } else {
+        }
+        yul.yield %m : i256
+      }
+      yul.func_return %0 : i256
+    }
+
+    yul.func @do_carried : (i256) -> i256 {
+    ^bb0(%n: i256):
+      %0 = yul.do %n : i256 -> i256 {
+      ^bb0(%i: i256):
+        yul.yield %i : i256
+      } while {
+      ^bb0(%j: i256):
+        yul.condition %j, %j : i256
       }
       yul.func_return %0 : i256
     }

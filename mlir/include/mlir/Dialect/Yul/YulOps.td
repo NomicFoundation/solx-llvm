@@ -223,12 +223,27 @@ def Yul_SMulOverflowOp : Yul_MulOverflowOp<"smul_overflow"> {
   }];
 }
 
+// The operands of yul.break, yul.continue and yul.leave_scope are the values
+// their loop or scope carries.
+
 def Yul_BreakOp : Yul_Op<"break", [Terminator]> {
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins Variadic<I256OrI256LLVMStruct>:$values);
+
+  let builders = [
+    OpBuilder<(ins), [{ /* nothing to do */ }]>,
+  ];
+
+  let assemblyFormat = "($values^ `:` type($values))? attr-dict";
 }
 
 def Yul_ContinueOp : Yul_Op<"continue", [Terminator]> {
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins Variadic<I256OrI256LLVMStruct>:$values);
+
+  let builders = [
+    OpBuilder<(ins), [{ /* nothing to do */ }]>,
+  ];
+
+  let assemblyFormat = "($values^ `:` type($values))? attr-dict";
 }
 
 def Yul_ScopeOp : Yul_Op<"scope",
@@ -244,7 +259,13 @@ def Yul_ScopeOp : Yul_Op<"scope",
 
 def Yul_LeaveScopeOp : Yul_Op<"leave_scope", [Terminator]> {
   let summary = "Exit the nearest enclosing yul.scope";
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins Variadic<I256OrI256LLVMStruct>:$values);
+
+  let builders = [
+    OpBuilder<(ins), [{ /* nothing to do */ }]>,
+  ];
+
+  let assemblyFormat = "($values^ `:` type($values))? attr-dict";
 }
 
 def Yul_ConditionOp : Yul_Op<"condition", [Terminator]> {
@@ -322,9 +343,14 @@ def Yul_WhileOp : Yul_WhileOpBase<"while"> {
 }
 
 def Yul_DoWhileOp : Yul_WhileOpBase<"do"> {
+  let arguments = (ins Variadic<I256OrI256LLVMStruct>:$initArgs);
+  let results = (outs Variadic<I256OrI256LLVMStruct>:$results);
   let regions = (region SizedRegion<1>:$body, SizedRegion<1>:$cond);
 
-  let assemblyFormat = "$body `while` $cond attr-dict";
+  let assemblyFormat = [{
+    ($initArgs^ `:` type($initArgs))? (`->` type($results)^)? $body `while`
+      $cond attr-dict
+  }];
 
   let extraClassDeclaration = [{
     Region &getEntry() { return getBody(); }
