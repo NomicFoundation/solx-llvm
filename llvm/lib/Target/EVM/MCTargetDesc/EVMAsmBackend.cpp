@@ -98,9 +98,9 @@ MCFixupKindInfo EVMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
        {"fixup_SecRel_i32", 0, 8 * 4, 0},
        {"fixup_SecRel_i24", 0, 8 * 3, 0},
        {"fixup_SecRel_i16", 0, 8 * 2, 0},
-       {"fixup_SecRel_i8",  0, 8 * 1, 0},
-       {"fixup_Data_i32",   0, 8 * 4, 0}
-      }};
+       {"fixup_SecRel_i8", 0, 8 * 1, 0},
+       {"fixup_Data_i32", 0, 8 * 4, 0},
+       {"fixup_Data_i160", 0, 8 * 20, 0}}};
 
   // Allow the generic 4-byte fixup kind, which is used
   // in debug info.
@@ -135,7 +135,7 @@ std::optional<bool> EVMAsmBackend::evaluateFixup(const MCFragment &F,
 
   // The following fixups should be emited as relocations,
   // as they can only be resolved at link time.
-  if (FixUpKind == EVM::fixup_Data_i32)
+  if (FixUpKind == EVM::fixup_Data_i32 || FixUpKind == EVM::fixup_Data_i160)
     return false;
 
   Value = Target.getConstant();
@@ -201,8 +201,8 @@ bool EVMAsmBackend::fixupNeedsRelaxationAdvanced(const MCFixup &Fixup,
                                                  uint64_t Value,
                                                  bool Resolved) const {
   unsigned FixUpKind = Fixup.getKind();
-  // The following fixups shouls always be emited as relocations,
-  // as they can only be resolved at linking time.
+  // The following fixup should always be emited as a relocation,
+  // as it can only be resolved at linking time.
   if (FixUpKind == EVM::fixup_Data_i32)
     return false;
 

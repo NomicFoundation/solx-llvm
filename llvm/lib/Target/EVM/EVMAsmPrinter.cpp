@@ -27,11 +27,14 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCSymbolELF.h"
 #include "llvm/MC/TargetRegistry.h"
 
 using namespace llvm;
@@ -335,37 +338,29 @@ void EVMAsmPrinter::emitAssemblySymbol(const MachineInstr *MI) {
 //     ->
 //   PUSH20_S @"__linker_symbol__$KECCAK256(BaseSymbol)$__"
 //
-//   .section ".symbol_name__$KECCAK256(BaseName)$__","S",@progbits
+//   .section
+//   ".symbol_name__linker_symbol__$KECCAK256(BaseName)$__","S",@progbits
 //          .ascii "~ \".%%^ [];,<.>?  .sol:GreaterHelper"
 
 void EVMAsmPrinter::emitWideRelocatableSymbol(const MachineInstr *MI) {
-  constexpr unsigned LinkerSymbolSize = 20;
   MCSymbol *BaseSymbol = MI->getOperand(0).getMCSymbol();
   StringRef BaseSymbolName = BaseSymbol->getName();
-  std::string BaseSymbolNameHash = EVM::getLinkerSymbolHash(BaseSymbolName);
-  std::string SymbolName = EVM::getLinkerSymbolName(BaseSymbolNameHash);
+  std::string SymbolName = EVM::getLinkerSymbolName(BaseSymbolName);
+
+  // This represents a library address symbol which is 20-bytes wide. It can
+  // only be defined by the linker, which the st_other flag says. The MC layer
+  // emits a single 20-byte relocation for it.
+  auto *Symbol = cast<MCSymbolELF>(OutContext.getOrCreateSymbol(SymbolName));
+  Symbol->setOther(ELF::STO_EVM_REFERENCE_SYMBOL);
 
   MCInst MCI;
-  // This represents a library address symbol which is 20-bytes wide.
   MCI.setOpcode(EVM::PUSH20_S);
-  auto *Symbol = OutContext.getOrCreateSymbol(BaseSymbolNameHash);
   MCOperand MCOp = MCOperand::createExpr(
       MCSymbolRefExpr::create(Symbol, EVM::S_DATA, OutContext));
   MCI.addOperand(MCOp);
+  EmitToStreamer(*OutStreamer, MCI);
 
-  if (!WideRelocSymbolsSet.contains(SymbolName)) {
-    for (unsigned Idx = 0; Idx < LinkerSymbolSize / sizeof(uint32_t); ++Idx) {
-      std::string SubSymName = EVM::getSymbolIndexedName(SymbolName, Idx);
-      if (OutContext.lookupSymbol(SubSymName))
-        report_fatal_error(Twine("MC: duplicating reference sub-symbol ") +
-                           SubSymName);
-    }
-  }
-
-  auto *TS = static_cast<EVMTargetStreamer *>(OutStreamer->getTargetStreamer());
-  TS->emitWideRelocatableSymbol(MCI, SymbolName, LinkerSymbolSize);
-
-  // The linker symbol and the related section already exist, so just exit.
+  // The related section already exists, so just exit.
   if (WideRelocSymbolsSet.contains(SymbolName))
     return;
 
@@ -459,6 +454,18 @@ void EVMAsmPrinter::emitEndOfAsmFile(Module &) {
 void EVMAsmPrinter::emitStartOfAsmFile(Module &M) {
   createDataSectionBuffer(M);
   DataSectionSymbol = OutContext.getOrCreateSymbol("code_data_section");
+
+  // Lower the code segment kind the frontend recorded in the 'evm.runtime'
+  // module flag into the ELF header, so the linker reads it from the object.
+  // Only an object streamer has an assembler, and on EVM its writer is
+  // always the ELF one.
+  if (auto *RuntimeFlag =
+          mdconst::extract_or_null<ConstantInt>(M.getModuleFlag("evm.runtime")))
+    if (!RuntimeFlag->isZero())
+      if (MCAssembler *Assembler = OutStreamer->getAssemblerPtr()) {
+        auto &W = static_cast<ELFObjectWriter &>(Assembler->getWriter());
+        W.setELFHeaderEFlags(W.getELFHeaderEFlags() | ELF::EF_EVM_RUNTIME);
+      }
 }
 
 void EVMAsmPrinter::emitGlobalVariable(const GlobalVariable *GV) {

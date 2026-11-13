@@ -1102,6 +1102,13 @@ enum {
 #include "ELFRelocs/Xtensa.def"
 };
 
+// EVM specific e_flags.
+enum : unsigned {
+  // The object holds the runtime code segment of a contract. Without the
+  // flag it holds the deploy code segment.
+  EF_EVM_RUNTIME = 0x1,
+};
+
 // Special values for the st_other field in the symbol table entry for EVM.
 enum {
   // Symbol denotes a sub symbol of a wide reference.

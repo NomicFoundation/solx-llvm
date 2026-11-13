@@ -42,4 +42,3 @@ StringRef EVM::getSpecifierName(Specifier S) {
     return "evm_data";
   }
 }
-      
