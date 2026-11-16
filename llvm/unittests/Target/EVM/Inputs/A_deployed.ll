@@ -11,3 +11,5 @@ define i256 @runtime() {
 }
 !1 = !{!"A_38_deployed"}
 !2 = !{!"library_id"}
+!llvm.module.flags = !{!100}
+!100 = !{i32 1, !"evm.runtime", i32 1}

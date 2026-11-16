@@ -5,3 +5,4 @@
 
 ELF_RELOC(R_EVM_NONE,                  0)
 ELF_RELOC(R_EVM_DATA,                  1)
+ELF_RELOC(R_EVM_DATA_160,              2)

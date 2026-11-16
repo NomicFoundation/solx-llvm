@@ -126,11 +126,6 @@ std::string EVM::getLinkerSymbolHash(StringRef SymName) {
   return (Twine("__$") + HexHash + "$__").str();
 }
 
-// Returns concatenation of the \p Name with the \p SubIdx.
-std::string EVM::getSymbolIndexedName(StringRef Name, unsigned SubIdx) {
-  return (Twine(Name) + std::to_string(SubIdx)).str();
-}
-
 // Returns concatenation of '.symbol_name' with the \p Name.
 std::string EVM::getSymbolSectionName(StringRef Name) {
   return (Twine(".symbol_name") + Name).str();
@@ -142,17 +137,10 @@ bool EVM::isSymbolSectionName(StringRef Name) {
   return Name.find(".symbol_name") == 0;
 }
 
-// Strips index from the \p Name.
-std::string EVM::getNonIndexedSymbolName(StringRef Name) {
-  Regex suffixRegex(R"(.*[0-4]$)");
-  if (!suffixRegex.match(Name))
-    report_fatal_error("Unexpected indexed symbol name");
-
-  return Name.drop_back().str();
-}
-
+// Returns the '__linker_symbol__$keccak256(Name)$__' symbol for the library
+// source name \p Name.
 std::string EVM::getLinkerSymbolName(StringRef Name) {
-  return (Twine("__linker_symbol") + Name).str();
+  return (Twine("__linker_symbol") + getLinkerSymbolHash(Name)).str();
 }
 
 bool EVM::isLinkerSymbolName(StringRef Name) {

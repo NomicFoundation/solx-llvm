@@ -52,8 +52,10 @@ public:
 };
 
 EVM::Fixups getFixupForOpc(unsigned Opcode, EVM::Specifier Spec) {
+  // A data symbol is either a 20-byte library address pushed whole, or a
+  // 32-bit data offset or size.
   if (Spec == EVM::S_DATA)
-    return EVM::fixup_Data_i32;
+    return Opcode == EVM::PUSH20_S ? EVM::fixup_Data_i160 : EVM::fixup_Data_i32;
 
   switch (Opcode) {
   default:

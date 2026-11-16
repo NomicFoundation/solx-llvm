@@ -17,8 +17,6 @@ function(LLVMBuildGenerateCFragment)
   endforeach()
 
   list(LENGTH llvmbuild_components llvmbuild_components_size)
-  # EVM local begin
-  math(EXPR components_size "${llvmbuild_components_size} + 4")
   file(WRITE ${ARG_OUTPUT}
   "
   struct AvailableComponent {
@@ -32,10 +30,9 @@ function(LLVMBuildGenerateCFragment)
     bool IsInstalled;
 
     /// The list of libraries required when linking this component.
-    const char *RequiredLibraries[${components_size}];
-  } AvailableComponents[${components_size}] = {
+    const char *RequiredLibraries[${llvmbuild_components_size}];
+  } AvailableComponents[${llvmbuild_components_size}] = {
   ")
-  # EVM local end
 
   foreach(llvmbuild_component ${llvmbuild_components})
     if(llvmbuild_component STREQUAL "all")
@@ -76,12 +73,6 @@ function(LLVMBuildGenerateCFragment)
   foreach(llvmbuild_centry ${llvmbuild_centries})
     file(APPEND ${ARG_OUTPUT} "${llvmbuild_centry}")
   endforeach()
-  # EVM local begin
-  file(APPEND ${ARG_OUTPUT} "{ \"lldcommon\", \"lldCommon\", true, {} },\n")
-  file(APPEND ${ARG_OUTPUT} "{ \"lldelf\", \"lldELF\", true, {} },\n")
-  file(APPEND ${ARG_OUTPUT} "{ \"lldc\", \"lldC\", true, {} },\n")
-  file(APPEND ${ARG_OUTPUT} "{ \"lld\", nullptr, true, {\"lldcommon\", \"lldelf\", \"lldc\"} },\n")
-  # EVM local end
   file(APPEND ${ARG_OUTPUT} "};")
 endfunction()
 
