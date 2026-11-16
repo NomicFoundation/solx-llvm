@@ -1,9 +1,10 @@
 // RUN: mlir-opt %s --convert-sol-to-yul | FileCheck %s
 
-// An array copy between memory and calldata whose elements are 256-bit
-// integers or bytes32 is one calldatacopy or mcopy of the payload. A nested
-// array copies one row at a time. Narrow elements need cleanup and keep the
-// word loop. The same holds for the ABI decoder and encoder of such arrays.
+// An array copy from calldata into memory whose elements are scalars, and a
+// copy between memory and memory whose elements are 256-bit integers or
+// bytes32, is one calldatacopy or mcopy of the payload. A nested array copies
+// one row at a time. The ABI decoder validates narrow calldata elements, so
+// it keeps the word loop for them, and copies word arrays in bulk.
 
 #Contract = #sol<ContractKind Contract>
 #Default = #sol<RevertStrings Default>
@@ -93,13 +94,6 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK-NOT:         yul.calldataload
 // CHECK:           yul.func_return
 
-// CHECK-LABEL:   yul.func @__sol.copy_array.calldata.memory.array$_4_ui8_$_CallData_$.array$_4_ui8_$_Memory_$
-// CHECK:           yul.for
-// CHECK:             yul.calldataload
-// CHECK:             yul.mstore
-// CHECK-NOT:       yul.calldatacopy
-// CHECK:           yul.func_return
-
 // CHECK-LABEL:   yul.func @__sol.copy_array.memory.memory.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$.array$_4_array$_4_ui256_$_Memory_$_$_Memory_$
 // CHECK:           yul.for
 // CHECK:             %[[SRC_ROW:.*]] = yul.mload
@@ -119,8 +113,12 @@ module attributes {llvm.data_layout = "E-p:256:256-i256:256:256-S256-a:256:256",
 // CHECK-NOT:       yul.calldataload
 // CHECK:           yul.func_return
 
+// A flat array of narrow scalars is one raw calldatacopy as well, with no
+// cleanup and no helper.
 // CHECK-LABEL:   yul.func @cd2m_narrow
-// CHECK:           yul.func_call @__sol.copy_array.calldata.memory.array$_4_ui8_$_CallData_$.array$_4_ui8_$_Memory_$(%arg0, %arg1)
+// CHECK-NOT:       yul.func_call
+// CHECK:           %[[NARROW_SIZE:.*]] = yul.mul %c4_i256{{.*}}, %c32_i256
+// CHECK-NEXT:      yul.calldatacopy %arg1, %arg0, %[[NARROW_SIZE]]
 // CHECK-NEXT:      yul.func_return
 
 // CHECK-LABEL:   yul.func @m2m_nested
