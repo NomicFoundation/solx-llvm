@@ -131,8 +131,13 @@ jobs:
           fetch-depth: ${{ needs.prepare-test-matrix.outputs.fetch_depth }}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
+      # The global config lands in this step's $HOME. darker spawns git with
+      # its own idea of the home directory and misses it, so also write the
+      # HOME-independent system config.
       - name: Mark everything as safe for Git
-        run: git config --global --add safe.directory '*'
+        run: |
+          git config --global --add safe.directory '*'
+          git config --system --add safe.directory '*'
 
       - name: Define previous commit
         id: previous-commit
