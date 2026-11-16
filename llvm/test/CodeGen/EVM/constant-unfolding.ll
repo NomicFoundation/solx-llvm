@@ -42,7 +42,8 @@ define void @test3() #1 {
 ; CHECK-LABEL: test3:
 ; CHECK:       ; %bb.0: ; %entry
 ; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    PUSH3 0xFFFFFF
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    NOT
 ; CHECK-NEXT:    PUSH1 0xE8
 ; CHECK-NEXT:    SHL
 ; CHECK-NEXT:    PUSH0
@@ -57,7 +58,8 @@ define void @test4() #1 {
 ; CHECK-LABEL: test4:
 ; CHECK:       ; %bb.0: ; %entry
 ; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    PUSH4 0xFFFFFFFF
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    NOT
 ; CHECK-NEXT:    PUSH1 0xE0
 ; CHECK-NEXT:    SHL
 ; CHECK-NEXT:    PUSH0
@@ -113,3 +115,19 @@ entry:
 }
 
 attributes #1 = { nofree nounwind noreturn }
+
+; 0x00FFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000
+define i256 @test_instr_limit(i256 %x) {
+; CHECK-LABEL: test_instr_limit:
+; CHECK:       ; %bb.0: ; %entry
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    PUSH8 0xFFFFFFFFFFFFFFFF
+; CHECK-NEXT:    PUSH1 0xB8
+; CHECK-NEXT:    SHL
+; CHECK-NEXT:    AND
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    JUMP
+entry:
+  %m = and i256 %x, 452312848583266388348804231536332918318102325165753506341231361575973027840
+  ret i256 %m
+}

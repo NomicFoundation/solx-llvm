@@ -4,6 +4,7 @@ target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
 target triple = "evm-unknown-unknown"
 
 declare void @llvm.evm.return(ptr addrspace(1), i256) noreturn
+declare void @llvm.evm.revert(ptr addrspace(1), i256) noreturn
 
 ; Verifies that constant unfolding occurs in non-OptForSize mode when limits
 ; are overridden through options.
@@ -14,9 +15,12 @@ define void @test8() #1 {
 ; CHECK-LABEL: test8:
 ; CHECK:       ; %bb.0: ; %entry
 ; CHECK-NEXT:    JUMPDEST
-; CHECK-NEXT:    PUSH16 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
-; CHECK-NEXT:    PUSH1 0x80
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    NOT
+; CHECK-NEXT:    PUSH1 0x81
 ; CHECK-NEXT:    SHL
+; CHECK-NEXT:    PUSH1 0x1
+; CHECK-NEXT:    SHR
 ; CHECK-NEXT:    PUSH0
 ; CHECK-NEXT:    RETURN
 entry:
@@ -38,6 +42,84 @@ define void @test2() #1 {
 entry:
   tail call void @llvm.evm.return(ptr addrspace(1) null, i256 5986310706507378352962293074805895248510699696029695)
   unreachable
+}
+
+; 0x0000000000000000000000000000000000000000000000000000001FF0000000
+define i256 @test_cold_tie(i256 %n, i256 %x) {
+; CHECK-LABEL: test_cold_tie:
+; CHECK:       ; %bb.0: ; %entry
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    SWAP3
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    SWAP3
+; CHECK-NEXT:  .BB2_1: ; %loop
+; CHECK-NEXT:    ; =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    DUP1
+; CHECK-NEXT:    DUP5
+; CHECK-NEXT:    ADD
+; CHECK-NEXT:    SWAP4
+; CHECK-NEXT:    DUP5
+; CHECK-NEXT:    LT
+; CHECK-NEXT:    PUSH4 @.BB2_5
+; CHECK-NEXT:    JUMPI
+; CHECK-NEXT:  ; %bb.2: ; %next
+; CHECK-NEXT:    ; in Loop: Header=BB2_1 Depth=1
+; CHECK-NEXT:    PUSH1 0x1
+; CHECK-NEXT:    ADD
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    DUP4
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    DUP2
+; CHECK-NEXT:    DUP2
+; CHECK-NEXT:    LT
+; CHECK-NEXT:    ISZERO
+; CHECK-NEXT:    PUSH4 @.BB2_4
+; CHECK-NEXT:    JUMPI
+; CHECK-NEXT:  ; %bb.3: ; in Loop: Header=BB2_1 Depth=1
+; CHECK-NEXT:    SWAP1
+; CHECK-NEXT:    SWAP2
+; CHECK-NEXT:    SWAP4
+; CHECK-NEXT:    POP
+; CHECK-NEXT:    PUSH4 @.BB2_1
+; CHECK-NEXT:    JUMP
+; CHECK-NEXT:  .BB2_4: ; %exit
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    POP
+; CHECK-NEXT:    POP
+; CHECK-NEXT:    POP
+; CHECK-NEXT:    JUMP
+; CHECK-NEXT:  .BB2_5: ; %fail
+; CHECK-NEXT:    JUMPDEST
+; CHECK-NEXT:    POP
+; CHECK-NEXT:    POP
+; CHECK-NEXT:    POP
+; CHECK-NEXT:    POP
+; CHECK-NEXT:    PUSH5 0x1FF0000000
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    MSTORE
+; CHECK-NEXT:    PUSH1 0x20
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    REVERT
+entry:
+  br label %loop
+loop:
+  %i = phi i256 [ 0, %entry ], [ %i.next, %next ]
+  %acc = phi i256 [ %x, %entry ], [ %acc.next, %next ]
+  %acc.next = add i256 %acc, %i
+  %ovf = icmp ult i256 %acc.next, %acc
+  br i1 %ovf, label %fail, label %next
+fail:
+  store i256 137170518016, ptr addrspace(1) null
+  call void @llvm.evm.revert(ptr addrspace(1) null, i256 32)
+  unreachable
+next:
+  %i.next = add i256 %i, 1
+  %c = icmp ult i256 %i.next, %n
+  br i1 %c, label %loop, label %exit
+exit:
+  ret i256 %acc.next
 }
 
 attributes #1 = { nofree nounwind noreturn }

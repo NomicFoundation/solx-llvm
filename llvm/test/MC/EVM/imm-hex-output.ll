@@ -13,7 +13,8 @@ define void @foo() {
 ; CHECK:       ; %bb.0:
 ; CHECK-NEXT:    JUMPDEST
 ; CHECK-NEXT:    POP
-; CHECK-NEXT:    PUSH4 0xFFFFFFFF
+; CHECK-NEXT:    PUSH0
+; CHECK-NEXT:    NOT
 ; CHECK-NEXT:    PUSH1 0xE0
 ; CHECK-NEXT:    SHL
 ; CHECK-NEXT:    PUSH1 0x40
