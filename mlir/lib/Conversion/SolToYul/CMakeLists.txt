@@ -3,8 +3,6 @@ add_mlir_conversion_library(MLIRSolToYul
   HelperSymbols.cpp
   InternalDispatch.cpp
   SolToYul.cpp
-  SolToYulPass.cpp
-  TypeConverter.cpp
   Util.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -18,8 +16,6 @@ add_mlir_conversion_library(MLIRSolToYul
   MLIRYulDialect
   MLIRLLVMDialect
   MLIRPass
-  MLIRTransforms
-  MLIRTransformUtils
 
   LINK_COMPONENTS
   Support

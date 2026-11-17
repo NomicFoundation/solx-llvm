@@ -89,29 +89,24 @@ static SmallVector<Value> regroup(ValueRange vals, TypeRange tys, Location loc,
   return regrouped;
 }
 
-void evm::InternalDispatch::addCreationFuncRefs(sol::ContractOp contr) {
-  for (auto sym : contr.getCreationFuncRefs().getAsRange<FlatSymbolRefAttr>())
-    addTarget(contr.lookupSymbol<sol::FuncOp>(sym));
+void evm::InternalDispatch::addTarget(yul::FuncOp fn, int64_t id) {
+  targets[getWordCounts(fn.getFunctionType())].insert(fn);
+  ids[fn] = id;
 }
 
-void evm::InternalDispatch::addTarget(sol::FuncOp fn) {
-  auto loweredTy = cast<FunctionType>(tyConv.convertType(fn.getFunctionType()));
-  targets[getWordCounts(loweredTy)].insert(fn);
-}
-
-yul::FuncOp evm::InternalDispatch::getOrCreateDispatchFn(
-    sol::ICallOp icall, FunctionType dispatchFnTy, PatternRewriter &r) {
+yul::FuncOp
+evm::InternalDispatch::getOrCreateDispatchFn(FunctionType dispatchFnTy,
+                                             yul::FuncOp caller, OpBuilder &b) {
   auto [it, inserted] = requests.try_emplace(dispatchFnTy);
   Request &request = it->second;
   if (inserted) {
-    auto caller = icall->getParentOfType<sol::FuncOp>();
     ModuleOp mod = getModule(caller);
     std::string name = evm::helpersym::internalDispatch(requests.size() - 1);
     // The dispatch function is shared by every call of its signature: its
     // subprogram is artificial at the line of the module hosting it.
-    OpBuilder::InsertionGuard insertGuard(r);
-    r.setInsertionPointAfter(caller);
-    auto fn = r.create<yul::FuncOp>(
+    OpBuilder::InsertionGuard insertGuard(b);
+    b.setInsertionPointAfter(caller);
+    auto fn = b.create<yul::FuncOp>(
         evm::fuseArtificialSubprogram(mod, name, mod.getLoc()), name,
         dispatchFnTy);
     request = {fn, caller};
@@ -134,11 +129,11 @@ void evm::InternalDispatch::genDispatchFns() {
                                       dispatchFnTy.getResults());
 
     SmallVector<int64_t> caseIds;
-    SmallVector<sol::FuncOp> caseFns;
+    SmallVector<yul::FuncOp> caseFns;
     auto found = targets.find(getWordCounts(calleeTy));
     if (found != targets.end()) {
-      for (sol::FuncOp target : found->second) {
-        caseIds.push_back(*target.getId());
+      for (yul::FuncOp target : found->second) {
+        caseIds.push_back(ids.lookup(target));
         caseFns.push_back(target);
       }
     }
@@ -173,8 +168,8 @@ void evm::InternalDispatch::genDispatchFns() {
     }
 
     b.setInsertionPointToStart(&switchOp.getDefaultRegion().emplaceBlock());
-    // The dispatch is built after stage 2, outside any contract, so no helper
-    // can serve it: the panic stays inline.
+    // The dispatch is built once the contract is gone, so no helper can serve
+    // it: the panic stays inline.
     evmB.genPanicInline(
         solgen::BuilderExt(b, loc).genI256Const(static_cast<int64_t>(
             mlir::evm::PanicCode::InvalidInternalFunction)),

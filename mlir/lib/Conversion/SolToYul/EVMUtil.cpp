@@ -23,9 +23,9 @@
 #include "mlir/Dialect/Sol/Sol.h"
 #include "mlir/Dialect/Yul/Yul.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/Transforms/DialectConversion.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/raw_ostream.h"
 #include <functional>
 #include <tuple>
@@ -889,6 +889,82 @@ void evm::Builder::genBulkWordCopy(Value dstAddr, Value srcAddr, Value count,
               srcDataLoc, loc);
 }
 
+Type evm::getYulType(Type ty) {
+  MLIRContext *ctx = ty.getContext();
+  Type i256Ty = IntegerType::get(ctx, 256);
+  // A {word, word} pair: the {addr, size} of a calldata slice, the {slot,
+  // byte offset} of a packed storage value, or the {addr, selector} of an
+  // external function, each LSB-aligned in its word.
+  Type pairTy = LLVM::LLVMStructType::getLiteral(ctx, {i256Ty, i256Ty});
+
+  return TypeSwitch<Type, Type>(ty)
+      // Signedness and width live on in the Sol types the lowering reads.
+      .Case<IntegerType, sol::FixedBytesType, sol::ByteType, sol::EnumType,
+            sol::AddressType, sol::ContractType, sol::MappingType>(
+          [&](Type) { return i256Ty; })
+      // The function's id in the internal dispatch.
+      .Case([&](sol::FuncRefType) { return i256Ty; })
+      .Case([&](sol::ExtFuncRefType) { return pairTy; })
+      .Case([&](FunctionType fnTy) {
+        return FunctionType::get(
+            ctx, llvm::map_to_vector(fnTy.getInputs(), getYulType),
+            llvm::map_to_vector(fnTy.getResults(), getYulType));
+      })
+      .Case([&](sol::ArrayType arrTy) -> Type {
+        switch (arrTy.getDataLocation()) {
+        case sol::DataLocation::Stack:
+          return LLVM::LLVMArrayType::get(getYulType(arrTy.getEltType()),
+                                          arrTy.getSize().getZExtValue());
+        case sol::DataLocation::CallData:
+          return arrTy.isDynSized() ? pairTy : i256Ty;
+        case sol::DataLocation::Memory:
+        case sol::DataLocation::Storage:
+        case sol::DataLocation::Transient:
+          return i256Ty;
+        default:
+          llvm_unreachable("unexpected array data location");
+        }
+      })
+      .Case([&](sol::StringType strTy) -> Type {
+        switch (strTy.getDataLocation()) {
+        case sol::DataLocation::CallData:
+          return pairTy;
+        case sol::DataLocation::Memory:
+        case sol::DataLocation::Storage:
+        case sol::DataLocation::Transient:
+          return i256Ty;
+        default:
+          llvm_unreachable("unexpected string data location");
+        }
+      })
+      .Case([&](sol::StructType structTy) -> Type {
+        switch (structTy.getDataLocation()) {
+        case sol::DataLocation::CallData:
+        case sol::DataLocation::Memory:
+        case sol::DataLocation::Storage:
+        case sol::DataLocation::Transient:
+          return i256Ty;
+        default:
+          llvm_unreachable("unexpected struct data location");
+        }
+      })
+      .Case([&](sol::PointerType ptrTy) -> Type {
+        switch (ptrTy.getDataLocation()) {
+        case sol::DataLocation::Stack:
+          return LLVM::LLVMPointerType::get(ctx);
+        case sol::DataLocation::CallData:
+        case sol::DataLocation::Memory:
+        case sol::DataLocation::Immutable:
+          return i256Ty;
+        case sol::DataLocation::Storage:
+        case sol::DataLocation::Transient:
+          return sol::canBePacked(ptrTy.getPointeeType()) ? pairTy : i256Ty;
+        }
+        llvm_unreachable("unexpected pointer data location");
+      })
+      .Default([](Type ty) { return ty; });
+}
+
 unsigned evm::getAlignment(Value ptr) {
   auto ty = cast<LLVM::LLVMPointerType>(ptr.getType());
   return getAlignment(static_cast<evm::AddrSpace>(ty.getAddressSpace()));
@@ -1204,12 +1280,7 @@ Value evm::Builder::genReturnDataBytes(std::optional<Location> locArg) {
   return ifOp.getResult(0);
 }
 
-bool evm::isConstantValue(Value v) {
-  if (auto cast = v.getDefiningOp<UnrealizedConversionCastOp>();
-      cast && cast->getNumOperands() == 1)
-    v = cast->getOperand(0);
-  return matchPattern(v, m_Constant());
-}
+bool evm::isConstantValue(Value v) { return matchPattern(v, m_Constant()); }
 
 Value evm::Builder::genMemAllocArray(sol::ArrayType arrTy, bool zeroInit,
                                      Value sizeVar, int64_t recDepth,
@@ -1626,8 +1697,8 @@ Value evm::Builder::genCalldataAccessRef(Type ty, Value baseAddr, Value ptr,
   Value refAddr = b.create<yul::AddOp>(loc, baseAddr, relOffset);
   auto genLengthAndStrideGuards = [&](Value dataAddr, Value length,
                                       Value stride) {
-    // Dynamic calldata payloads are materialized as {dataPtr, length}, so both
-    // the decoded length and the implied payload range must stay in bounds.
+    // A dynamic calldata payload is a {dataPtr, length} pair, so both the
+    // decoded length and the implied payload range must stay in bounds.
     Value invalidLength =
         bExt.genCmp(yul::CmpPredicate::ugt, length,
                     bExt.genI256Const(APInt::getLowBitsSet(256, 64)));
@@ -2091,8 +2162,7 @@ void evm::Builder::genCopyStringToStorage(Value src, Type ty, Value dstAddr,
   Location loc = locArg ? *locArg : defLoc;
   sol::DataLocation srcDataLoc = sol::getDataLocation(ty);
 
-  // The source is the legalized string reference: a calldata fat pointer
-  // stays one struct argument.
+  // A calldata string reference, a struct, is one argument.
   genHelperCall(
       helpersym::copyStringToStorage(srcDataLoc), {src, dstAddr},
       [&](ValueRange args, Location bodyLoc) {
@@ -2317,7 +2387,7 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
 }
 
 /// Returns the helper function named \p symbol in the module's one contract,
-/// creating it on first request: a `sol.func` with signature
+/// creating it on first request: a private `yul.func` with signature
 /// `argTys -> resTys` whose body is emitted by \p genBody (which receives the
 /// entry-block arguments and the location to build at, line 0 since every
 /// caller shares the body, and must emit the body's terminator). The
@@ -2326,7 +2396,7 @@ void evm::Builder::genClearStorageValue(Type ty, Value slot, Location loc) {
 /// reused. The symbol is registered before \p genBody runs, so a
 /// self-reference reached while building the body resolves to a recursive
 /// call.
-static sol::FuncOp
+static yul::FuncOp
 getOrCreateHelperFn(ModuleOp mod, OpBuilder &b, StringRef symbol,
                     TypeRange argTys, TypeRange resTys,
                     llvm::function_ref<void(ValueRange, Location)> genBody) {
@@ -2335,7 +2405,7 @@ getOrCreateHelperFn(ModuleOp mod, OpBuilder &b, StringRef symbol,
   Block *hostBlock = &contract.getBodyRegion().front();
   auto fnTy = FunctionType::get(b.getContext(), argTys, resTys);
 
-  if (auto fn = dyn_cast_or_null<sol::FuncOp>(
+  if (auto fn = dyn_cast_or_null<yul::FuncOp>(
           SymbolTable::lookupSymbolIn(host, symbol))) {
     assert(fn.getFunctionType() == fnTy && "helper signature mismatch");
     return fn;
@@ -2349,8 +2419,8 @@ getOrCreateHelperFn(ModuleOp mod, OpBuilder &b, StringRef symbol,
   Location hostLoc = host->getLoc();
   Location bodyLoc = evm::artificialLoc(hostLoc);
 
-  auto fn = b.create<sol::FuncOp>(
-      evm::fuseArtificialSubprogram(mod, symbol, hostLoc), symbol, fnTy);
+  auto fn = evm::createPrivateFunc(
+      b, evm::fuseArtificialSubprogram(mod, symbol, hostLoc), symbol, fnTy);
   Block *entry = &fn.getBody().emplaceBlock();
   SmallVector<Location> argLocs(argTys.size(), bodyLoc);
   entry->addArguments(argTys, argLocs);
@@ -2360,17 +2430,25 @@ getOrCreateHelperFn(ModuleOp mod, OpBuilder &b, StringRef symbol,
   return fn;
 }
 
+yul::FuncOp evm::createPrivateFunc(OpBuilder &b, Location loc, StringRef name,
+                                   FunctionType ty) {
+  auto fn = b.create<yul::FuncOp>(loc, name, ty);
+  fn->setAttr("llvm.linkage",
+              LLVM::LinkageAttr::get(b.getContext(), LLVM::Linkage::Private));
+  return fn;
+}
+
 void evm::Builder::genHelperCall(
     StringRef symbol, ValueRange args,
     llvm::function_ref<void(ValueRange, Location)> genBody,
     std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  sol::FuncOp fn = getOrCreateHelperFn(mod, b, symbol, args.getTypes(), {},
+  yul::FuncOp fn = getOrCreateHelperFn(mod, b, symbol, args.getTypes(), {},
                                        [&](ValueRange a, Location bodyLoc) {
                                          genBody(a, bodyLoc);
-                                         b.create<sol::ReturnOp>(bodyLoc);
+                                         b.create<yul::FuncReturnOp>(bodyLoc);
                                        });
-  b.create<sol::CallOp>(loc, fn, args);
+  b.create<yul::FuncCallOp>(loc, fn, args);
 }
 
 void evm::Builder::genHaltingHelperCall(
@@ -2378,9 +2456,9 @@ void evm::Builder::genHaltingHelperCall(
     llvm::function_ref<void(ValueRange, Location)> genBody,
     std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  sol::FuncOp fn =
+  yul::FuncOp fn =
       getOrCreateHelperFn(mod, b, symbol, args.getTypes(), {}, genBody);
-  b.create<sol::CallOp>(loc, fn, args);
+  b.create<yul::FuncCallOp>(loc, fn, args);
   b.create<yul::UnreachableOp>(loc);
 }
 
@@ -2389,12 +2467,12 @@ Value evm::Builder::genHelperCall(
     llvm::function_ref<Value(ValueRange, Location)> genBody,
     std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  sol::FuncOp fn = getOrCreateHelperFn(
+  yul::FuncOp fn = getOrCreateHelperFn(
       mod, b, symbol, args.getTypes(), {resTy},
       [&](ValueRange a, Location bodyLoc) {
-        b.create<sol::ReturnOp>(bodyLoc, ValueRange{genBody(a, bodyLoc)});
+        b.create<yul::FuncReturnOp>(bodyLoc, ValueRange{genBody(a, bodyLoc)});
       });
-  return b.create<sol::CallOp>(loc, fn, args).getResult(0);
+  return b.create<yul::FuncCallOp>(loc, fn, args).getResult(0);
 }
 
 SmallVector<Value> evm::Builder::genHelperCall(
@@ -2402,12 +2480,13 @@ SmallVector<Value> evm::Builder::genHelperCall(
     llvm::function_ref<SmallVector<Value>(ValueRange, Location)> genBody,
     std::optional<Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
-  sol::FuncOp fn = getOrCreateHelperFn(mod, b, symbol, args.getTypes(), resTys,
+  yul::FuncOp fn = getOrCreateHelperFn(mod, b, symbol, args.getTypes(), resTys,
                                        [&](ValueRange a, Location bodyLoc) {
-                                         b.create<sol::ReturnOp>(
+                                         b.create<yul::FuncReturnOp>(
                                              bodyLoc, genBody(a, bodyLoc));
                                        });
-  return SmallVector<Value>(b.create<sol::CallOp>(loc, fn, args).getResults());
+  return SmallVector<Value>(
+      b.create<yul::FuncCallOp>(loc, fn, args).getResults());
 }
 
 void evm::Builder::genClearStorageValueInline(Type ty, Value slot,
@@ -3045,7 +3124,7 @@ void evm::Builder::genPopString(Value srcAddr, Value oldData, Value length,
 // |                            |   store length.                              |
 // +----------------------------+----------------------------------------------+
 // | StructType                 | non-Stg dst: llvm_unreachable; must be       |
-// |                            |   lowered by DataLocCastOpLowering.          |
+// |                            |   lowered by sol.data_loc_cast.              |
 // |                            | any->Stg: per-member via                     |
 // |                            |   StructEncodeMemberReader +                 |
 // |                            |   StructMemberWriter.                        |
@@ -3959,28 +4038,25 @@ Value evm::Builder::genABIEncodingImplInline(
 }
 
 /// The arguments of a helper that encodes \p vals: every value but a constant
-/// string, which the helper body re-creates.
+/// string, whose bytes the helper symbol carries.
 static SmallVector<Value> getHelperArgs(ValueRange vals) {
   return llvm::filter_to_vector(vals, [](Value val) {
     return !isa<sol::ConstantStringType>(val.getType());
   });
 }
 
-/// The values a helper body encodes for the caller's \p vals: a copy of each
-/// constant string, whose op is in the caller, and every other value from
-/// \p args, in order.
-static SmallVector<Value> getHelperValues(OpBuilder &b, ValueRange vals,
-                                          ValueRange args, Location loc) {
+/// The values a helper body encodes for the caller's \p vals: each constant
+/// string as is, and every other value from \p args, in order. The body reads
+/// a constant string's bytes from its op in the caller and never uses it as an
+/// operand.
+static SmallVector<Value> getHelperValues(ValueRange vals, ValueRange args) {
   SmallVector<Value> result;
   auto argIt = args.begin();
   for (Value val : vals) {
-    if (!isa<sol::ConstantStringType>(val.getType())) {
+    if (isa<sol::ConstantStringType>(val.getType()))
+      result.push_back(val);
+    else
       result.push_back(*argIt++);
-      continue;
-    }
-    auto constant = cast<sol::ConstantStringOp>(val.getDefiningOp());
-    result.push_back(
-        b.create<sol::ConstantStringOp>(loc, constant.getValueAttr()));
   }
   return result;
 }
@@ -4021,9 +4097,8 @@ Value evm::Builder::genABIEncoding(TypeRange tys, ValueRange vals,
       helpersym::abiEncodeTuple(opts.padded, opts.dynamicInplace, tys, vals),
       args, b.getIntegerType(256),
       [&](ValueRange a, Location bodyLoc) {
-        return genABIEncodingInline(
-            tys, getHelperValues(b, vals, a.drop_back(), bodyLoc), a.back(),
-            opts, bodyLoc);
+        return genABIEncodingInline(tys, getHelperValues(vals, a.drop_back()),
+                                    a.back(), opts, bodyLoc);
       },
       loc);
 }
@@ -4361,7 +4436,6 @@ void evm::Builder::genABITupleDecoding(TypeRange tys, Value tupleStart,
                                        Value tupleEnd,
                                        std::vector<Value> &results,
                                        bool fromMem,
-                                       const TypeConverter &tyConv,
                                        std::optional<mlir::Location> locArg) {
   Location loc = locArg ? *locArg : defLoc;
   // An empty tuple is only the size check and stays inline. Every other
@@ -4370,10 +4444,7 @@ void evm::Builder::genABITupleDecoding(TypeRange tys, Value tupleStart,
     genABITupleDecodingInline(tys, tupleStart, tupleEnd, results, fromMem, loc);
     return;
   }
-  // The results are the legalized element types.
-  SmallVector<Type> resTys;
-  for (Type ty : tys)
-    resTys.push_back(tyConv.convertType(ty));
+  SmallVector<Type> resTys = llvm::map_to_vector(tys, getYulType);
   llvm::append_range(
       results,
       genHelperCall(
@@ -4401,9 +4472,6 @@ void evm::Builder::genABITupleDecodingInline(TypeRange tys, Value tupleStart,
   genABITupleSizeAssert(tys, b.create<yul::SubOp>(loc, tupleEnd, tupleStart),
                         loc);
 
-  // Decode the args.
-  // The type of the decoded arg should be same as that of the legalized type
-  // (as per the type-converter) of the original type.
   Value headAddr = tupleStart;
   for (Type ty : tys) {
     // Resolve the head slot, then decode the element. A loop-carrying
@@ -4498,8 +4566,7 @@ void evm::Builder::genRevert(TypeRange tys, ValueRange vals,
   genHaltingHelperCall(
       helpersym::revertError(signature, tys, vals), getHelperArgs(vals),
       [&](ValueRange a, Location bodyLoc) {
-        genRevertInline(tys, getHelperValues(b, vals, a, bodyLoc), signature,
-                        bodyLoc);
+        genRevertInline(tys, getHelperValues(vals, a), signature, bodyLoc);
       },
       loc);
 }

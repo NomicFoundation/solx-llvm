@@ -22,8 +22,6 @@
 #include <optional>
 
 namespace mlir {
-class TypeConverter;
-
 namespace evm {
 
 class StringLiteralPool;
@@ -38,13 +36,18 @@ enum ByteLen {
 
 using AllocSize = int64_t;
 
+/// Returns the type a value of `ty` has in Yul.
+Type getYulType(Type ty);
+
 /// Returns the alignment of the LLVMPointerType value `ptr`
 unsigned getAlignment(Value ptr);
 
-/// Returns true when \p v is a compile-time constant. The type converter may
-/// leave a single materialization cast over the constant, which is looked
-/// through.
+/// Returns true when \p v is a compile-time constant.
 bool isConstantValue(Value v);
+
+/// Creates the private function `name` of type `ty`.
+yul::FuncOp createPrivateFunc(OpBuilder &b, Location loc, StringRef name,
+                              FunctionType ty);
 
 // FIXME: Remove this! The lowering should not expand the ABI encoding/decoding
 // code (where this is used) involved in sol.contract, sol.emit etc. lowering.
@@ -128,9 +131,6 @@ public:
     this->literals = &literals;
   }
 
-  //
-  // The following APIs are used in the stage1 lowering.
-  //
   // TODO? Some of these could be transformed to mlir ops instead. This would
   // allow targets to define custom lowering. For instance, some targets might
   // not need the `type(uint64).max` check in the memory allocation code
@@ -389,11 +389,6 @@ private:
                                  bool fromMem, Location loc);
 
 public:
-  //
-  // TODO? Should we work with the high level types + OpAdaptor for the APIs
-  // that work with low level integral type pointers?
-  //
-
   /// Generates a low level integral type pointer to the address holding the
   /// data of a dynamic allocation.
   Value genDataAddrPtr(Value addr, Type ty,
@@ -696,11 +691,9 @@ public:
                             bool topLevel,
                             std::optional<Location> locArg = std::nullopt);
   /// Generates the tuple decoder code as per the ABI and populates the results.
-  /// A non-empty tuple is decoded by `helpersym::abiDecodeTuple`, whose
-  /// results are the types \p tyConv gives \p tys.
+  /// A non-empty tuple is decoded by `helpersym::abiDecodeTuple`.
   void genABITupleDecoding(TypeRange tys, Value tupleStart, Value tupleEnd,
                            std::vector<Value> &results, bool fromMem,
-                           const TypeConverter &tyConv,
                            std::optional<Location> locArg = std::nullopt);
   /// Generates a panic with \p code through `helpersym::panic`.
   void genPanic(PanicCode code, std::optional<Location> locArg = std::nullopt);
