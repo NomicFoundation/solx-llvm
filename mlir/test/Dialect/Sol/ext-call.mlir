@@ -33,6 +33,8 @@ func.func @gas(%addr: !sol.address, %gas: ui256, %val: ui256, %sel: ui256, %a: u
   %1:2 = sol.ext_icall %f(%a) value %val : <(ui256) -> ui256>, (ui256) -> (i1, ui256)
   // CHECK: sol.ext_icall %[[F]](%[[A]]) gas %[[GAS]] value %[[VAL]] : <(ui256) -> ui256>, (ui256) -> (i1, ui256)
   %2:2 = sol.ext_icall %f(%a) gas %gas value %val : <(ui256) -> ui256>, (ui256) -> (i1, ui256)
+  // CHECK: sol.ext_icall %[[F]](%[[A]]) value %[[VAL]] {delegate_call, library_call} : <(ui256) -> ui256>, (ui256) -> (i1, ui256)
+  %9:2 = sol.ext_icall %f(%a) value %val {delegate_call, library_call} : <(ui256) -> ui256>, (ui256) -> (i1, ui256)
   // CHECK: sol.bare_call %[[ADDR]] value %[[VAL]] input %[[INP]] : !sol.address, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>
   %3:2 = sol.bare_call %addr value %val input %inp : !sol.address, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>
   // CHECK: sol.bare_call %[[ADDR]] gas %[[GAS]] value %[[VAL]] input %[[INP]] : !sol.address, ui256, !sol.string<Memory> -> i1, !sol.string<Memory>

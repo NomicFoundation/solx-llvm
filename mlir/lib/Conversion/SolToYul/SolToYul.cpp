@@ -3199,20 +3199,21 @@ struct ExtICallOpLowering : public OpConversionPattern<sol::ExtICallOp> {
 
     // Lower to ExtCallOp - reuse all its lowering logic.
     // Both ExtICallOp and ExtCallOp return (i1 status, results...).
-    auto extCall = r.create<sol::ExtCallOp>(loc, op.getResultTypes(),
-                                            /*callee=*/"",
-                                            /*ins=*/op.getCalleeOperands(),
-                                            /*addr=*/addr,
-                                            /*gas=*/adaptor.getGas(),
-                                            /*val=*/adaptor.getValue(),
-                                            /*selector=*/selector,
-                                            /*try_call=*/op.getTryCall(),
-                                            /*static_call=*/op.getStaticCall(),
-                                            /*delegate_call=*/false,
-                                            /*library_call=*/false,
-                                            /*callee_type=*/calleeType,
-                                            /*arg_attrs=*/ArrayAttr{},
-                                            /*res_attrs=*/ArrayAttr{});
+    auto extCall =
+        r.create<sol::ExtCallOp>(loc, op.getResultTypes(),
+                                 /*callee=*/"",
+                                 /*ins=*/op.getCalleeOperands(),
+                                 /*addr=*/addr,
+                                 /*gas=*/adaptor.getGas(),
+                                 /*val=*/adaptor.getValue(),
+                                 /*selector=*/selector,
+                                 /*try_call=*/op.getTryCall(),
+                                 /*static_call=*/op.getStaticCall(),
+                                 /*delegate_call=*/op.getDelegateCall(),
+                                 /*library_call=*/op.getLibraryCall(),
+                                 /*callee_type=*/calleeType,
+                                 /*arg_attrs=*/ArrayAttr{},
+                                 /*res_attrs=*/ArrayAttr{});
 
     r.replaceOp(op, extCall.getResults());
     return success();

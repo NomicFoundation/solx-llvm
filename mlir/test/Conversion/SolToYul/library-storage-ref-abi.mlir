@@ -67,3 +67,29 @@ module {
     }
   } {kind = #Contract, runtime}
 }
+
+// -----
+
+// CHECK-LABEL: yul.func @h : () -> i256
+// CHECK:         %[[LIB:.*]] = yul.linkersymbol "library-storage-ref-abi.sol:L"
+// CHECK:         %[[RSLOT:.*]] = yul.constant 2
+// CHECK:         %[[ARGS:.*]] = yul.add %{{.*}}, %{{.*}}
+// CHECK:         yul.func_call @__sol.abi_encode_tuple.padded.tail.i256(%[[RSLOT]], %[[ARGS]])
+// CHECK:         yul.delegate_call
+
+#Contract = #sol<ContractKind Contract>
+#View = #sol<StateMutability View>
+module {
+  sol.contract @C {
+    sol.state_var @r slot 2 offset 0 : !sol.array<? x ui256, Storage>
+    sol.func @h() -> ui256 attributes {state_mutability = #View} {
+      %0 = sol.lib_addr "library-storage-ref-abi.sol:L" : !sol.address
+      %1 = sol.ext_func_constant %0 {selector = -429376317 : i32} : !sol.address -> !sol.ext_func_ref<(!sol.array<? x ui256, Storage>) -> ui256>
+      %2 = sol.addr_of @r : !sol.array<? x ui256, Storage>
+      %3 = sol.gasleft : ui256
+      %c0_ui256 = sol.constant 0 : ui256
+      %status, %outs = sol.ext_icall %1(%2) gas %3 value %c0_ui256 {delegate_call, library_call, static_call} : <(!sol.array<? x ui256, Storage>) -> ui256>, (!sol.array<? x ui256, Storage>) -> (i1, ui256)
+      sol.return %outs : ui256
+    }
+  } {kind = #Contract, runtime}
+}

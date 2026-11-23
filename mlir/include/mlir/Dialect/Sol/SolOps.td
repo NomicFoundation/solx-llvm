@@ -919,7 +919,8 @@ def ICallOp : Sol_ICallOpBase<"icall", Sol_FuncRefType> {
 // forwards all the gas left at the call.
 def ExtICallOp : Sol_ICallOpBase<"ext_icall", Sol_ExtFuncRefType,
     (ins Optional<UI256>:$gas, UI256:$value, UnitAttr:$static_call,
-         UnitAttr:$try_call),
+         UnitAttr:$try_call, UnitAttr:$delegate_call,
+         UnitAttr:$library_call),
     "(`gas` $gas^)? `value` $value ",
     [AttrSizedOperandSegments, Sol_ConstantStringConsumerOpInterface]>;
 

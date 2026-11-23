@@ -59,3 +59,31 @@ module {
     }
   } {kind = #sol<ContractKind Contract>, runtime}
 }
+
+// -----
+
+// A public library function reached through a pointer is delegatecalled too,
+// at the address and selector the pointer holds.
+// CHECK-LABEL: yul.func @k : (i256) -> i256
+// CHECK:         %[[LIB:.*]] = yul.linkersymbol "library.sol:L"
+// CHECK:         %[[SEL:.*]] = yul.constant 3827312202
+// CHECK:         %[[REF0:.*]] = llvm.insertvalue %[[LIB]], %{{.*}}[0]
+// CHECK:         %[[REF:.*]] = llvm.insertvalue %[[SEL]], %[[REF0]][1]
+// CHECK:         %[[GAS:.*]] = yul.gas
+// CHECK:         %[[ADDR:.*]] = llvm.extractvalue %[[REF]][0]
+// CHECK:         %[[OK:.*]] = yul.delegate_call %[[GAS]], %[[ADDR]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
+// CHECK:         yul.cmp eq, %[[OK]], %{{.*}}
+
+#NonPayable = #sol<StateMutability NonPayable>
+module {
+  sol.contract @C {
+    sol.func @k(%arg0: ui256) -> ui256 attributes {state_mutability = #NonPayable} {
+      %0 = sol.lib_addr "library.sol:L" : !sol.address
+      %1 = sol.ext_func_constant %0 {selector = -467655094 : i32} : !sol.address -> !sol.ext_func_ref<(ui256) -> ui256>
+      %2 = sol.gasleft : ui256
+      %c0_ui256 = sol.constant 0 : ui256
+      %status, %outs = sol.ext_icall %1(%arg0) gas %2 value %c0_ui256 {delegate_call, library_call} : <(ui256) -> ui256>, (ui256) -> (i1, ui256)
+      sol.return %outs : ui256
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
