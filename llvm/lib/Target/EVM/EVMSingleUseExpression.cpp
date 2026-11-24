@@ -233,14 +233,17 @@ static bool shouldRematerialize(const MachineInstr &Def,
       return false;
 
     MachineInstr *DefBase = nullptr;
-    if (DefI1->getOpcode() == EVM::CONST_I256)
+    Register BaseReg;
+    if (DefI1->getOpcode() == EVM::CONST_I256) {
       DefBase = DefI2;
-    else if (DefI2->getOpcode() == EVM::CONST_I256)
+      BaseReg = Def.getOperand(2).getReg();
+    } else if (DefI2->getOpcode() == EVM::CONST_I256) {
       DefBase = DefI1;
-    else
+      BaseReg = Def.getOperand(1).getReg();
+    } else {
       return false;
+    }
 
-    const Register BaseReg = DefBase->getOperand(0).getReg();
     if (DefBase != MRI.getUniqueVRegDef(BaseReg))
       return false;
 
@@ -347,10 +350,14 @@ static bool isSafeToMove(const MachineOperand *Def, const MachineOperand *Use,
   bool Read = false, Write = false, Effects = false, StackPointer = false;
   query(*DefI, Read, Write, Effects, StackPointer);
 
-  // If the instruction does not access memory and has no side effects, it has
-  // no additional dependencies.
+  // If the instruction does not access memory and has no side effects, it
+  // has no additional dependencies, except when it has several results: the
+  // scan below is then the only check keeping it from moving past a use or a
+  // redefinition of one of its other results.
   bool HasMutableRegisters = !MutableRegisters.empty();
-  if (!Read && !Write && !Effects && !StackPointer && !HasMutableRegisters)
+  bool HasMultipleResults = DefI->getNumExplicitDefs() > 1;
+  if (!Read && !Write && !Effects && !StackPointer && !HasMutableRegisters &&
+      !HasMultipleResults)
     return true;
 
   // Scan through the intervening instructions between DefI and Insert.
@@ -480,7 +487,8 @@ static MachineInstr *rematerializeCheapDef(
   }
 
   // If that was the last use of the original, delete the original.
-  // Move or clone corresponding DBG_VALUEs to the 'Insert' location.
+  // FIXME: nothing moves or clones DBG_VALUEs here, so debug values
+  // referencing the original go stale.
   if (IsDead) {
     LLVM_DEBUG(dbgs() << " - Deleting original\n");
     SlotIndex Idx = LIS.getInstructionIndex(Def).getRegSlot();
