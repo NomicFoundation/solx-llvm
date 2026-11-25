@@ -60,7 +60,7 @@ class EVMAsmPrinter : public AsmPrinter {
   // which are concatenated into a single block. Duplicate initializers and
   // those that are substrings of others are removed. This "data section"
   // is emitted at the end of the .text section.
-  std::string DataSectionBuffer;
+  SmallString<0> DataSectionBuffer;
   MCSymbol *DataSectionSymbol = nullptr;
   // Maps each global variable symbol to the offset within the data section
   // where its corresponding initializer is located.
@@ -378,17 +378,31 @@ void EVMAsmPrinter::emitWideRelocatableSymbol(const MachineInstr *MI) {
   OutStreamer->switchSection(CurrentSection);
 }
 
+// Returns the initializer of a code address space global.
+static SmallString<0> getCodeDataSectionBytes(const GlobalVariable &GV) {
+  const Constant *Init = GV.getInitializer();
+  const auto *ArrTy = dyn_cast<ArrayType>(Init->getType());
+  if (ArrTy && ArrTy->getElementType()->isIntegerTy(8)) {
+    if (const auto *CV = dyn_cast<ConstantDataSequential>(Init))
+      return SmallString<0>(CV->getRawDataValues());
+    if (isa<ConstantAggregateZero>(Init)) {
+      SmallString<0> Bytes;
+      Bytes.assign(ArrTy->getNumElements(), '\0');
+      return Bytes;
+    }
+  }
+  report_fatal_error(Twine("EVM: unsupported initializer of the code data "
+                           "section global '") +
+                     GV.getName() + "'");
+}
+
 void EVMAsmPrinter::createDataSectionBuffer(const Module &M) {
-  SmallVector<std::pair<const GlobalVariable *, StringRef>, 16> Globals;
+  SmallVector<std::pair<const GlobalVariable *, SmallString<0>>, 16> Globals;
   for (const GlobalVariable &GV : M.globals()) {
     if (GV.getAddressSpace() != EVMAS::AS_CODE || !GV.hasInitializer())
       continue;
 
-    const auto *CV = dyn_cast<ConstantDataSequential>(GV.getInitializer());
-    if (!CV)
-      continue;
-
-    Globals.emplace_back(&GV, CV->getRawDataValues());
+    Globals.emplace_back(&GV, getCodeDataSectionBytes(GV));
   }
   // Sort global variables in descending order based on the size of their
   // initializers.
@@ -405,15 +419,14 @@ void EVMAsmPrinter::createDataSectionBuffer(const Module &M) {
   // an approximate greedy solution. Consider this approach if there are
   // real programs that could benefit from the optimization.
   DataSectionBuffer.clear();
-  raw_string_ostream Stream(DataSectionBuffer);
   for (const auto &[_, Init] : Globals)
-    if (!StringRef(DataSectionBuffer).contains(Init))
-      Stream << Init;
+    if (!DataSectionBuffer.str().contains(Init.str()))
+      DataSectionBuffer.append(Init);
 
   // Compute offsets of each global initializer in the data section.
-  StringRef DataView(DataSectionBuffer);
+  StringRef DataView = DataSectionBuffer.str();
   for (const auto &[GV, Init] : Globals) {
-    size_t Offset = DataView.find(Init);
+    size_t Offset = DataView.find(Init.str());
     assert(Offset != StringRef::npos &&
            "Initializer not found in data section");
     GlobSymbolToOffsetMap[getSymbol(GV)] = Offset;
@@ -440,7 +453,7 @@ void EVMAsmPrinter::emitEndOfAsmFile(Module &) {
 
   // Emit constants to the code.
   OutStreamer->emitLabel(DataSectionSymbol);
-  OutStreamer->emitBinaryData(DataSectionBuffer);
+  OutStreamer->emitBinaryData(DataSectionBuffer.str());
 
   OutStreamer->popSection();
 
@@ -468,10 +481,9 @@ void EVMAsmPrinter::emitStartOfAsmFile(Module &M) {
 }
 
 void EVMAsmPrinter::emitGlobalVariable(const GlobalVariable *GV) {
-  // Constant arrays are handled above.
+  // Code address space constants are handled in createDataSectionBuffer.
   if (GV->getAddressSpace() == EVMAS::AS_CODE && GV->hasInitializer())
-    if (isa<ConstantDataSequential>(GV->getInitializer()))
-      return;
+    return;
 
   AsmPrinter::emitGlobalVariable(GV);
 }

@@ -1943,6 +1943,14 @@ void evm::Builder::genStringLiteralData(StringRef bytes, Value addr,
   mlir::solgen::BuilderExt bExt(b, loc);
 
   if (bytes.size() > maxImmediateStringLiteralSize) {
+    if (llvm::all_of(bytes, [](char c) { return c == '\0'; })) {
+      uint64_t len =
+          withCleanup ? llvm::alignTo(bytes.size(), 32u) : bytes.size();
+      Value srcOffset = b.create<yul::CallDataSizeOp>(loc);
+      b.create<yul::CallDataCopyOp>(loc, addr, srcOffset,
+                                    bExt.genI256Const(len));
+      return;
+    }
     // Only bytes from the source are this long, and their lowerings pass the
     // pool.
     assert(literals && "expected the string literal pool");
