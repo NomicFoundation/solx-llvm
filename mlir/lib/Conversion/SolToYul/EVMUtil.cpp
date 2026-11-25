@@ -3888,9 +3888,8 @@ Value evm::Builder::genABIEncodingImplInline(
             b, loc, size, dstArrAddr, srcArrAddr, dstStride,
             bExt.genI256Const(sol::getStorageSlotCount(eltTy)),
             [&](OpBuilder &, Location loc, Value iSrcAddr, Value iDstAddr) {
-              Value srcVal = genLoad(iSrcAddr, dataLoc, loc);
-              if (isa<sol::ExtFuncRefType>(eltTy))
-                srcVal = genExtFuncUnpack(srcVal, /*inStorage=*/true, loc);
+              Value srcVal = genCleanupPackedStorageValue(
+                  eltTy, genLoad(iSrcAddr, dataLoc, loc), loc);
               genABIEncodingImpl(eltTy, srcVal, iDstAddr, sub, dstAddrInTail,
                                  tupleStart, tailAddr, loc, dataLoc);
             });
