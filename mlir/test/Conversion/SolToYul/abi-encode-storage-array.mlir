@@ -32,6 +32,72 @@ module {
 
 #Contract = #sol<ContractKind Contract>
 
+// bytes20 elements take a slot each and are left-aligned from it.
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_dyn_fixedbytes$_20_$_$_Storage_$ : (i256, i256) -> i256
+// CHECK:         yul.for
+// CHECK:           %[[W:.*]] = yul.sload
+// CHECK:           %[[C96:.*]] = yul.constant 96{{$}}
+// CHECK:           yul.arith_shl %[[W]], %[[C96]]
+// CHECK:           yul.mstore
+module {
+  sol.contract @C {
+    sol.state_var @dyn20 slot 0 offset 0 : !sol.array<? x !sol.fixedbytes<20>, Storage>
+    sol.func @dyn_bytes20() -> !sol.string<Memory> {
+      %0 = sol.addr_of @dyn20 : !sol.array<? x !sol.fixedbytes<20>, Storage>
+      %1 = sol.encode %0 : (!sol.array<? x !sol.fixedbytes<20>, Storage>) -> !sol.string<Memory>
+      sol.return %1 : !sol.string<Memory>
+    }
+  } {kind = #Contract}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// int200 elements take a slot each and are sign-extended without a shift.
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_dyn_si200_$_Storage_$ : (i256, i256) -> i256
+// CHECK:         yul.for
+// CHECK:           %[[W:.*]] = yul.sload
+// CHECK-NOT:       yul.arith_shl
+// CHECK:           %[[C24:.*]] = yul.constant 24{{$}}
+// CHECK:           yul.signextend %[[C24]], %[[W]]
+// CHECK-NOT:       yul.arith_shl
+// CHECK:           yul.mstore
+module {
+  sol.contract @C {
+    sol.state_var @dynI200 slot 0 offset 0 : !sol.array<? x si200, Storage>
+    sol.func @dyn_int200() -> !sol.string<Memory> {
+      %0 = sol.addr_of @dynI200 : !sol.array<? x si200, Storage>
+      %1 = sol.encode %0 : (!sol.array<? x si200, Storage>) -> !sol.string<Memory>
+      sol.return %1 : !sol.string<Memory>
+    }
+  } {kind = #Contract}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
+// bytes32 elements fill their slot and are encoded as loaded.
+// CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_dyn_fixedbytes$_32_$_$_Storage_$ : (i256, i256) -> i256
+// CHECK:         yul.for
+// CHECK:           %[[W:.*]] = yul.sload
+// CHECK-NEXT:      yul.mstore %{{.*}}, %[[W]]
+module {
+  sol.contract @C {
+    sol.state_var @dyn32 slot 0 offset 0 : !sol.array<? x !sol.fixedbytes<32>, Storage>
+    sol.func @dyn_bytes32() -> !sol.string<Memory> {
+      %0 = sol.addr_of @dyn32 : !sol.array<? x !sol.fixedbytes<32>, Storage>
+      %1 = sol.encode %0 : (!sol.array<? x !sol.fixedbytes<32>, Storage>) -> !sol.string<Memory>
+      sol.return %1 : !sol.string<Memory>
+    }
+  } {kind = #Contract}
+}
+
+// -----
+
+#Contract = #sol<ContractKind Contract>
+
 // uint8 elements are unpacked from the slot and padded to 32 bytes.
 // CHECK-LABEL: yul.func @__sol.abi_encode_tuple.padded.tail.array$_4_ui8_$_Storage_$ : (i256, i256) -> i256
 // CHECK-NEXT:  ^bb0(%[[SLOT:.*]]: i256, %{{.*}}: i256):
