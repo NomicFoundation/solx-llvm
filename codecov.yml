@@ -32,14 +32,14 @@ component_management:
       name: SolToYul
       paths:
         - mlir/lib/Conversion/SolToYul/**
-    - component_id: yul-to-standard
-      name: YulToStandard
+    - component_id: yul-to-llvm-ir
+      name: Yul to LLVM IR
       paths:
-        - mlir/lib/Conversion/YulToStandard/**
+        - mlir/lib/Target/LLVMIR/Dialect/Yul/**
     - component_id: evm-linker
       name: EVM linker
       paths:
-        - lld/**
+        - llvm/lib/Target/EVM/Linker/**
     - component_id: sol-yul-c-api
       name: Sol and Yul C API
       paths:
