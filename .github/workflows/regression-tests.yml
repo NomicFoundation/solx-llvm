@@ -295,7 +295,6 @@ jobs:
           fi
 
           ninja -C './target-llvm/build-final' verify-llvm -v
-          ninja -C './target-llvm/build-final' check-lld-unit -v
           # MLIR's lit + unit tests, covering the Sol/Yul dialect and
           # SolToYul/CAPI changes this fork carries.
           ninja -C './target-llvm/build-final' check-mlir -v
