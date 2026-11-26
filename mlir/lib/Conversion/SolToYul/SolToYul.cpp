@@ -2481,8 +2481,14 @@ struct CopyOpLowering : public OpConversionPattern<sol::CopyOp> {
     sol::DataLocation srcDataLoc = sol::getDataLocation(srcTy);
     sol::DataLocation dstDataLoc = sol::getDataLocation(dstTy);
 
-    evmB.genCopy(srcTy, dstTy, adaptor.getSrc(), adaptor.getDst(), srcDataLoc,
-                 dstDataLoc, loc);
+    if (srcDataLoc == sol::DataLocation::Storage &&
+        dstDataLoc == sol::DataLocation::Storage &&
+        sol::canContainValueOf(srcTy, srcTy))
+      evmB.genCopyWithOverlapGuard(srcTy, dstTy, adaptor.getSrc(),
+                                   adaptor.getDst(), loc);
+    else
+      evmB.genCopy(srcTy, dstTy, adaptor.getSrc(), adaptor.getDst(), srcDataLoc,
+                   dstDataLoc, loc);
     r.eraseOp(op);
     return success();
   }

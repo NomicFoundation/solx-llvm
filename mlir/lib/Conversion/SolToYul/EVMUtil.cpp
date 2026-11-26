@@ -2670,6 +2670,17 @@ void evm::Builder::genResizeDynStorageArray(Value arraySlot, Value newLen,
   // Read the old length before overwriting it.
   Value oldLen = genLoad(arraySlot, sol::DataLocation::Storage, loc);
 
+  // The tail clear must not overflow the slot count of the old length.
+  APInt slotsPerElt = sol::getStorageSlotCount(eltTy);
+  if (slotsPerElt.ugt(1)) {
+    Value shrinks = bExt.genCmp(yul::CmpPredicate::ult, newLen, oldLen);
+    Value overflows = bExt.genCmp(
+        yul::CmpPredicate::ugt, oldLen,
+        bExt.genI256Const(APInt::getAllOnes(256).udiv(slotsPerElt)));
+    genPanic(PanicCode::UnderOverflow,
+             b.create<yul::AndOp>(loc, shrinks, overflows), loc);
+  }
+
   // Write the new length.
   genStore(newLen, arraySlot, sol::DataLocation::Storage, loc);
 
@@ -3513,6 +3524,91 @@ Value evm::Builder::genCloneToMemory(Type ty, Value src,
       [&](ValueRange a, Location bodyLoc) {
         return genCopyInline(ty, ty, a[0], /*dstAddr=*/{}, srcDataLoc,
                              sol::DataLocation::Memory, bodyLoc);
+      },
+      loc);
+}
+
+void evm::Builder::genCopyWithOverlapGuard(Type srcTy, Type dstTy, Value src,
+                                           Value dst, Location loc) {
+  genHelperCall(
+      helpersym::copyWithOverlapGuard(srcTy, dstTy), {src, dst},
+      [&](ValueRange args, Location bodyLoc) {
+        mlir::solgen::BuilderExt bExt(b, bodyLoc);
+        auto ifNotSelf =
+            bExt.createIf(bExt.genCmp(yul::CmpPredicate::ne, args[0], args[1]));
+        b.setInsertionPointToStart(&ifNotSelf.getThenRegion().front());
+        auto ifOverlap = bExt.createIf(
+            genDstContainsSrc(dstTy, srcTy, args[1], args[0], bodyLoc),
+            /*withElseRegion=*/true);
+        b.setInsertionPointToStart(&ifOverlap.getThenRegion().front());
+        Value freePtr = genFreePtr(bodyLoc);
+        Value snapshot = genCloneToMemory(srcTy, args[0],
+                                          sol::DataLocation::Storage, bodyLoc);
+        genCopy(sol::getWithDataLocation(srcTy, sol::DataLocation::Memory),
+                dstTy, snapshot, args[1], sol::DataLocation::Memory,
+                sol::DataLocation::Storage, bodyLoc);
+        // The copy allocates nothing, so the memory of the snapshot is freed.
+        genFreePtrStore(freePtr, bodyLoc);
+        b.setInsertionPointToStart(&ifOverlap.getElseRegion().front());
+        genCopy(srcTy, dstTy, args[0], args[1], sol::DataLocation::Storage,
+                sol::DataLocation::Storage, bodyLoc);
+        b.setInsertionPointAfter(ifNotSelf);
+      },
+      loc);
+}
+
+Value evm::Builder::genDstContainsSrc(Type dstTy, Type srcTy, Value dst,
+                                      Value src, Location loc) {
+  return genHelperCall(
+      helpersym::dstContainsSrc(dstTy, srcTy), {dst, src},
+      b.getIntegerType(256),
+      [&](ValueRange args, Location bodyLoc) {
+        mlir::solgen::BuilderExt bExt(b, bodyLoc);
+        Value found = bExt.genBool(true);
+        // A wrapping distance, as a region can wrap past the last slot.
+        auto genReturnIfWithin = [&](Value start, Value slotCount) {
+          Value distance = b.create<yul::SubOp>(bodyLoc, args[1], start);
+          genReturn(bExt.genCmp(yul::CmpPredicate::ult, distance, slotCount),
+                    found, bodyLoc);
+        };
+
+        if (auto structTy = dyn_cast<sol::StructType>(dstTy)) {
+          genReturnIfWithin(args[0],
+                            bExt.genI256Const(structTy.getStorageSlotCount()));
+          for (auto [i, memberTy] :
+               llvm::enumerate(structTy.getMemberTypes())) {
+            if (!sol::canContainValueOf(memberTy, srcTy))
+              continue;
+            Value memberSlot = b.create<yul::AddOp>(
+                bodyLoc, args[0],
+                bExt.genI256Const(
+                    structTy.getStorageMemberOffset(i).slotOffset));
+            genReturn(genDstContainsSrc(memberTy, srcTy, memberSlot, args[1],
+                                        bodyLoc),
+                      found, bodyLoc);
+          }
+          return bExt.genBool(false);
+        }
+
+        auto arrTy = cast<sol::ArrayType>(dstTy);
+        Value length = arrTy.isDynSized() ? genDynSize(args[0], arrTy, bodyLoc)
+                                          : bExt.genI256Const(arrTy.getSize());
+        Value data = arrTy.isDynSized()
+                         ? genDataAddrPtr(args[0], arrTy, bodyLoc)
+                         : args[0];
+        genReturnIfWithin(data, genStorageArraySlotCount(
+                                    length, arrTy.getEltType(), bodyLoc));
+        bExt.createCountedLoop(
+            bExt.genI256Const(0), length, bExt.genI256Const(1), ValueRange{},
+            [&](OpBuilder &, Location, Value i, ValueRange) {
+              Value eltSlot = genAddrAtIdx(data, i, arrTy,
+                                           sol::DataLocation::Storage, bodyLoc);
+              genReturn(genDstContainsSrc(arrTy.getEltType(), srcTy, eltSlot,
+                                          args[1], bodyLoc),
+                        found, bodyLoc);
+              return SmallVector<Value>{};
+            });
+        return bExt.genBool(false);
       },
       loc);
 }
@@ -4488,6 +4584,15 @@ void evm::Builder::genRevert(Value cond, std::optional<Location> locArg) {
   auto ifOp = b.create<yul::IfOp>(loc, TypeRange{}, cond);
   b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
   genRevert(loc);
+}
+
+void evm::Builder::genReturn(Value cond, ValueRange vals,
+                             std::optional<Location> locArg) {
+  Location loc = locArg ? *locArg : defLoc;
+  OpBuilder::InsertionGuard insertGuard(b);
+  auto ifOp = b.create<yul::IfOp>(loc, TypeRange{}, cond);
+  b.setInsertionPointToStart(&ifOp.getThenRegion().emplaceBlock());
+  b.create<sol::ReturnOp>(loc, vals);
 }
 
 void evm::Builder::genRevert(TypeRange tys, ValueRange vals,

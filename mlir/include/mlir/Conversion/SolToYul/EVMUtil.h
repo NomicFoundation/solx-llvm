@@ -313,7 +313,8 @@ private:
   /// Resizes a dynamic storage array: writes \p newLen to \p arraySlot,
   /// then zeroes any storage slots that fall outside the new range if the
   /// array shrank. Panics (ResourceError) if \p newLen exceeds
-  /// type(uint64).max.
+  /// type(uint64).max, and (UnderOverflow) if the array shrinks from a length
+  /// whose slot count overflows.
   void
   genResizeDynStorageArray(mlir::Value arraySlot, mlir::Value newLen,
                            mlir::Type eltTy,
@@ -377,6 +378,11 @@ private:
   Value genCopyInline(mlir::Type srcTy, mlir::Type dstTy, mlir::Value srcAddr,
                       mlir::Value dstAddr, mlir::sol::DataLocation srcDataLoc,
                       mlir::sol::DataLocation dstDataLoc, mlir::Location loc);
+
+  /// \p dst contains \p src if \p src lies in the slots of \p dst or in the
+  /// data of a dynamic array in \p dst that can hold a value of type \p srcTy.
+  Value genDstContainsSrc(Type dstTy, Type srcTy, Value dst, Value src,
+                          Location loc);
 
   Value genABIEncodingInline(TypeRange tys, ValueRange vals, Value startAddr,
                              ABIEncodingOptions opts, Location loc);
@@ -613,6 +619,11 @@ public:
   Value genCloneToMemory(Type ty, Value src, sol::DataLocation srcDataLoc,
                          std::optional<Location> locArg = std::nullopt);
 
+  /// Copies the storage value at \p src to \p dst, through a memory snapshot
+  /// if \p dst contains \p src.
+  void genCopyWithOverlapGuard(Type srcTy, Type dstTy, Value src, Value dst,
+                               Location loc);
+
   /// Calls the helper named \p symbol with \p args, creating it on first
   /// request with the types of \p args as its argument types and no
   /// results. \p genBody emits the body from the
@@ -746,6 +757,10 @@ public:
                  StringRef signature,
                  std::optional<Location> locArg = std::nullopt);
   void genRevert(TypeRange tys, ValueRange vals, StringRef signature,
+                 std::optional<Location> locArg = std::nullopt);
+
+  /// Leaves the enclosing function with \p vals if \p cond holds.
+  void genReturn(Value cond, ValueRange vals,
                  std::optional<Location> locArg = std::nullopt);
 
   /// Generates a revert with values. (Useful for debugging)

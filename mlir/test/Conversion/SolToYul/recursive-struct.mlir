@@ -7,17 +7,20 @@
 !S =!sol.struct<"S", Storage, (ui256, !sol.array<? x !sol.struct<"S", Storage>, Storage>)>
 module {
   sol.contract @C {
-    // CHECK-LABEL: yul.func @__sol.clear_storage_struct.S : (i256) -> ()
-    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
-    // CHECK:         %[[B:.*]] = yul.add %arg0, %[[C1]]
-    // CHECK:         yul.func_call @__sol.clear_storage_array.array$_dyn_struct$_S_$_Storage_$_$_{{.*}}(%[[B]]) : (i256) -> ()
-
     // The array copy moves the length, clears the old tail and copies each
     // element through the struct helper, which comes back here for its b.
     // CHECK-LABEL: yul.func @__sol.copy_array.storage.storage.array$_dyn_struct$_S_$_Storage_$_$_{{.*}} : (i256, i256) -> ()
     // CHECK:         %[[NE:.*]] = yul.cmp ne, %arg0, %arg1
     // CHECK:         yul.if %[[NE]] {
     // CHECK:           %[[LEN:.*]] = yul.sload %arg0
+    // CHECK:           %[[OLD:.*]] = yul.sload %arg1
+    // CHECK-NEXT:      %[[SHRINKS:.*]] = yul.cmp ult, %[[LEN]], %[[OLD]]
+    // CHECK-NEXT:      %[[MAX:.*]] = yul.constant 57896044618658097711785492504343953926634992332820282019728792003956564819967{{$}}
+    // CHECK-NEXT:      %[[OVERFLOWS:.*]] = yul.cmp ugt, %[[OLD]], %[[MAX]]
+    // CHECK-NEXT:      %[[PANIC:.*]] = yul.and %[[SHRINKS]], %[[OVERFLOWS]]
+    // CHECK-NEXT:      yul.if %[[PANIC]] {
+    // CHECK-NEXT:        %[[C17:.*]] = yul.constant 17{{$}}
+    // CHECK-NEXT:        yul.func_call @__sol.panic(%[[C17]]) : (i256) -> ()
     // CHECK:           yul.sstore %arg1, %[[LEN]]
     // CHECK:           yul.for
     // CHECK:             yul.func_call @__sol.clear_storage_struct.S(
@@ -31,13 +34,105 @@ module {
     // CHECK:         %[[DB:.*]] = yul.add %arg1, %[[C1D]]
     // CHECK:         yul.func_call @__sol.copy_array.storage.storage.array$_dyn_struct$_S_$_Storage_$_$_{{.*}}(%[[SB]], %[[DB]]) : (i256, i256) -> ()
 
+    // CHECK-LABEL: yul.func @__sol.clear_storage_struct.S : (i256) -> ()
+    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
+    // CHECK:         %[[B:.*]] = yul.add %arg0, %[[C1]]
+    // CHECK:         yul.func_call @__sol.clear_storage_array.array$_dyn_struct$_S_$_Storage_$_$_{{.*}}(%[[B]]) : (i256) -> ()
+
+    // CHECK-LABEL: yul.func @__sol.dst_contains_src.array$_dyn_struct$_S_{{.*}} : (i256, i256) -> i256
+    // CHECK:         %[[TRUE:.*]] = yul.constant 1{{$}}
+    // CHECK-NEXT:    %[[LEN:.*]] = yul.sload %arg0
+    // CHECK:         %[[DATA:.*]] = yul.keccak256
+    // CHECK-NEXT:    %[[C2:.*]] = yul.constant 2{{$}}
+    // CHECK-NEXT:    %[[SIZE:.*]] = yul.mul %[[LEN]], %[[C2]]
+    // CHECK-NEXT:    %[[DIST:.*]] = yul.sub %arg1, %[[DATA]]
+    // CHECK-NEXT:    %[[IN:.*]] = yul.cmp ult, %[[DIST]], %[[SIZE]]
+    // CHECK-NEXT:    yul.if %[[IN]] {
+    // CHECK-NEXT:      yul.func_return %[[TRUE]] : i256
+    // CHECK:         yul.for
+    // CHECK:           yul.cmp ult, %{{.*}}, %[[LEN]]
+    // CHECK:         } body {
+    // CHECK-NEXT:    ^bb0(%[[I:.*]]: i256):
+    // CHECK-NEXT:      %[[C2B:.*]] = yul.constant 2{{$}}
+    // CHECK-NEXT:      %[[OFF:.*]] = yul.mul %[[I]], %[[C2B]]
+    // CHECK-NEXT:      %[[ELT:.*]] = yul.add %[[DATA]], %[[OFF]]
+    // CHECK-NEXT:      %[[INELT:.*]] = yul.func_call @__sol.dst_contains_src.struct$_S_{{.*}}(%[[ELT]], %arg1) : (i256, i256) -> i256
+    // CHECK-NEXT:      yul.if %[[INELT]] {
+    // CHECK-NEXT:        yul.func_return %[[TRUE]] : i256
+    // CHECK:         %[[FALSE:.*]] = yul.constant 0{{$}}
+    // CHECK-NEXT:    yul.func_return %[[FALSE]] : i256
+
+    // CHECK-LABEL: yul.func @__sol.dst_contains_src.struct$_S_{{.*}} : (i256, i256) -> i256
+    // CHECK:         %[[TRUE:.*]] = yul.constant 1{{$}}
+    // CHECK-NEXT:    %[[C2:.*]] = yul.constant 2{{$}}
+    // CHECK-NEXT:    %[[DIST:.*]] = yul.sub %arg1, %arg0
+    // CHECK-NEXT:    %[[IN:.*]] = yul.cmp ult, %[[DIST]], %[[C2]]
+    // CHECK-NEXT:    yul.if %[[IN]] {
+    // CHECK-NEXT:      yul.func_return %[[TRUE]] : i256
+    // CHECK:         %[[C1:.*]] = yul.constant 1{{$}}
+    // CHECK-NEXT:    %[[BSLOT:.*]] = yul.add %arg0, %[[C1]]
+    // CHECK-NEXT:    %[[INB:.*]] = yul.func_call @__sol.dst_contains_src.array$_dyn_struct$_S_{{.*}}(%[[BSLOT]], %arg1) : (i256, i256) -> i256
+    // CHECK-NEXT:    yul.if %[[INB]] {
+    // CHECK-NEXT:      yul.func_return %[[TRUE]] : i256
+    // CHECK:         %[[FALSE:.*]] = yul.constant 0{{$}}
+    // CHECK-NEXT:    yul.func_return %[[FALSE]] : i256
+
+    // CHECK-LABEL: yul.func @__sol.copy_with_overlap_guard.struct$_S_{{.*}} : (i256, i256) -> ()
+    // CHECK:         %[[NE:.*]] = yul.cmp ne, %arg0, %arg1
+    // CHECK-NEXT:    yul.if %[[NE]] {
+    // CHECK-NEXT:      %[[IN:.*]] = yul.func_call @__sol.dst_contains_src.struct$_S_{{.*}}(%arg1, %arg0) : (i256, i256) -> i256
+    // CHECK-NEXT:      yul.if %[[IN]] {
+    // CHECK-NEXT:        %[[C64:.*]] = yul.constant 64{{$}}
+    // CHECK-NEXT:        %[[FREE:.*]] = yul.mload %[[C64]]
+    // CHECK-NEXT:        %[[SNAP:.*]] = yul.func_call @__sol.clone_struct.storage.memory.S(%arg0) : (i256) -> i256
+    // CHECK-NEXT:        yul.func_call @__sol.copy_struct.memory.storage.S.S(%[[SNAP]], %arg1) : (i256, i256) -> ()
+    // CHECK-NEXT:        %[[C64:.*]] = yul.constant 64{{$}}
+    // CHECK-NEXT:        yul.mstore %[[C64]], %[[FREE]]
+    // CHECK-NEXT:        yul.yield
+    // CHECK-NEXT:      } else {
+    // CHECK:             yul.func_call @__sol.copy_struct.storage.storage.S.S(%arg0, %arg1) : (i256, i256) -> ()
+
     // CHECK-LABEL: yul.func @stoToSto : (i256, i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256, %[[B:.*]]: i256):
-    // CHECK:         %[[NE:.*]] = yul.cmp ne, %[[A]], %[[B]]
-    // CHECK:         yul.if %[[NE]] {
-    // CHECK:           yul.func_call @__sol.copy_struct.storage.storage.S.S(%[[A]], %[[B]]) : (i256, i256) -> ()
+    // CHECK-NEXT:    yul.func_call @__sol.copy_with_overlap_guard.struct$_S_{{.*}}(%[[A]], %[[B]]) : (i256, i256) -> ()
     sol.func @stoToSto(%a: !S, %b: !S) {
       sol.copy %a, %b : !S, !S
+      sol.return
+    }
+  } {kind = #sol<ContractKind Contract>, runtime}
+}
+
+// -----
+
+// N is two slots.
+!N = !sol.struct<"N", Storage, (!sol.array<? x !sol.array<2 x !sol.struct<"N", Storage>, Storage>, Storage>, ui256)>
+module {
+  sol.contract @C {
+    // CHECK-LABEL: yul.func @__sol.dst_contains_src.array$_3_struct$_N_{{.*}} : (i256, i256) -> i256
+    // CHECK:         %[[LEN:.*]] = yul.constant 3{{$}}
+    // CHECK-NEXT:    %[[C2:.*]] = yul.constant 2{{$}}
+    // CHECK-NEXT:    %[[SIZE:.*]] = yul.mul %[[LEN]], %[[C2]]
+    // CHECK-NEXT:    %[[DIST:.*]] = yul.sub %arg1, %arg0
+    // CHECK-NEXT:    %[[IN:.*]] = yul.cmp ult, %[[DIST]], %[[SIZE]]
+    // CHECK:         } body {
+    // CHECK-NEXT:    ^bb0(%[[I:.*]]: i256):
+    // CHECK-NEXT:      %[[C2B:.*]] = yul.constant 2{{$}}
+    // CHECK-NEXT:      %[[OFF:.*]] = yul.mul %[[I]], %[[C2B]]
+    // CHECK-NEXT:      %[[ELT:.*]] = yul.add %arg0, %[[OFF]]
+    // CHECK-NEXT:      yul.func_call @__sol.dst_contains_src.struct$_N_{{.*}}(%[[ELT]], %arg1) : (i256, i256) -> i256
+
+    // CHECK-LABEL: yul.func @__sol.copy_with_overlap_guard.array$_2_struct$_N_{{.*}}.array$_3_struct$_N_{{.*}} : (i256, i256) -> ()
+    // CHECK:         yul.func_call @__sol.dst_contains_src.array$_3_struct$_N_{{.*}}(%arg1, %arg0) : (i256, i256) -> i256
+    // CHECK:         %[[SNAP:.*]] = yul.func_call @__sol.clone_array.storage.memory.array$_2_struct$_N_{{.*}}(%arg0) : (i256) -> i256
+    // CHECK-NEXT:    yul.func_call @__sol.copy_array.memory.storage.array$_2_struct$_N_$_Memory_{{.*}}.array$_3_struct$_N_$_Storage_{{.*}}(%[[SNAP]], %arg1) : (i256, i256) -> ()
+    // CHECK:         } else {
+    // CHECK-NEXT:      yul.func_call @__sol.copy_array.storage.storage.array$_2_struct$_N_$_Storage_{{.*}}.array$_3_struct$_N_$_Storage_{{.*}}(%arg0, %arg1) : (i256, i256) -> ()
+
+    // CHECK-LABEL: yul.func @stoToStoArray : (i256, i256) -> ()
+    // CHECK-NEXT:  ^bb0(%[[S:.*]]: i256, %[[T:.*]]: i256):
+    // CHECK-NEXT:    yul.func_call @__sol.copy_with_overlap_guard.array$_2_struct$_N_{{.*}}(%[[S]], %[[T]]) : (i256, i256) -> ()
+    sol.func @stoToStoArray(%s: !sol.array<2 x !N, Storage>, %t: !sol.array<3 x !N, Storage>) {
+      sol.copy %s, %t : !sol.array<2 x !N, Storage>, !sol.array<3 x !N, Storage>
       sol.return
     }
   } {kind = #sol<ContractKind Contract>, runtime}
@@ -191,7 +286,7 @@ module {
 
     // CHECK-LABEL: yul.func @stoToStoPacked : (i256, i256) -> ()
     // CHECK-NEXT:  ^bb0(%[[A:.*]]: i256, %[[B:.*]]: i256):
-    // CHECK:         yul.func_call @__sol.copy_struct.storage.storage.P.P(%[[A]], %[[B]]) : (i256, i256) -> ()
+    // CHECK:         yul.func_call @__sol.copy_with_overlap_guard.struct$_P_{{.*}}(%[[A]], %[[B]]) : (i256, i256) -> ()
     sol.func @stoToStoPacked(%a: !P, %b: !P) {
       sol.copy %a, %b : !P, !P
       sol.return

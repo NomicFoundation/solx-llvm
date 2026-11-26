@@ -150,6 +150,16 @@ std::string evm::helpersym::copyStructToStorage(sol::DataLocation src,
                                           structKey(srcTy), structKey(dstTy)});
 }
 
+std::string evm::helpersym::copyWithOverlapGuard(Type srcTy, Type dstTy) {
+  return makeHelperSymbol("copy_with_overlap_guard",
+                          {typeName(srcTy), typeName(dstTy)});
+}
+
+std::string evm::helpersym::dstContainsSrc(Type dstTy, Type srcTy) {
+  return makeHelperSymbol("dst_contains_src",
+                          {typeName(dstTy), typeName(srcTy)});
+}
+
 std::string evm::helpersym::cloneStructToMemory(sol::DataLocation src,
                                                 sol::StructType ty) {
   assert(ty.getDataLocation() == src);
