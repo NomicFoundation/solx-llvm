@@ -656,6 +656,7 @@ LLVMAssembleEVM(const LLVMMemoryBufferRef inBuffers[],
     Out.Segments.emplace_back(In.Text, Out.TextSize);
     Out.TextSize += In.Text.size();
   }
+  Result.MetadataOffset = Out.TextSize;
   Out.Segments.emplace_back(StringRef(metadata, metadataSize), Out.TextSize);
   Out.TextSize += metadataSize;
   // Every offset of the output object must fit in an ELF32 field. Half the
@@ -682,6 +683,14 @@ LLVMAssembleEVM(const LLVMMemoryBufferRef inBuffers[],
   Result.ElfObject =
       emitElfObject ? wrap(writeObject(Out, Inputs.front().IdHash).release())
                     : nullptr;
+
+  // Report where each input's text landed in 'Bytecode'. An input the
+  // layout left out keeps UINT64_MAX as its offset.
+  Result.NumInputs = inBuffersNum;
+  Result.InputOffsets = reinterpret_cast<uint64_t *>(
+      std::malloc(inBuffersNum * sizeof(uint64_t)));
+  for (auto [Idx, In] : enumerate(Inputs))
+    Result.InputOffsets[Idx] = In.Included ? In.OutTextOffset : UINT64_MAX;
 
   // Report the unresolved library references as (source name, offset) pairs,
   // one per use, the source names read from the '.symbol_name' sections.
@@ -721,5 +730,6 @@ void LLVMDisposeAssembleResultEVM(LLVMEVMAssembleResult *result) {
 
   std::free(result->UnresolvedNames);
   std::free(result->UnresolvedOffsets);
+  std::free(result->InputOffsets);
   *result = LLVMEVMAssembleResult();
 }
