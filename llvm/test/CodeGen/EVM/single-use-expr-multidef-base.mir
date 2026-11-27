@@ -1,0 +1,94 @@
+# RUN: llc -x mir -run-pass evm-single-use-expressions -verify-machineinstrs < %s | FileCheck %s
+
+--- |
+
+  target datalayout = "E-p:256:256-i256:256:256-S256-a:256:256"
+  target triple = "evm"
+  declare void @decoder()
+  define void @multidef_base_second_result() { ret void }
+  define void @multidef_base_first_result() { ret void }
+  define void @unique_base() { ret void }
+
+...
+---
+# The loop bound %3 = %1 + 96 is computed before the loop from the decoder's
+# SECOND result, and %1 is redefined inside the loop. Rematerializing the ADD
+# at its use would recompute the bound from the new %1 and the loop would
+# never end. The bound must stay in bb.0 and the compare must read it.
+#
+# CHECK-LABEL: name: multidef_base_second_result
+# CHECK: bb.0:
+# CHECK: %3:gpr = ADD {{%1, %2|%2, %1}}
+# CHECK: bb.1:
+# CHECK-NOT: CONST_I256 i256 96
+# CHECK: ULT %1, %3
+name: multidef_base_second_result
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    %0:gpr, %1:gpr = FCALL @decoder, implicit-def dead $arguments, implicit $sp
+    %2:gpr = CONST_I256 i256 96, implicit-def dead $arguments
+    %3:gpr = ADD %1:gpr, %2:gpr, implicit-def dead $arguments
+    %4:gpr = CONST_I256 i256 32, implicit-def dead $arguments
+
+  bb.1:
+    %1:gpr = ADD %1:gpr, %4:gpr, implicit-def dead $arguments
+    %5:gpr = ULT %1:gpr, %3:gpr, implicit-def dead $arguments
+    JUMPI %bb.1, %5:gpr, implicit-def $arguments
+
+  bb.2:
+    RET %0:gpr, implicit-def dead $arguments
+...
+---
+# The same loop with the base in the call's FIRST result.
+#
+# CHECK-LABEL: name: multidef_base_first_result
+# CHECK: bb.0:
+# CHECK: %3:gpr = ADD {{%0, %2|%2, %0}}
+# CHECK: bb.1:
+# CHECK-NOT: CONST_I256 i256 96
+# CHECK: ULT %0, %3
+name: multidef_base_first_result
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    %0:gpr, %1:gpr = FCALL @decoder, implicit-def dead $arguments, implicit $sp
+    %2:gpr = CONST_I256 i256 96, implicit-def dead $arguments
+    %3:gpr = ADD %0:gpr, %2:gpr, implicit-def dead $arguments
+    %4:gpr = CONST_I256 i256 32, implicit-def dead $arguments
+
+  bb.1:
+    %0:gpr = ADD %0:gpr, %4:gpr, implicit-def dead $arguments
+    %5:gpr = ULT %0:gpr, %3:gpr, implicit-def dead $arguments
+    JUMPI %bb.1, %5:gpr, implicit-def $arguments
+
+  bb.2:
+    RET %1:gpr, implicit-def dead $arguments
+...
+---
+# A base with a single definition that stays live across the loop: the
+# rematerialization is sound here and must keep firing.
+#
+# CHECK-LABEL: name: unique_base
+# CHECK: bb.1:
+# CHECK: CONST_I256 i256 96
+# CHECK: ADD
+# CHECK: ULT
+name: unique_base
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    %0:gpr = SELFBALANCE implicit-def dead $arguments
+    %1:gpr = CONST_I256 i256 96, implicit-def dead $arguments
+    %2:gpr = ADD %0:gpr, %1:gpr, implicit-def dead $arguments
+    %3:gpr = CONST_I256 i256 0, implicit-def dead $arguments
+    %4:gpr = CONST_I256 i256 32, implicit-def dead $arguments
+
+  bb.1:
+    %3:gpr = ADD %3:gpr, %4:gpr, implicit-def dead $arguments
+    %5:gpr = ULT %3:gpr, %2:gpr, implicit-def dead $arguments
+    JUMPI %bb.1, %5:gpr, implicit-def $arguments
+
+  bb.2:
+    RET %0:gpr, implicit-def dead $arguments
+...
