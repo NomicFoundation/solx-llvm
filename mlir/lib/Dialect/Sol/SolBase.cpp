@@ -17,7 +17,9 @@
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/TargetParser/EVMTargetParser.h"
 #include "llvm/TargetParser/SubtargetFeature.h"
@@ -168,6 +170,57 @@ mlir::SideEffects::Resource *mlir::sol::getResource(DataLocation dataLoc) {
   case DataLocation::Immutable:
     return ImmutableResource::get();
   }
+}
+
+bool mlir::sol::canContainValueOf(Type ty, Type valueTy) {
+  SmallVector<Type> worklist{ty};
+  DenseSet<Type> visited;
+  while (!worklist.empty()) {
+    Type containerTy = worklist.pop_back_val();
+    if (!visited.insert(containerTy).second)
+      continue;
+    SmallVector<Type> componentTys;
+    if (auto structTy = dyn_cast<StructType>(containerTy))
+      llvm::append_range(componentTys, structTy.getMemberTypes());
+    else if (auto arrTy = dyn_cast<ArrayType>(containerTy))
+      componentTys.push_back(arrTy.getEltType());
+    if (llvm::is_contained(componentTys, valueTy))
+      return true;
+    llvm::append_range(worklist, componentTys);
+  }
+  return false;
+}
+
+/// \p pending holds the identified structs whose body is being built.
+static Type getWithDataLocationImpl(Type ty, DataLocation dataLoc,
+                                    DenseSet<Type> &pending) {
+  MLIRContext *ctx = ty.getContext();
+  if (auto arrTy = dyn_cast<ArrayType>(ty))
+    return ArrayType::get(
+        ctx, arrTy.getSizeOpt(),
+        getWithDataLocationImpl(arrTy.getEltType(), dataLoc, pending), dataLoc);
+  if (isa<StringType>(ty))
+    return StringType::get(ctx, dataLoc);
+  auto structTy = dyn_cast<StructType>(ty);
+  if (!structTy)
+    return ty;
+  auto getMemberTypes = [&] {
+    return llvm::map_to_vector(structTy.getMemberTypes(), [&](Type memberTy) {
+      return getWithDataLocationImpl(memberTy, dataLoc, pending);
+    });
+  };
+  if (!structTy.isIdentified())
+    return StructType::get(ctx, getMemberTypes(), dataLoc);
+  StructType counterpart =
+      StructType::getIdentified(ctx, structTy.getName(), dataLoc);
+  if (counterpart.isOpaque() && pending.insert(counterpart).second)
+    (void)counterpart.setBody(getMemberTypes());
+  return counterpart;
+}
+
+Type mlir::sol::getWithDataLocation(Type ty, DataLocation dataLoc) {
+  DenseSet<Type> pending;
+  return getWithDataLocationImpl(ty, dataLoc, pending);
 }
 
 bool mlir::sol::isNonPtrRefType(Type ty) {

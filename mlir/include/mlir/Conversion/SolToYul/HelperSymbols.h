@@ -42,6 +42,16 @@ std::string copyStructToStorage(mlir::sol::DataLocation src,
                                 mlir::sol::StructType srcTy,
                                 mlir::sol::StructType ty);
 
+/// `__sol.copy_with_overlap_guard.<src ty>.<dst ty>`
+///
+/// Emitted for a storage to storage copy of a type that can contain itself.
+std::string copyWithOverlapGuard(mlir::Type srcTy, mlir::Type dstTy);
+
+/// `__sol.dst_contains_src.<dst ty>.<src ty>`
+///
+/// Emitted for the overlap check of `copyWithOverlapGuard`.
+std::string dstContainsSrc(mlir::Type dstTy, mlir::Type srcTy);
+
 /// `__sol.clone_struct.<src>.memory.<name or ty>`
 ///
 /// Emitted for every struct copy into memory. Allocates the memory struct,

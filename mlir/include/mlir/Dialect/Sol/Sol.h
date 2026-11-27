@@ -58,6 +58,12 @@ bool isDynamicallySized(Type ty);
 /// dynamically sized.
 bool hasDynamicallySizedElt(Type ty);
 
+/// Returns true if `ty` has a member or element of type `valueTy` at any depth.
+bool canContainValueOf(Type ty, Type valueTy);
+
+/// Returns `ty` with each array, string and struct in it at `dataLoc`.
+Type getWithDataLocation(Type ty, DataLocation dataLoc);
+
 /// Returns true if the type is a reference type but not a pointer type.
 bool isNonPtrRefType(Type ty);
 
