@@ -129,8 +129,11 @@ static uint64_t calculateReadOnlyDataSize(const Module &M) {
     if (GV.getAddressSpace() != EVMAS::AS_CODE || !GV.hasInitializer())
       continue;
 
-    if (const auto *CV = dyn_cast<ConstantDataSequential>(GV.getInitializer()))
+    const Constant *Init = GV.getInitializer();
+    if (const auto *CV = dyn_cast<ConstantDataSequential>(Init))
       Size += CV->getRawDataValues().size();
+    else if (isa<ConstantAggregateZero>(Init))
+      Size += M.getDataLayout().getTypeAllocSize(Init->getType());
   }
   return Size;
 }
