@@ -61,13 +61,24 @@ typedef struct {
  *  source name and the offset pointing at the 20-byte slot in 'Bytecode'.
  *
  *  'ElfObject' is the relocatable ELF carrying the same '.text' as
- *  'Bytecode', with a relocation per unresolved library use. */
+ *  'Bytecode', with a relocation per unresolved library use.
+ *
+ *  'InputOffsets' describes the layout of each input in 'Bytecode', in
+ *  'inBuffers' order: 'InputOffsets[i]' is where the '.text' of
+ *  'inBuffers[i]' starts in 'Bytecode', or UINT64_MAX when the first
+ *  object never references the input through '__dataoffset' and the
+ *  layout left it out. The first input is always at offset zero.
+ *  'NumInputs' equals 'inBuffersNum', and 'MetadataOffset' is where the
+ *  metadata starts, ending 'Bytecode'. */
 typedef struct {
   LLVMMemoryBufferRef Bytecode;
   LLVMMemoryBufferRef ElfObject;
   char **UnresolvedNames;
   uint64_t *UnresolvedOffsets;
   uint64_t NumUnresolved;
+  uint64_t *InputOffsets;
+  uint64_t NumInputs;
+  uint64_t MetadataOffset;
 } LLVMEVMAssembleResult;
 
 /**

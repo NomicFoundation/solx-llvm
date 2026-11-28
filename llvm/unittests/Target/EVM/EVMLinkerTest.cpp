@@ -278,6 +278,29 @@ TEST_F(EVMLinkerTest, Assembly) {
   EXPECT_EQ(Binary.count(LibAddr), 3U);
   EXPECT_EQ(Binary.count(StringRef(MD.data(), MD.size())), 5U);
 
+  // The layout reports each input's offset. Included inputs ascend in input
+  // order starting at zero, the metadata ends the bytecode, and an input the
+  // first object never references keeps UINT64_MAX as its offset.
+  const auto CheckLayout = [](const LLVMEVMAssembleResult &Res,
+                              uint64_t NumInputs, uint64_t MDSize) {
+    EXPECT_EQ(Res.NumInputs, NumInputs);
+    uint64_t PrevOffset = 0;
+    for (uint64_t Idx = 0; Idx < Res.NumInputs; ++Idx) {
+      if (Res.InputOffsets[Idx] == UINT64_MAX)
+        continue;
+      EXPECT_GE(Res.InputOffsets[Idx], PrevOffset);
+      EXPECT_LT(Res.InputOffsets[Idx], Res.MetadataOffset);
+      PrevOffset = Res.InputOffsets[Idx];
+    }
+    EXPECT_EQ(Res.InputOffsets[0], 0U);
+    EXPECT_EQ(Res.MetadataOffset + MDSize, LLVMGetBufferSize(Res.Bytecode));
+  };
+  CheckLayout(A_deployed, 1, MD.size());
+  CheckLayout(A, 2, 0);
+  CheckLayout(R_deployed, 4, MD.size());
+  CheckLayout(R, 4, 0);
+  EXPECT_EQ(R_deployed.InputOffsets[2], UINT64_MAX);
+
   LLVMDisposeAssembleResultEVM(&A_deployed);
   LLVMDisposeAssembleResultEVM(&A);
   LLVMDisposeAssembleResultEVM(&D_deployed);
